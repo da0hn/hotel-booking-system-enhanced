@@ -1,0 +1,14 @@
+# O contexto de build é a raiz do reactor. Sem esta lista, os `target/` de um
+# build local do host entrariam na imagem e invalidariam o cache de camadas a
+# cada compilação na IDE.
+target/
+*/target/
+.git/
+.github/
+.idea/
+.mvn/
+docs/
+docker/
+*.iml
+*.md
+!README.md

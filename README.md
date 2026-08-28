@@ -253,7 +253,8 @@ docker volume create --name=customer-db-volume --driver local --opt type=none --
   `docker`.
 * O parâmetro `--build` irá construir as imagens dos microsserviços antes de iniciar os containeres.
 
-* A especificação dessas imagens está definida no arquivos arquivos com extensão `*.dockerfile` localizados em `${projeto}/docker/dockerfile`
+* A especificação dessas imagens está definida em um único `Dockerfile` na raiz do projeto, parametrizado pelo argumento `MODULE` — o
+  `services.yml` passa o nome do serviço em `build.args`. As imagens publicadas no GHCR pela action `build` saem exatamente do mesmo arquivo.
 
 ```sh
 docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d

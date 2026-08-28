@@ -38,8 +38,15 @@ Não há linter, formatter nem gate de cobertura configurado.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
-Cada `*.dockerfile` roda `mvn clean package` do reator inteiro dentro do build, então
-subir os 4 serviços recompila o projeto 4 vezes sem cache de dependências.
+As quatro imagens saem de um **único `Dockerfile` na raiz**, parametrizado por
+`--build-arg MODULE=<servico>`. As camadas estão ordenadas por volatilidade (poms →
+`commons/src` → `<servico>/src`), então as três primeiras são idênticas nas quatro
+imagens e vêm do cache. Ao adicionar um módulo ao reator, o `COPY` do `pom.xml` dele
+precisa entrar no `Dockerfile` — o Maven exige o reactor completo para resolver o parent.
+
+O workflow `.github/workflows/build.yml` roda `mvn verify` no reactor inteiro e publica
+no GHCR só o que mudou, com tag imutável `X.Y.Z-<run_number>` (nunca `latest`) e labels
+OCI de proveniência. `commons` não vira imagem: é gatilho de reconstrução dos quatro.
 
 Para rodar um serviço isolado na IDE, as portas de banco default do `application.yml`
 apontam para as portas publicadas pelo compose (3311/3312/3313), não para 3306.

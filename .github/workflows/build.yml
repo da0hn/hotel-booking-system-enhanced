@@ -1,0 +1,267 @@
+# Build, provas e imagens dos quatro serviços.
+#
+# As imagens vão para o GHCR e é de lá que o homelab as puxa. Nenhum
+# manifesto de deploy vive neste repositório: quem aponta o cluster para a
+# imagem nova é o homelab, observando o registry. Por isso aqui não existe
+# credencial de escrita em outro repositório — só o `GITHUB_TOKEN` efêmero do
+# próprio job.
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dois pushes seguidos na `master` publicariam duas versões em paralelo, e a
+# ordem de chegada ao GHCR deixaria de ser a ordem dos commits. Na `master` a
+# execução anterior termina; num Pull Request ela é cancelada, porque ali o
+# que importa é o veredito do último push.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # 21 e não a mais nova: o Lombok gerenciado pelo Spring Boot 3.2.0 não
+  # suporta o JDK 25 e desabilita o annotation processor em silêncio. O erro
+  # que aparece é `cannot infer type arguments`, que não diz nada sobre a
+  # causa. O `Dockerfile` recebe este mesmo valor por `build-arg`, para que a
+  # base declarada no label e a base real nunca divirjam.
+  JAVA_VERSION: '21'
+
+jobs:
+
+  mudancas:
+    name: Módulos alterados
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      modulos: ${{ steps.detectar.outputs.modulos }}
+    steps:
+      # O diff precisa do histórico, e o checkout raso não o tem.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # `commons` não vira imagem: é biblioteca dos outros quatro, e por isso
+      # aparece só como gatilho de reconstrução, nunca como item da matriz.
+      - name: Detectar o que mudou
+        id: detectar
+        run: |
+          set -euo pipefail
+
+          case "${{ github.event_name }}" in
+            pull_request) base='${{ github.event.pull_request.base.sha }}' ;;
+            push)         base='${{ github.event.before }}' ;;
+            *)            base='' ;;
+          esac
+
+          # Primeiro push de uma branch, force-push e `workflow_dispatch` não
+          # têm base utilizável. Nesses casos constrói tudo: um diff contra
+          # uma base inexistente devolveria a lista vazia, e o silêncio seria
+          # lido como "nada mudou".
+          if [ -z "$base" ] \
+            || [ "$base" = '0000000000000000000000000000000000000000' ] \
+            || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo 'Sem base de comparação utilizável: constrói tudo.'
+            alterados='TODOS'
+          else
+            alterados="$(git diff --name-only "$base" '${{ github.sha }}')"
+            echo "Base: $base"
+            echo "$alterados"
+          fi
+
+          # Uma mudança no `commons`, no pom agregador, no `Dockerfile` ou
+          # neste workflow alcança os quatro serviços: eles compilam a partir
+          # dos mesmos arquivos, e o `commons` carrega o contrato de eventos
+          # que os quatro desserializam.
+          comum='^(pom\.xml|Dockerfile|\.dockerignore|commons/|\.github/workflows/build\.yml)'
+
+          afeta() {
+            [ "$alterados" = 'TODOS' ] && return 0
+            printf '%s\n' "$alterados" | grep -qE "$1"
+          }
+
+          # A descrição distingue os artefatos para quem abre o pacote no GHCR
+          # sem conhecer este repositório. O que ela carrega de mais
+          # importante é qual serviço coordena a saga: o `hotel-service` é o
+          # único ponto de decisão, e os outros três só reagem à própria fila.
+          descrever() {
+            case "$1" in
+              hotel-service)    echo 'API de hotéis e quartos; coordenador da saga de reserva' ;;
+              booking-service)  echo 'Dono da disponibilidade e das reservas por período' ;;
+              payment-service)  echo 'Pagamento simulado; sem banco, falha por sorteio' ;;
+              customer-service) echo 'Projeção read-model da reserva do cliente e sua timeline' ;;
+            esac
+          }
+
+          itens=''
+          juntar() {
+            [ -n "$itens" ] && itens="${itens},"
+            itens="${itens}{\"modulo\":\"$1\",\"descricao\":\"$(descrever "$1")\"}"
+          }
+
+          for modulo in hotel-service booking-service payment-service customer-service; do
+            if afeta "${comum}|^${modulo}/"; then
+              juntar "$modulo"
+            fi
+          done
+
+          echo "modulos=[${itens}]" >> "$GITHUB_OUTPUT"
+          echo "Matriz: [${itens}]"
+
+  provas:
+    name: Build e testes do reactor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      # O reactor inteiro roda mesmo quando um só serviço muda, e isso é
+      # deliberado: `commons` é dependência dos quatro, e provar só o módulo
+      # tocado deixaria passar a quebra que ele causa nos outros três.
+      - name: Verificar o reactor Maven
+        run: mvn -B verify
+
+  imagem:
+    name: Publicar no GHCR
+    needs: [mudancas, provas]
+    # A lista vazia acontece quando o commit tocou só documentação, e aí não
+    # há imagem a publicar. Sem esta condição, todo commit no `README` ou nos
+    # diagramas publicaria quatro tags novas de conteúdo idêntico.
+    if: >
+      github.ref == 'refs/heads/master'
+      && needs.mudancas.outputs.modulos != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        incluir: ${{ fromJSON(needs.mudancas.outputs.modulos) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Credencial efêmera do próprio job. Nenhum Secret de longa duração
+      # precisa existir neste repositório para publicar no GHCR.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A versão é lida de onde ela vive — a property `revision` do pom
+      # agregador, que os quatro serviços herdam. Um número copiado para este
+      # arquivo seria um segundo lugar de verdade, e os dois divergiriam na
+      # primeira release. O sufixo `-SNAPSHOT` sai, porque tag OCI nomeia
+      # artefato publicado e não candidato local.
+      #
+      # A data vem do COMMIT, e não do relógio do runner: um `created` com a
+      # hora do build faz duas construções da mesma árvore produzirem digests
+      # diferentes. `SOURCE_DATE_EPOCH` é lido pelo BuildKit, que normaliza
+      # os timestamps das camadas a partir dele.
+      #
+      # O digest da base é resolvido agora e registrado como metadado. As tags
+      # de base são móveis; o digest não é — `revision` diz qual código entrou
+      # na imagem, mas não diz qual JRE entrou.
+      - name: Resolver versão, data do commit e digest da base
+        id: proveniencia
+        run: |
+          set -euo pipefail
+
+          versao="$(grep -m1 -oP '(?<=<revision>)[^<]+' pom.xml)"
+          versao="${versao%-SNAPSHOT}"
+          epoch="$(git log -1 --pretty=%ct)"
+          base="eclipse-temurin:${JAVA_VERSION}-jre-alpine"
+
+          {
+            echo "versao=${versao}"
+            echo "epoch=${epoch}"
+            echo "criado=$(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+            echo "base=${base}"
+            echo "base_digest=$(
+              docker buildx imagetools inspect "${base}" \
+                --format '{{.Manifest.Digest}}'
+            )"
+          } >> "$GITHUB_OUTPUT"
+
+      # A tag é `X.Y.Z-<build>`, e nunca `latest`. O que a regra protege é
+      # poder dizer qual imagem está rodando no homelab quando um pagamento
+      # falha: `latest` é móvel e não responde essa pergunta. O
+      # `github.run_number` cresce a cada execução e nunca se repete; o commit
+      # exato fica em `org.opencontainers.image.revision`.
+      #
+      # O número pula por imagem: se um commit toca só `payment-service`, ele
+      # sobe para `-42` enquanto `customer-service` fica em `-37`. É o
+      # comportamento desejado — nada exige que as quatro imagens existam na
+      # mesma versão, já que cada serviço sobe sozinho.
+      - name: Construir e publicar
+        uses: docker/build-push-action@v6
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.proveniencia.outputs.epoch }}
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            MODULE=${{ matrix.incluir.modulo }}
+            JAVA_VERSION=${{ env.JAVA_VERSION }}
+          push: true
+          tags: >
+            ghcr.io/${{ github.repository }}/${{ matrix.incluir.modulo }}:${{ steps.proveniencia.outputs.versao }}-${{ github.run_number }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.incluir.modulo }}
+            org.opencontainers.image.description=${{ matrix.incluir.descricao }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.proveniencia.outputs.versao }}-${{ github.run_number }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ steps.proveniencia.outputs.criado }}
+            org.opencontainers.image.base.name=${{ steps.proveniencia.outputs.base }}
+            org.opencontainers.image.base.digest=${{ steps.proveniencia.outputs.base_digest }}
+          # O escopo por módulo evita que as quatro imagens disputem a mesma
+          # entrada de cache: elas compartilham as camadas de dependência e do
+          # `commons`, mas divergem na camada do próprio serviço.
+          cache-from: type=gha,scope=${{ matrix.incluir.modulo }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.incluir.modulo }}
+
+  # O único check obrigatório é este. Um check que depende de matriz filtrada
+  # NUNCA reporta status quando a matriz sai vazia, e o Pull Request travaria
+  # para sempre esperando por ele. `if: always()` faz este job rodar mesmo
+  # assim, e o `result` de cada dependência é conferido à mão — `needs`
+  # sozinho pularia o job junto com o que falhou.
+  porta:
+    name: Porta do build
+    needs: [mudancas, provas, imagem]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Conferir o veredito de cada job
+        run: |
+          set -euo pipefail
+          echo "mudancas: ${{ needs.mudancas.result }}"
+          echo "provas:   ${{ needs.provas.result }}"
+          echo "imagem:   ${{ needs.imagem.result }}"
+
+          for r in '${{ needs.mudancas.result }}' '${{ needs.provas.result }}'; do
+            [ "$r" = 'success' ] || { echo 'Prova obrigatória falhou.'; exit 1; }
+          done
+
+          # `skipped` é resultado legítimo para `imagem`: Pull Request não
+          # publica, e commit que só toca documentação não tem o que publicar.
+          case '${{ needs.imagem.result }}' in
+            success|skipped) ;;
+            *) echo 'A publicação da imagem falhou.'; exit 1 ;;
+          esac
