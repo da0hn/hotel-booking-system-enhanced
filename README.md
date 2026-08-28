@@ -32,6 +32,7 @@ monetárias até a ausência de compensação na saga.
   * [1.2. A saga de reserva, evento a evento](#12-a-saga-de-reserva-evento-a-evento)
   * [1.3. Componentes e camadas (arquitetura hexagonal)](#13-componentes-e-camadas-arquitetura-hexagonal)
   * [1.4. Topologia de exchanges, routing keys e filas](#14-topologia-de-exchanges-routing-keys-e-filas)
+  * [1.5. Modelo de dados e correlação entre os bancos](#15-modelo-de-dados-e-correlação-entre-os-bancos)
 * [2. Introdução](#2-introdução)
   * [2.1. Tecnologias](#21-tecnologias)
   * [2.2. Aplicações de suporte (infraestrutura)](#22-aplicações-de-suporte-infraestrutura)
@@ -110,6 +111,35 @@ O contrato de serialização também merece atenção: o tipo concreto do evento
 com o **nome completo da classe Java**. É o que permite o `switch` por subtipo nos handlers — e também
 o que faz renomear ou mover uma classe de evento no módulo `commons` quebrar a comunicação entre serviços
 em versões diferentes.
+
+## 1.5. Modelo de dados e correlação entre os bancos
+
+As dez tabelas dos três bancos, com o detalhe que mais importa em um sistema distribuído: **quais colunas
+guardam identificadores que pertencem a outro banco**, e o que sustenta essa ligação.
+
+![Modelo de dados dos três bancos e suas correlações](docs/diagrams/05-data-model.jpg)
+
+Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo MySQL — e todas elas ficam
+**dentro** de um único banco. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos dois
+lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
+
+São quatro travessias, e cada uma se sustenta em algo diferente:
+
+| # | Correlação | O que a mantém |
+|:-:|---|---|
+| 1 | `hotel_db.room.id` ≡ `booking_db.room.id` | Dois seeds Flyway independentes com os mesmos 13 UUIDs. Nada propaga alterações |
+| 2 | `booking_db.booking.customer_id` ≡ `customer_db.customer.id` | Nada. O id vem no corpo do `POST` e é gravado sem consulta |
+| 3 | `booking_db.booking.reservation_order_id` ≡ `customer_db.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
+| 4 | `hotel_db.hotel.id` → `hotel_id` nos outros dois bancos | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
+
+O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum banco a declara
+como tal**. No `customer_db` ela é a PK de `reservation_order`; no `booking_db` é uma coluna comum, sem
+índice único, o que significa que reprocessar a mesma mensagem grava uma segunda reserva para a mesma
+ordem. O `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é
+sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa.
+
+Vale notar também que todas as colunas monetárias são `decimal` sem precisão declarada, o que o MySQL
+resolve como `DECIMAL(10,0)` — centavos são arredondados na gravação.
 
 ---
 
