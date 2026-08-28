@@ -142,3 +142,10 @@ handler correspondente no `hotel-service`.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+## Skills do projeto
+
+- **`registrar-ideia`** (`.claude/skills/registrar-ideia/SKILL.md`) — registra um achado do
+  código de 2023 como ideia de post na base `Posts — Refatoração TCC` do Notion. Dispara
+  quando o Gabriel diz que algo "daria um post" / "vale um post" / "é um achado", ou quando
+  pede para listar e atualizar as ideias já registradas. Requer o MCP do Notion.
