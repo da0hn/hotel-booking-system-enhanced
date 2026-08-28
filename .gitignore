@@ -139,3 +139,6 @@ buildNumber.properties
 .classpath
 
 # End of https://www.toptal.com/developers/gitignore/api/intellij+all,java,maven
+
+# Renders intermediarios dos diagramas (a fonte e o .excalidraw, o entregavel e o .jpg)
+docs/diagrams/*.png
