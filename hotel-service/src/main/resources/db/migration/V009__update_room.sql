@@ -1,5 +1,5 @@
 alter table room
-    modify description varchar(500) not null;
+    alter column description type varchar(500);
 
 alter table room
-    modify name varchar(50) not null;
+    alter column name type varchar(50);

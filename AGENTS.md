@@ -57,17 +57,24 @@ O `AbstractDatabaseIT` é o **único ponto de cada módulo que nomeia o banco**.
 engine é trocar aquela declaração; nenhuma subclasse menciona MySQL ou PostgreSQL, e é
 por isso que elas provam equivalência em vez de provar que um banco funciona.
 
-Dois testes afirmam de propósito um comportamento **errado** de hoje, e o Javadoc de cada
-um diz isso: `FlywayMigrationIT#arredondaCentavosNoPrecoDoQuarto` (hotel) e
-`#arredondaCentavosNoTotalDaReserva` (booking). As colunas de dinheiro são `decimal` sem
-precisão, o que no MySQL significa `DECIMAL(10,0)` — zero casas. Eles existem para
-quebrar quando isso for corrigido; a asserção é atualizada no mesmo commit da correção.
+Essa rede foi escrita **antes** da troca de MySQL por PostgreSQL, e verde contra o banco
+antigo. É o que a fez provar equivalência: um teste que nasce junto com o banco novo prova
+apenas que o banco novo funciona. Dos 61, só um precisou mudar por motivo não previsto —
+`aplicaTodasAsVersoes`, por causa da linha sem versão que o `create-schemas` grava.
 
-No sentido oposto, `HotelJpaRepositoryIT#achaCidadeSemAcento` afirma um comportamento
-**desejado** que hoje existe por acidente: a colação `utf8mb4_0900_ai_ci` do MySQL é
-accent-insensitive, então `cuiaba` acha `Cuiabá` sem que nenhuma linha de código peça
-isso. Se uma mudança de banco quebrar esse teste, o certo é consertar a mudança — nunca
-afrouxar a asserção.
+Três testes carregam intenção que o nome não entrega, e o Javadoc de cada um explica:
+
+| Teste | O que ele guarda |
+|---|---|
+| `FlywayMigrationIT#preservaCentavosNoPrecoDoQuarto` (hotel) | Nasceu cobrando `200` para quebrar na migração. Quebrou: `numeric(10, 2)` devolve `199.99` |
+| `FlywayMigrationIT#preservaCentavosNoTotalDaReserva` (booking) | O mesmo, com `1235` → `1234.56` |
+| `HotelJpaRepositoryIT#achaCidadeSemAcento` | Cobrava um comportamento que o MySQL dava de graça pela colação `utf8mb4_0900_ai_ci`. Continuou verde porque a migração o tornou explícito, não porque sobreviveu sozinho |
+
+A busca sem acento é o caso que mais ensina: `cuiaba` achava `Cuiabá` sem que nenhuma linha
+de código pedisse isso. No PostgreSQL ela depende de três peças que precisam continuar
+casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` que declara o
+tipo de retorno ao Hibernate, e o `public` no fim do `currentSchema` da URL. Tirar qualquer
+uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
@@ -118,8 +125,22 @@ não disparam novas execuções — é o que impede o bump de entrar em loop, e 
 a imagem RC precisa ser construída na mesma execução que fez o bump. Pela mesma razão, o
 PR de back-merge nasce sem checks.
 
-Para rodar um serviço isolado na IDE, as portas de banco default do `application.yml`
-apontam para as portas publicadas pelo compose (3311/3312/3313), não para 3306.
+Para rodar um serviço isolado na IDE não é preciso configurar nada: os defaults do
+`application.yml` apontam para `localhost:5442`, que é a porta que o compose **publica** — não
+a 5432, que é a que o PostgreSQL escuta dentro da rede. O deslocamento é o mesmo que os
+containers de MySQL faziam com 3311/3312/3313, e pela mesma razão: a porta default costuma já
+estar ocupada por outro banco na máquina de quem desenvolve.
+
+Os três serviços com banco dividem uma instância e se separam por **schema**. O nome do
+schema aparece em três lugares por serviço, e cada um governa um subsistema diferente:
+`spring.flyway.schemas` diz onde criar as tabelas, `hibernate.default_schema` qualifica o
+SQL gerado e o validador do `ddl-auto`, e o `currentSchema` da URL resolve o `search_path`
+de quem não passa por nenhum dos dois — as consultas nativas. Os três leem a mesma variável
+de ambiente (`HOTEL_DB_SCHEMA` e afins), então a fonte da verdade continua sendo uma.
+
+O `default_schema` não é opcional neste layout: sem ele o validador procura a tabela sem
+qualificar o schema, e `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo
+banco.
 
 Os diagramas do README ficam em `docs/diagrams/`. O `.excalidraw` é a fonte; o `.jpg`
 é derivado e precisa ser regerado sempre que a fonte mudar:
@@ -155,7 +176,10 @@ Só o `.jpg` é versionado — o `.png` é intermediário.
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
 
-Cada serviço tem banco MySQL próprio com migrations Flyway em `src/main/resources/db/migration`.
+Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
+(`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
+Foi um schema por serviço, e não um banco por serviço, por causa do homelab onde o sistema
+roda — a separação de nomes é a mesma, e o custo em processos, não.
 
 ### Camadas dentro de cada serviço
 

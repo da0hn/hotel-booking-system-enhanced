@@ -15,10 +15,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Trava a forma do schema que o Flyway produz no {@code customer-service}.
  *
- * <p>Este é o módulo com a migração mais frágil dos três. A V003 declara a chave primária
+ * <p>Este é o módulo com a migração mais frágil dos três. A V003 declarava a chave primária
  * como {@code constraint primary key (id)} — um {@code CONSTRAINT} sem nome, que o MySQL
- * aceita e o PostgreSQL recusa —, e a V005 alarga uma coluna com {@code alter table ...
- * modify}. Tudo o que este teste afirma passa por essas duas migrations.</p>
+ * aceita e o PostgreSQL recusa —, e a V005 alargava uma coluna com {@code alter table ...
+ * modify}. Tudo o que este teste afirma passa por essas duas migrations, e foram elas as
+ * duas linhas de SQL do projeto inteiro que o PostgreSQL simplesmente não compila.</p>
  */
 @DisplayName("Migrations do customer-service")
 class FlywayMigrationIT extends AbstractDatabaseIT {
@@ -28,11 +29,17 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   @Autowired
   private EntityManager entityManager;
 
+  /**
+   * O {@code version is not null} descarta uma linha só, e ela não é ruído: com
+   * {@code spring.flyway.create-schemas: true}, o Flyway registra no histórico um marcador sem
+   * versão dizendo quais schemas ele próprio criou — é por ele que um {@code clean} sabe o que
+   * pode derrubar. A linha nasceu com o layout de um schema por serviço.
+   */
   @Test
   @DisplayName("aplica todas as versões sem falha")
   void aplicaTodasAsVersoes() {
     final var aplicadas = this.entityManager
-      .createNativeQuery("select version from flyway_schema_history where success = true order by installed_rank")
+      .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
     assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007");
@@ -74,10 +81,10 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A V003 escreve a chave primária como {@code constraint primary key (id)}, sem nome. O
-   * MySQL tolera; o PostgreSQL recusa a sintaxe. Se a Fase 2 traduzir a linha e esquecer a
-   * chave, a tabela continua existindo e as consultas continuam funcionando — a única coisa
-   * que muda é que a timeline passa a aceitar linhas duplicadas em silêncio.
+   * A V003 escrevia a chave primária como {@code constraint primary key (id)}, sem nome — o
+   * MySQL tolera, o PostgreSQL recusa a sintaxe. A tradução tinha que dar um nome à constraint,
+   * e é isso que este teste guarda: uma tradução que apagasse a chave deixaria a tabela
+   * existindo e as consultas funcionando, com a timeline aceitando duplicatas em silêncio.
    */
   @Test
   @DisplayName("mantém a chave primária da timeline")
@@ -87,7 +94,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     this.inserirHistorico(id, pedido);
 
     assertThatThrownBy(() -> this.inserirHistorico(id, pedido))
-      .as("a PK da V003 é declarada sem nome, sintaxe que só o MySQL aceita")
+      .as("a PK da V003 nasceu sem nome, sintaxe que só o MySQL aceita; a tradução precisou nomeá-la")
       .isInstanceOf(Exception.class);
   }
 
@@ -120,8 +127,8 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A V005 alarga {@code customer.name} de 36 para 50 com {@code alter table ... modify},
-   * sintaxe que o PostgreSQL não aceita.
+   * A V005 alarga {@code customer.name} de 36 para 50. A sintaxe era {@code alter table ...
+   * modify}, que o PostgreSQL não aceita; hoje é {@code alter column ... type}.
    */
   @Test
   @DisplayName("alarga o nome do cliente para 50 caracteres")
@@ -146,10 +153,10 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A V007 acrescenta {@code failure_reason varchar(8000)}. O MySQL comporta esse tamanho num
-   * {@code VARCHAR} porque a linha inteira ainda cabe no limite de 65.535 bytes; o teste
-   * garante que a tradução do tipo na Fase 2 não encolha a coluna e passe a truncar a
-   * mensagem de erro que o cliente lê na timeline.
+   * A V007 acrescenta {@code failure_reason varchar(8000)}. O MySQL comportava esse tamanho num
+   * {@code VARCHAR} só porque a linha inteira cabia no limite de 65.535 bytes — era um limite
+   * de linha, não de coluna. O PostgreSQL não tem esse teto. O teste garante que a tradução não
+   * encolheu a coluna e não passou a truncar a mensagem de erro que o cliente lê na timeline.
    */
   @Test
   @DisplayName("comporta uma razão de falha de 8000 caracteres")

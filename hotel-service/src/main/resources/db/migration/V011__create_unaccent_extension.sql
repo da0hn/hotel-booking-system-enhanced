@@ -1,0 +1,11 @@
+-- A busca de hotéis por cidade encontrava `Cuiabá` digitando `cuiaba` sem que nenhuma
+-- linha de código pedisse isso: era a colação `utf8mb4_0900_ai_ci` do MySQL, que é
+-- accent-insensitive por padrão. O PostgreSQL compara texto byte a byte, então o mesmo
+-- comportamento precisa ser pedido explicitamente — e é a `unaccent` que a `@Query` do
+-- HotelJpaRepository chama.
+--
+-- A extensão nasce no `public` de propósito: ele está sempre no `search_path`, enquanto o
+-- schema do serviço não está (o Hibernate qualifica tabelas, não muda o caminho de busca).
+-- Desde o PostgreSQL 13 a `unaccent` é trusted, então o dono do banco a cria sem ser
+-- superusuário.
+create extension if not exists unaccent with schema public;

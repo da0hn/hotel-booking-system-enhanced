@@ -13,15 +13,27 @@ spring:
     username: ${RABBITMQ_USERNAME:root}
     password: ${RABBITMQ_PASSWORD:root}
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${CUSTOMER_DB_HOST:localhost}:${CUSTOMER_DB_PORT:3313}/${CUSTOMER_DB_NAME:customer_db}?autoReconnect=true&useSSL=false&serverTimezone=UTC&enabledTLSProtocols=TLSv1.2
-    username: ${CUSTOMER_DB_USERNAME:user}
-    password: ${CUSTOMER_DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+    # O `currentSchema` existe porque nem tudo passa pelo `default_schema` do Hibernate: uma
+    # consulta nativa resolve o nome da tabela pelo `search_path` da conexão. O `public` no
+    # fim do caminho é o que enxerga a extensão `unaccent`.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5442}/${DB_NAME:hotel_booking_system}?currentSchema=${CUSTOMER_DB_SCHEMA:customer},public
+    username: ${DB_USERNAME:user}
+    password: ${DB_PASSWORD:password}
+  flyway:
+    # Os três serviços com banco dividem uma instância só e se separam por schema. As
+    # coordenadas de conexão continuam vindo do `DataSource`; o que o Flyway não tem como
+    # deduzir é onde criar as tabelas.
+    schemas: ${CUSTOMER_DB_SCHEMA:customer}
+    create-schemas: true
   jpa:
     open-in-view: false
     show-sql: false
     properties:
       hibernate:
+        # Sem isto o validador do `ddl-auto` procura a tabela sem qualificar o schema, e
+        # `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo banco.
+        default_schema: ${CUSTOMER_DB_SCHEMA:customer}
         enable_lazy_load_no_trans: true
         format_sql: true
   docker:

@@ -33,16 +33,22 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   @Autowired
   private EntityManager entityManager;
 
+  /**
+   * O {@code version is not null} descarta uma linha só, e ela não é ruído: com
+   * {@code spring.flyway.create-schemas: true}, o Flyway registra no histórico um marcador sem
+   * versão dizendo quais schemas ele próprio criou — é por ele que um {@code clean} sabe o que
+   * pode derrubar. A linha nasceu com o layout de um schema por serviço.
+   */
   @Test
   @DisplayName("aplica todas as versões sem falha")
   void aplicaTodasAsVersoes() {
     final var aplicadas = this.entityManager
-      .createNativeQuery("select version from flyway_schema_history where success = true order by installed_rank")
+      .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
     assertThat(aplicadas)
       .as("uma migration nova precisa ser somada aqui de propósito, para que a lista continue sendo uma trava")
-      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010");
+      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011");
   }
 
   @Test
@@ -124,20 +130,21 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   /**
-   * Este teste afirma o comportamento <strong>errado</strong> de hoje, de propósito.
+   * Este teste nasceu afirmando o comportamento <strong>errado</strong>, e a asserção que ele
+   * tem hoje é o registro da correção.
    *
-   * <p>As migrations declaram {@code current_price decimal} sem precisão. O MySQL lê isso como
-   * {@code DECIMAL(10,0)} — zero casas decimais — e arredonda todo centavo que entra. Nenhum
-   * teste pegou isso em três anos porque todos os preços do seed são inteiros.</p>
+   * <p>Enquanto o banco era MySQL, a migration declarava {@code current_price decimal} sem
+   * precisão e o MySQL lia isso como {@code DECIMAL(10,0)} — zero casas decimais. Todo centavo
+   * que entrava era arredondado, e nenhum teste pegou isso em três anos porque os preços do
+   * seed são todos inteiros. O teste foi escrito na rede de segurança cobrando
+   * {@code 200}, para quebrar no commit da migração.</p>
    *
-   * <p>Na Fase 2 este teste <strong>tem</strong> que quebrar: o PostgreSQL trata
-   * {@code numeric} sem precisão como precisão arbitrária e devolve {@code 199.99}. A quebra é
-   * a prova de que a issue #1 foi corrigida, e a asserção é atualizada no mesmo commit da
-   * migração — o diff passa a ser o registro da mudança intencional.</p>
+   * <p>Foi o que aconteceu: com {@code numeric(10, 2)} o valor volta {@code 199.99}. A issue
+   * #1 foi corrigida como efeito colateral da troca de banco.</p>
    */
   @Test
-  @DisplayName("arredonda centavos no preço do quarto (comportamento a corrigir na migração)")
-  void arredondaCentavosNoPrecoDoQuarto() {
+  @DisplayName("preserva os centavos no preço do quarto")
+  void preservaCentavosNoPrecoDoQuarto() {
     final var id = UUID.randomUUID();
     this.inserirQuarto(id, HOTEL_AMAZON_PLAZA, "199.99");
     this.entityManager.clear();
@@ -148,13 +155,14 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(gravado)
-      .as("DECIMAL(10,0) no MySQL; deve virar 199.99 quando a coluna for numeric no PostgreSQL")
-      .isEqualByComparingTo("200");
+      .as("`numeric(10, 2)`; o `DECIMAL(10,0)` herdado do MySQL devolvia 200")
+      .isEqualByComparingTo("199.99");
   }
 
   /**
-   * A V007 e a V009 alargam colunas com {@code alter table ... modify}, sintaxe que o
-   * PostgreSQL não aceita. Um {@code alter} traduzido errado na Fase 2 deixaria a coluna no
+   * A V007 e a V009 alargam colunas. Até a migração elas usavam {@code alter table ... modify},
+   * sintaxe que só o MySQL aceita; hoje são {@code alter column ... type}. Um {@code alter}
+   * traduzido errado teria deixado a coluna no
    * tamanho original, e este teste é o primeiro a notar.
    */
   @Test

@@ -26,8 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>O que atravessa o mapeamento aqui e não aparece em nenhuma consulta escrita à mão é o
  * {@link Instant} do {@code occurred_at}: a saga grava cada transição com a hora do momento,
- * e o cliente lê essa hora de volta. O tipo por baixo muda na Fase 2, e a ordem da timeline
- * depende dele.</p>
+ * e o cliente lê essa hora de volta. O tipo por baixo mudou na migração — de {@code datetime}
+ * para {@code timestamp with time zone} —, e a ordem da timeline depende dele.</p>
  */
 @DisplayName("Timeline da reserva do cliente")
 class ReservationOrderJpaRepositoryIT extends AbstractDatabaseIT {
@@ -73,11 +73,14 @@ class ReservationOrderJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A coluna {@code occurred_at} é {@code datetime} sem precisão fracionária declarada, o que
-   * no MySQL significa <strong>zero</strong> casas: o instante é truncado para o segundo na
-   * gravação. O teste usa um valor já truncado de propósito — não é por acaso, é para separar
-   * o que se quer provar (o instante volta igual) do que hoje é uma perda silenciosa de
-   * precisão que a Fase 2 pode muito bem eliminar.
+   * O valor do teste vem truncado ao segundo de propósito, e o motivo é histórico: enquanto a
+   * coluna era {@code datetime} sem precisão fracionária declarada, o MySQL guardava
+   * <strong>zero</strong> casas e truncava o instante na gravação. Truncar na entrada separava
+   * o que se quer provar — o instante volta igual — daquela perda silenciosa de precisão.
+   *
+   * <p>O {@code timestamp with time zone} do PostgreSQL guarda microssegundos, então a perda
+   * não existe mais. O valor truncado ficou: ele prova o mesmo contrato e continua sendo o
+   * único formato que os dois bancos representam sem discussão.</p>
    */
   @Test
   @DisplayName("devolve o instante de cada transição sem deslocamento")

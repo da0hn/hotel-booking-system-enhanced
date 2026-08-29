@@ -1,2 +1,2 @@
 alter table customer
-    modify name varchar(50) not null;
+    alter column name type varchar(50);

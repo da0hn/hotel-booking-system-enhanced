@@ -112,34 +112,38 @@ com o **nome completo da classe Java**. É o que permite o `switch` por subtipo 
 o que faz renomear ou mover uma classe de evento no módulo `commons` quebrar a comunicação entre serviços
 em versões diferentes.
 
-## 1.5. Modelo de dados e correlação entre os bancos
+## 1.5. Modelo de dados e correlação entre os schemas
 
-As dez tabelas dos três bancos, com o detalhe que mais importa em um sistema distribuído: **quais colunas
-guardam identificadores que pertencem a outro banco**, e o que sustenta essa ligação.
+As dez tabelas dos três schemas, com o detalhe que mais importa em um sistema distribuído: **quais colunas
+guardam identificadores que pertencem a outro serviço**, e o que sustenta essa ligação.
 
-![Modelo de dados dos três bancos e suas correlações](docs/diagrams/05-data-model.jpg)
+![Modelo de dados dos três schemas e suas correlações](docs/diagrams/05-data-model.jpg)
 
-Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo MySQL — e todas elas ficam
-**dentro** de um único banco. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos dois
-lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
+Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo PostgreSQL — e todas elas
+ficam **dentro** de um único schema. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos
+dois lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
+
+Os três schemas moram na mesma instância, o que torna as travessias abaixo tecnicamente declaráveis como
+chave estrangeira. Elas continuam sem declaração de propósito: cada serviço é dono do seu schema, e uma FK
+entre schemas amarraria o deploy dos dois.
 
 São quatro travessias, e cada uma se sustenta em algo diferente:
 
 | # | Correlação | O que a mantém |
 |:-:|---|---|
-| 1 | `hotel_db.room.id` ≡ `booking_db.room.id` | Dois seeds Flyway independentes com os mesmos 13 UUIDs. Nada propaga alterações |
-| 2 | `booking_db.booking.customer_id` ≡ `customer_db.customer.id` | Nada. O id vem no corpo do `POST` e é gravado sem consulta |
-| 3 | `booking_db.booking.reservation_order_id` ≡ `customer_db.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
-| 4 | `hotel_db.hotel.id` → `hotel_id` nos outros dois bancos | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
+| 1 | `hotel.room.id` ≡ `booking.room.id` | Dois seeds Flyway independentes com os mesmos 13 UUIDs. Nada propaga alterações |
+| 2 | `booking.booking.customer_id` ≡ `customer.customer.id` | Nada. O id vem no corpo do `POST` e é gravado sem consulta |
+| 3 | `booking.booking.reservation_order_id` ≡ `customer.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
+| 4 | `hotel.hotel.id` → `hotel_id` nos outros dois schemas | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
 
-O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum banco a declara
-como tal**. No `customer_db` ela é a PK de `reservation_order`; no `booking_db` é uma coluna comum, sem
+O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum schema a declara
+como tal**. No `customer` ela é a PK de `reservation_order`; no `booking` é uma coluna comum, sem
 índice único, o que significa que reprocessar a mesma mensagem grava uma segunda reserva para a mesma
 ordem. O `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é
 sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa.
 
-Vale notar também que todas as colunas monetárias são `decimal` sem precisão declarada, o que o MySQL
-resolve como `DECIMAL(10,0)` — centavos são arredondados na gravação.
+As colunas monetárias são `numeric(10, 2)`. Até a migração para o PostgreSQL elas eram `decimal` sem
+precisão declarada, o que o MySQL resolve como `DECIMAL(10,0)` — centavos eram arredondados na gravação.
 
 ---
 
@@ -161,7 +165,7 @@ código.
 | Java        | OpenJDK 25            |
 | Maven       | 3.9.11                |
 | Spring Boot | 4.1.1                 |
-| MySQL       | 8.0.33                |
+| PostgreSQL  | 17-alpine             |
 | RabbitMQ    | 3-management          |
 
 ## 2.2. Aplicações de suporte (infraestrutura)
@@ -171,9 +175,7 @@ As credenciais de acesso e portas podem ser alteradas através das variáveis de
 
 |   Tipo   |       Porta        |          Serviço           | Usuário |  Senha   | 
 |:--------:|:------------------:|:--------------------------:|:-------:|:--------:|
-|  MySQL   |        3311        |          hotel-db          |  user   | password |
-|  MySQL   |        3312        |         booking-db         |  user   | password |
-|  MySQL   |        3313        |        customer-db         |  user   | password |
+|PostgreSQL|        5442        |  hotel-booking-system-db   |  user   | password |
 | RabbitMQ | 5672, 25676, 15672 | hotel-booking-system-queue |  root   |   root   |
 
 ## 2.3. Tópicos e filas
@@ -239,13 +241,15 @@ execução a da aplicação.
 
 ## 3.2. Instalação
 
-* Construa os volumes correspondentes para armazenamento de dados dos bancos de dados utilizando o comando:
+* Construa o volume correspondente ao armazenamento de dados do banco utilizando o comando:
 
 ```sh
-docker volume create --name=hotel-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/hotel-db/mysql --opt o=bind
-docker volume create --name=booking-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/booking-db/mysql --opt o=bind
-docker volume create --name=customer-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/customer-db/mysql --opt o=bind
+docker volume create --name=hotel-booking-system-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/db/postgres --opt o=bind
 ```
+
+* Os três serviços com banco dividem a mesma instância e se separam por **schema** — `hotel`, `booking` e
+  `customer` —, cada um criado e migrado pelo Flyway do próprio serviço. Não há passo manual de criação de
+  schema, e o banco `hotel_booking_system` nasce do `POSTGRES_DB` do container.
 
 * Após isso é possível iniciar todos os serviços e aplicações auxiliares como banco de dados e filas executando o comando abaixo dentro da pasta
   `docker`.

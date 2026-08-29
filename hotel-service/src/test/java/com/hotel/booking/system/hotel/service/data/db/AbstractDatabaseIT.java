@@ -4,17 +4,22 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.mysql.MySQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * Base dos testes de integração de persistência deste serviço.
  *
  * <p>O container é o único ponto do módulo que sabe qual banco está por baixo. Trocar de
  * engine é trocar esta declaração — as subclasses não mencionam MySQL nem PostgreSQL, e é
- * por isso que elas provam <em>equivalência</em>: o mesmo teste roda contra os dois.</p>
+ * por isso que elas provam <em>equivalência</em>: o mesmo teste rodou contra os dois.</p>
  *
  * <p>A imagem é a mesma do {@code docker/common.yml}. Um teste contra uma versão diferente
  * da que roda em produção mede o banco errado.</p>
+ *
+ * <p>O {@code currentSchema} repete aqui o que o {@code application.yml} põe na URL de
+ * produção, porque o {@code @ServiceConnection} monta a URL do zero e descarta aquela. Sem
+ * ele o Flyway cria as tabelas em {@code hotel} e as consultas nativas dos testes, que
+ * resolvem o nome pelo {@code search_path}, não as encontram.</p>
  *
  * <p>O container é estático e iniciado no bloco estático, e não pelo {@code @Container} do
  * Testcontainers: assim ele sobe uma vez por JVM e é reaproveitado por todas as classes de
@@ -30,7 +35,8 @@ import org.testcontainers.mysql.MySQLContainer;
 public abstract class AbstractDatabaseIT {
 
   @ServiceConnection
-  protected static final MySQLContainer DATABASE = new MySQLContainer("mysql:8.0.33");
+  protected static final PostgreSQLContainer DATABASE = new PostgreSQLContainer("postgres:17-alpine")
+    .withUrlParam("currentSchema", "hotel,public");
 
   static {
     DATABASE.start();

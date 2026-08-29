@@ -30,11 +30,17 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   @Autowired
   private EntityManager entityManager;
 
+  /**
+   * O {@code version is not null} descarta uma linha só, e ela não é ruído: com
+   * {@code spring.flyway.create-schemas: true}, o Flyway registra no histórico um marcador sem
+   * versão dizendo quais schemas ele próprio criou — é por ele que um {@code clean} sabe o que
+   * pode derrubar. A linha nasceu com o layout de um schema por serviço.
+   */
   @Test
   @DisplayName("aplica todas as versões sem falha")
   void aplicaTodasAsVersoes() {
     final var aplicadas = this.entityManager
-      .createNativeQuery("select version from flyway_schema_history where success = true order by installed_rank")
+      .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
     assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006");
@@ -82,9 +88,9 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
 
   /**
    * A V006 acrescenta {@code created_at} e {@code updated_at} como
-   * {@code datetime default now()}. O {@code datetime} é tipo do MySQL e a Fase 2 precisa
-   * traduzi-lo — o default junto, que é o que este teste cobra: as colunas são preenchidas
-   * mesmo quando o insert não as menciona.
+   * {@code timestamp with time zone default now()}. O tipo era {@code datetime} enquanto o
+   * banco era MySQL, e o que se perde numa tradução desatenta é o default — que é o que este
+   * teste cobra: as colunas são preenchidas mesmo quando o insert não as menciona.
    */
   @Test
   @DisplayName("preenche created_at por default quando o insert não informa")
@@ -109,7 +115,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(criadoEm)
-      .as("o default `now()` da V006 precisa sobreviver à tradução do tipo datetime")
+      .as("o default `now()` da V006 sobreviveu à tradução do tipo")
       .isNotNull();
   }
 
@@ -165,16 +171,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   /**
-   * O mesmo arredondamento que o {@code hotel-service} sofre em {@code room.current_price}
-   * atinge aqui três colunas: {@code booking.total_price}, {@code room.current_price} e
-   * {@code booking_room.price}. É o preço da reserva inteira que perde os centavos.
+   * O mesmo arredondamento que o {@code hotel-service} sofria em {@code room.current_price}
+   * atingia aqui três colunas: {@code booking.total_price}, {@code room.current_price} e
+   * {@code booking_room.price}. Era o preço da reserva inteira que perdia os centavos.
    *
-   * <p>Como no {@code hotel-service}, este teste afirma o comportamento errado de hoje e
-   * <strong>tem</strong> que quebrar na Fase 2.</p>
+   * <p>Como no {@code hotel-service}, o teste nasceu cobrando o valor arredondado e quebrou
+   * no commit da migração. A asserção de hoje é o registro da correção.</p>
    */
   @Test
-  @DisplayName("arredonda centavos no total da reserva (comportamento a corrigir na migração)")
-  void arredondaCentavosNoTotalDaReserva() {
+  @DisplayName("preserva os centavos no total da reserva")
+  void preservaCentavosNoTotalDaReserva() {
     final var id = UUID.randomUUID();
 
     this.entityManager
@@ -196,8 +202,8 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(gravado)
-      .as("DECIMAL(10,0) no MySQL; deve virar 1234.56 quando a coluna for numeric no PostgreSQL")
-      .isEqualByComparingTo("1235");
+      .as("`numeric(10, 2)`; o `DECIMAL(10,0)` herdado do MySQL devolvia 1235")
+      .isEqualByComparingTo("1234.56");
   }
 
 }

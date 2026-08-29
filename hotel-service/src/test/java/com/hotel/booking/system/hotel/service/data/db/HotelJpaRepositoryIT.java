@@ -75,17 +75,22 @@ class HotelJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   /**
-   * Este é o teste que a migração precisa manter verde, e ele não é um detalhe de estilo.
+   * Este é o teste que a migração precisava manter verde, e ele não é um detalhe de estilo.
    *
-   * <p>A consulta protege a caixa com {@code lower()}, mas nada no JPQL trata acento. Quem
-   * trata hoje é a colação padrão do MySQL 8, {@code utf8mb4_0900_ai_ci}, cujo {@code ai}
-   * significa <em>accent-insensitive</em>: {@code cuiaba} casa com {@code Cuiabá} sem que uma
-   * linha de código peça isso. O PostgreSQL compara texto byte a byte e não faz esse favor.</p>
+   * <p>A consulta sempre protegeu a caixa com {@code lower()}, mas nada no JPQL tratava acento.
+   * Quem tratava era a colação padrão do MySQL 8, {@code utf8mb4_0900_ai_ci}, cujo {@code ai}
+   * significa <em>accent-insensitive</em>: {@code cuiaba} casava com {@code Cuiabá} sem que uma
+   * linha de código pedisse isso. O PostgreSQL compara texto byte a byte e não faz esse
+   * favor.</p>
    *
-   * <p>Ou seja: buscar hotel por cidade digitada sem acento é uma funcionalidade que existe
-   * hoje por acidente de configuração do banco, não por decisão de projeto. Se a Fase 2
-   * quebrar este teste, o certo é consertar a Fase 2 — normalizando na consulta ou habilitando
-   * a extensão {@code unaccent} —, nunca afrouxar a asserção.</p>
+   * <p>Ou seja: buscar hotel por cidade digitada sem acento era uma funcionalidade que existia
+   * por acidente de configuração do banco, e não por decisão de projeto. Sem este teste, a
+   * migração a teria removido sem erro nenhum — nem de compilação, nem de arranque, nem de
+   * execução: a busca simplesmente passaria a devolver menos hotéis.</p>
+   *
+   * <p>Hoje ela é decisão: a {@code @Query} chama {@code unaccent} dos dois lados da
+   * comparação. Se este teste quebrar, o certo é consertar a busca, nunca afrouxar a
+   * asserção.</p>
    */
   @Test
   @DisplayName("acha a cidade mesmo quando o termo vem sem acento")
@@ -93,7 +98,7 @@ class HotelJpaRepositoryIT extends AbstractDatabaseIT {
     final var encontrados = this.repository.findAllAvailableHotelByParameters(null, null, "cuiaba", null);
 
     assertThat(encontrados)
-      .as("comportamento herdado da colação accent-insensitive do MySQL; precisa sobreviver à migração")
+      .as("herdado da colação accent-insensitive do MySQL, hoje pedido explicitamente com `unaccent`")
       .hasSize(3);
   }
 

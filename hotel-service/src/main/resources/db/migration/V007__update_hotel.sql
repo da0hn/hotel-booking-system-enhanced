@@ -1,2 +1,2 @@
 alter table hotel
-    modify description varchar (500) not null;
+    alter column description type varchar(500);
