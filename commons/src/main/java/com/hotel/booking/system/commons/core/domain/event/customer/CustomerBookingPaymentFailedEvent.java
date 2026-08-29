@@ -1,28 +1,17 @@
 package com.hotel.booking.system.commons.core.domain.event.customer;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import lombok.Getter;
 import lombok.experimental.SuperBuilder;
+import lombok.extern.jackson.Jacksonized;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
-import java.util.List;
 
 @Getter
 @SuperBuilder
+@Jacksonized
 public final class CustomerBookingPaymentFailedEvent extends CustomerBookingFailureStatusUpdateEvent {
 
-
-  @JsonCreator
-  public CustomerBookingPaymentFailedEvent(
-    final String reservationOrderId,
-    final String customerId,
-    final CustomerReservationStatus status,
-    final List<String> failureMessages
-  ) {
-    super(reservationOrderId, customerId, status, failureMessages);
-  }
 
   @Override
   public String toString() {

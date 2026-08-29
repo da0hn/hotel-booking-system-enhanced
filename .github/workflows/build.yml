@@ -216,11 +216,13 @@ jobs:
             fi
           fi
 
-          # Uma mudança no `commons`, no pom agregador, no `Dockerfile` ou
-          # neste workflow alcança os quatro serviços: eles compilam a partir
-          # dos mesmos arquivos, e o `commons` carrega o contrato de eventos
-          # que os quatro desserializam.
-          comum='^(pom\.xml|Dockerfile|\.dockerignore|commons/|\.github/workflows/build\.yml)'
+          # Uma mudança no `commons`, no pom agregador, no `Dockerfile`, no
+          # `lombok.config` ou neste workflow alcança os quatro serviços: eles
+          # compilam a partir dos mesmos arquivos, e o `commons` carrega o
+          # contrato de eventos que os quatro desserializam. O `lombok.config`
+          # entra na lista porque decide quais anotações o Lombok gera — ele
+          # muda o bytecode dos quatro sem aparecer no diff de nenhum.
+          comum='^(pom\.xml|Dockerfile|\.dockerignore|lombok\.config|commons/|\.github/workflows/build\.yml)'
 
           afeta() {
             [ "$alterados" = 'TODOS' ] && return 0

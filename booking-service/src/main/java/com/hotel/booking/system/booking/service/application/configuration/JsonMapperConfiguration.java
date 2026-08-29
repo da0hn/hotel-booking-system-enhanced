@@ -3,7 +3,6 @@ package com.hotel.booking.system.booking.service.application.configuration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.cfg.ConstructorDetector;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -25,13 +24,6 @@ public class JsonMapperConfiguration {
     // não há mais `configure(...)` depois de construído. A inclusão ALWAYS saiu
     // junto: era o default do Jackson, e a chamada anterior só o reafirmava.
     return JsonMapper.builder()
-      // O `ParameterNamesModule` do Jackson 2 fazia duas coisas, e só uma delas foi
-      // absorvida pelo jackson-databind: os nomes dos parâmetros vieram junto, mas a
-      // permissão para um construtor NÃO anotado de vários argumentos servir de creator
-      // não veio. Sem esta linha, todo evento do `commons` sem `@JsonCreator` — que é
-      // todo evento menos um — falha na desserialização com `no Creators, like default
-      // constructor, exist`, e a saga para na primeira resposta.
-      .constructorDetector(ConstructorDetector.USE_PROPERTIES_BASED)
       .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
       .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
       .build();

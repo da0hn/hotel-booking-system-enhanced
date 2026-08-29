@@ -24,6 +24,12 @@ WORKDIR /build
 # Os cinco `pom.xml` entram porque o Maven precisa do reactor completo para
 # resolver o parent e o agregador.
 COPY pom.xml .
+# O `lombok.config` entra junto dos poms, e não com o código: ele decide quais
+# anotações o Lombok gera, então precisa estar no lugar antes da primeira
+# compilação. Sem ele, o `@Jacksonized` das classes de evento sai apontando
+# para o Jackson 2 e o build quebra em `package
+# com.fasterxml.jackson.databind.annotation does not exist`.
+COPY lombok.config .
 COPY commons/pom.xml commons/
 COPY hotel-service/pom.xml hotel-service/
 COPY booking-service/pom.xml booking-service/

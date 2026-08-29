@@ -192,20 +192,22 @@ handler correspondente no `hotel-service`.
   serviços sobem saudáveis, o `POST /hotel/booking` responde 200, e a saga simplesmente
   não avança. O casamento é por igualdade de pacote, não por prefixo — **um subpacote novo
   de evento precisa entrar naquela lista**.
-- Duas coisas mantêm as classes de evento desserializáveis, e as duas são fáceis de
-  desfazer sem perceber:
-  1. `ConstructorDetector.USE_PROPERTIES_BASED` no `JsonMapperConfiguration`. O Jackson 3
-     absorveu o `ParameterNamesModule`, mas não a permissão que ele dava a um construtor
-     **não anotado** de vários argumentos para servir de creator. Sem essa linha, as
-     classes de construtor único param de ser instanciáveis.
-  2. `@JsonCreator` no construtor de campos de toda classe que usa `@SuperBuilder`. O
-     Lombok gera um segundo construtor (o que recebe o builder), e com dois candidatos o
-     Jackson não escolhe implicitamente nenhum — a anotação desempata. **Toda subclasse
-     nova de `BookingRoomStatusUpdatedEvent` ou `CustomerBookingStatusUpdatedEvent`
-     precisa dela.** As abstratas não, porque o `__TypeId__` sempre nomeia a concreta.
-
-  As duas falham do mesmo jeito: `no Creators, like default constructor, exist`, no
-  listener, com os serviços saudáveis e a saga parada.
+- O Jackson só constrói uma classe se enxergar **um** creator. Com um construtor público
+  único ele o usa sozinho, sem configuração nenhuma; com dois candidatos ele não desempata
+  e recusa a mensagem. O `@SuperBuilder` cria exatamente esse segundo candidato — o
+  construtor que recebe o builder —, então **toda classe de evento com `@SuperBuilder`
+  precisa de `@Jacksonized`**, que manda o Jackson desserializar pelo próprio builder.
+- O `@Jacksonized` depende de `lombok.config` na raiz: sem
+  `lombok.jacksonized.jacksonVersion += 3` o Lombok gera as anotações do Jackson **2** e a
+  compilação quebra com `package com.fasterxml.jackson.databind.annotation does not exist`.
+  A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
+  o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
+  `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
+- `ContratoDeEventosTest`, no `commons`, varre o pacote e prova que cada classe concreta de
+  evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
+  ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
+  saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
+  cobertura sozinho; não há lista para manter.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
