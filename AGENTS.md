@@ -15,15 +15,16 @@ duplique esse conteúdo aqui.
 
 ## Comandos
 
-O toolchain do host resolve `java` para o **JDK 25** (mise), mas o projeto **não compila
-nele**: o Lombok gerenciado pelo Spring Boot 3.2.0 não suporta JDK 25 e o annotation
-processor é desabilitado em silêncio — os erros aparecem como `constructor ... cannot be
-applied to given types` e `cannot infer type arguments`, mascarando a causa real. Sempre
-force o JDK 21:
+O projeto compila no **JDK 25**, que é para onde o `java` do host resolve (mise). Não é
+preciso forçar `JAVA_HOME`.
 
-```bash
-export JAVA_HOME=$(cygpath -w "$HOME/AppData/Local/mise/installs/java/21.0.2")
-```
+Até a atualização para o Spring Boot 4.1.1 o build exigia o JDK 21, e a explicação que
+circulava — "o Lombok não suporta o 25" — descrevia o sintoma, não a causa. O que mudou
+foi o `javac`: o JDK 21 depreciou a descoberta de annotation processors pelo classpath e
+o 23 passou a assumir `-proc:none` quando ninguém declara o caminho. O Lombok deixava de
+rodar sem dizer nada, e a falha aparecia adiante como `cannot infer type arguments`. O
+`annotationProcessorPaths` no pom raiz declara esse caminho — **não o remova**, sob pena
+de o erro voltar exatamente com essa cara.
 
 | Objetivo | Comando |
 |---|---|
@@ -148,6 +149,14 @@ Regras que o código segue e que devem ser mantidas:
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
 - Estilo: indentação de 2 espaços, `final` em parâmetros e campos, `this.` explícito em
   todo acesso a membro, `var` para locais.
+- **A explicação vai no Javadoc, não em comentário inline.** Se o que se quer dizer
+  descreve o que a classe ou o método é, faz ou pressupõe, o lugar é o Javadoc do
+  elemento — não um `//` solto acima da assinatura nem no meio do corpo. Comentário
+  inline fica reservado ao que **não cabe** no Javadoc: um contexto preso a uma linha
+  específica, que quem lê aquele trecho precisa saber ali e que se perderia descrito de
+  fora. Na dúvida, é Javadoc.
+- A mesma economia vale para `pom.xml` e para os workflows: comente o que surpreende, não
+  o que o próprio arquivo já diz.
 
 ### Fluxo da saga (o que é preciso entender antes de mexer)
 
@@ -179,10 +188,34 @@ handler correspondente no `hotel-service`.
 - Eventos vivem em `commons/core/domain/event/`, organizados em hierarquias `sealed`
   (`BookingRoomResponseEvent`, `PaymentResponseEvent`, `CustomerBookingStatusUpdatedEvent`).
   Os handlers despacham com `switch` sobre pattern matching de tipo.
-- A desserialização usa `Jackson2JsonMessageConverter`, que grava o **FQCN da classe no
-  header `__TypeId__`**. Isso significa que **mover ou renomear uma classe de evento no
-  `commons` quebra a comunicação entre serviços em versões diferentes** — mensagens já na
-  fila deixam de ser desserializáveis.
+- A desserialização usa `JacksonJsonMessageConverter` (Jackson 3), que grava o **FQCN da
+  classe no header `__TypeId__`**. Isso significa que **mover ou renomear uma classe de
+  evento no `commons` quebra a comunicação entre serviços em versões diferentes** —
+  mensagens já na fila deixam de ser desserializáveis.
+- O FQCN que chega no `__TypeId__` só é instanciado se o **pacote** dele estiver em
+  `TrustedEventPackages` (no `commons`), que os quatro `RabbitMQConfiguration` passam ao
+  converter. O `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote
+  por padrão; o sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
+  `IllegalArgumentException` **no listener**. A falha não aparece no arranque: os quatro
+  serviços sobem saudáveis, o `POST /hotel/booking` responde 200, e a saga simplesmente
+  não avança. O casamento é por igualdade de pacote, não por prefixo — **um subpacote novo
+  de evento precisa entrar naquela lista**.
+- O Jackson só constrói uma classe se enxergar **um** creator. Com um construtor público
+  único ele o usa sozinho, sem configuração nenhuma; com dois candidatos ele não desempata
+  e recusa a mensagem. O `@SuperBuilder` cria exatamente esse segundo candidato — o
+  construtor que recebe o builder —, então **toda classe de evento com `@SuperBuilder`
+  precisa de `@Jacksonized`**, que manda o Jackson desserializar pelo próprio builder.
+- O `@Jacksonized` depende de `lombok.config` na raiz: sem
+  `lombok.jacksonized.jacksonVersion += 3` o Lombok gera as anotações do Jackson **2** e a
+  compilação quebra com `package com.fasterxml.jackson.databind.annotation does not exist`.
+  A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
+  o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
+  `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
+- `ContratoDeEventosTest`, no `commons`, varre o pacote e prova que cada classe concreta de
+  evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
+  ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
+  saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
+  cobertura sozinho; não há lista para manter.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.

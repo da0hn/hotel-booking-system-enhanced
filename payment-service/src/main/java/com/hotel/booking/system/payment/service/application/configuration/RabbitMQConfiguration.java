@@ -1,6 +1,6 @@
 package com.hotel.booking.system.payment.service.application.configuration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hotel.booking.system.commons.core.domain.event.TrustedEventPackages;
 import com.hotel.booking.system.payment.service.application.configuration.properties.ExchangeProperties;
 import com.hotel.booking.system.payment.service.application.configuration.properties.QueueProperties;
 import com.hotel.booking.system.payment.service.application.configuration.properties.RoutingKeyProperties;
@@ -9,10 +9,11 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import tools.jackson.databind.json.JsonMapper;
 
 @Configuration
 @AllArgsConstructor
@@ -49,9 +50,15 @@ public class RabbitMQConfiguration {
       .with(this.routingKeyProperties.paymentConfirmation());
   }
 
+  /**
+   * Os pacotes confiáveis são declarados porque este converter, ao contrário do
+   * {@code Jackson2JsonMessageConverter} que ele substitui, nasce confiando apenas em
+   * {@code java.util} e {@code java.lang}. A lista vive no {@code commons}, junto do
+   * contrato de eventos que ela protege.
+   */
   @Bean
-  public MessageConverter jsonMessageConverter(final ObjectMapper objectMapper) {
-    return new Jackson2JsonMessageConverter(objectMapper);
+  public MessageConverter jsonMessageConverter(final JsonMapper jsonMapper) {
+    return new JacksonJsonMessageConverter(jsonMapper, TrustedEventPackages.names());
   }
 
 }

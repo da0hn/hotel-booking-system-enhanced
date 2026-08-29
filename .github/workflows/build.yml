@@ -37,12 +37,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # 21 e não a mais nova: o Lombok gerenciado pelo Spring Boot 3.2.0 não
-  # suporta o JDK 25 e desabilita o annotation processor em silêncio. O erro
-  # que aparece é `cannot infer type arguments`, que não diz nada sobre a
-  # causa. O `Dockerfile` recebe este mesmo valor por `build-arg`, para que a
-  # base declarada no label e a base real nunca divirjam.
-  JAVA_VERSION: '21'
+  JAVA_VERSION: '25'
 
 jobs:
 
@@ -217,11 +212,12 @@ jobs:
             fi
           fi
 
-          # Uma mudança no `commons`, no pom agregador, no `Dockerfile` ou
-          # neste workflow alcança os quatro serviços: eles compilam a partir
-          # dos mesmos arquivos, e o `commons` carrega o contrato de eventos
-          # que os quatro desserializam.
-          comum='^(pom\.xml|Dockerfile|\.dockerignore|commons/|\.github/workflows/build\.yml)'
+          # Uma mudança no `commons`, no pom agregador, no `Dockerfile`, no
+          # `lombok.config` ou neste workflow alcança os quatro serviços: eles
+          # compilam a partir dos mesmos arquivos, e o `commons` carrega o
+          # contrato de eventos que os quatro desserializam. O `lombok.config`
+          # muda o bytecode dos quatro sem aparecer no diff de nenhum.
+          comum='^(pom\.xml|Dockerfile|\.dockerignore|lombok\.config|commons/|\.github/workflows/build\.yml)'
 
           afeta() {
             [ "$alterados" = 'TODOS' ] && return 0

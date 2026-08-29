@@ -8,11 +8,7 @@
 # Aqui as camadas estão ordenadas por volatilidade: as dependências e o
 # `commons` são idênticos nas quatro imagens e sobrevivem a qualquer mudança
 # no código de um serviço.
-#
-# JDK 21 e não 25: o Lombok gerenciado pelo Spring Boot 3.2.0 não suporta o
-# 25 e desabilita o annotation processor em silêncio — os erros aparecem como
-# `cannot infer type arguments`, escondendo a causa real.
-ARG JAVA_VERSION=21
+ARG JAVA_VERSION=25
 
 FROM maven:3.9-eclipse-temurin-${JAVA_VERSION} AS build
 WORKDIR /build
@@ -22,6 +18,9 @@ WORKDIR /build
 # Os cinco `pom.xml` entram porque o Maven precisa do reactor completo para
 # resolver o parent e o agregador.
 COPY pom.xml .
+# O `lombok.config` entra aqui, e não com o código: ele decide quais anotações
+# o Lombok gera, então precisa estar no lugar antes da primeira compilação.
+COPY lombok.config .
 COPY commons/pom.xml commons/
 COPY hotel-service/pom.xml hotel-service/
 COPY booking-service/pom.xml booking-service/
