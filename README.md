@@ -123,9 +123,11 @@ Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo
 ficam **dentro** de um único schema. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos
 dois lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
 
-Os três schemas moram na mesma instância, o que torna as travessias abaixo tecnicamente declaráveis como
-chave estrangeira. Elas continuam sem declaração de propósito: cada serviço é dono do seu schema, e uma FK
-entre schemas amarraria o deploy dos dois.
+As travessias abaixo não têm chave estrangeira **de propósito**, e a razão não é técnica. O padrão que o
+sistema segue é *database per service*: cada serviço é dono exclusivo do seu dado, e nenhum outro alcança
+esse dado — nem por consulta, nem por constraint. Uma FK de `booking` para `customer` diria que o
+`booking-service` depende estruturalmente de uma tabela que pertence ao domínio do `customer-service`, e é
+precisamente essa dependência que a saga existe para evitar.
 
 São quatro travessias, e cada uma se sustenta em algo diferente:
 
@@ -151,11 +153,18 @@ O diagrama acima é o de depois da migração. O de antes está versionado ao la
 [`05-data-model-antes-mysql.jpg`](docs/diagrams/05-data-model-antes-mysql.jpg), e vale abrir os dois lado a
 lado: eram três instâncias de MySQL, uma por serviço, em portas separadas.
 
-A diferença que o desenho revela e a prosa esconde é qual era o **motivo** da ausência de integridade entre
-os serviços. Com três bancos separados, um `FOREIGN KEY` atravessando a fronteira era impossível — não havia
-o que discutir. Com três schemas na mesma instância ele passou a ser declarável, e a ausência virou decisão:
-uma FK entre schemas amarraria o deploy de dois serviços. O sistema continua exatamente tão frouxo quanto
-era; o que mudou é que agora isso é uma escolha.
+A diferença que o desenho revela e a prosa esconde não é sobre o modelo, que é o mesmo. É sobre **o que
+protege o isolamento entre os serviços**.
+
+*Database per service* continua sendo o padrão seguido; o que a limitação de recurso do homelab impôs foi a
+variante reduzida, um schema por serviço, com a mesma regra de propriedade do dado. A regra não afrouxou —
+mas quem a fazia valer, sim. Com três instâncias separadas, uma FK atravessando a fronteira era impossível
+de escrever: o erro não tinha como ser cometido. Com três schemas na mesma instância ela passou a ser
+sintaticamente válida, e o que impede a violação hoje é disciplina, não infraestrutura.
+
+Isso não é um convite para declará-la. É o inverso: a barreira que era física virou combinado, e vale saber
+disso antes que alguém adicione a constraint "para garantir a integridade" e acople o deploy de dois
+serviços sem perceber.
 
 ---
 

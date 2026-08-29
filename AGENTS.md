@@ -184,8 +184,21 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
-Foi um schema por serviço, e não um banco por serviço, por causa do homelab onde o sistema
-roda — a separação de nomes é a mesma, e o custo em processos, não.
+
+O padrão é *database per service*, e a redução para um schema por serviço é consequência da
+limitação de recurso do homelab, não uma mudança de desenho: **cada serviço continua dono
+exclusivo do seu dado, e nenhum outro o alcança — nem por consulta, nem por constraint.**
+
+Daí uma regra que o layout compartilhado deixou de proteger sozinho: **nunca declare uma
+chave estrangeira atravessando schemas.** Colunas como `booking.booking.customer_id` e
+`booking.room.hotel_id` guardam ids de domínios alheios de propósito; a ausência de FK ali é
+o desenho, não uma lacuna a corrigir. Uma FK faria o serviço depender estruturalmente do
+domínio de outro, que é exatamente a dependência que a saga existe para evitar — e acoplaria
+os deploys e as migrations dos dois.
+
+Enquanto eram três instâncias de MySQL separadas, essa violação era impossível de escrever.
+Numa instância só ela compila, então o que a impede passou a ser esta linha. Os dois desenhos
+estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.jpg` e `-depois-postgres.jpg`.
 
 ### Camadas dentro de cada serviço
 
