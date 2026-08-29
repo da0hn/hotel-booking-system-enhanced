@@ -15,11 +15,13 @@ spring:
   datasource:
     driver-class-name: org.postgresql.Driver
     # O `currentSchema` existe porque nem tudo passa pelo `default_schema` do Hibernate: uma
-    # consulta nativa resolve o nome da tabela pelo `search_path` da conexão. O `public` no
-    # fim do caminho é o que enxerga a extensão `unaccent`.
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5442}/${DB_NAME:hotel_booking_system}?currentSchema=${BOOKING_DB_SCHEMA:booking},public
-    username: ${DB_USERNAME:user}
-    password: ${DB_PASSWORD:password}
+    # consulta nativa resolve o nome da tabela pelo `search_path` da conexão. Só o schema do
+    # serviço entra no caminho — é o único que este usuário enxerga.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5442}/${DB_NAME:hotel_booking_system}?currentSchema=${BOOKING_DB_SCHEMA:booking}
+    # As coordenadas do banco são compartilhadas; a identidade, não. Cada serviço conecta com
+    # o próprio usuário, e é isso que o impede de ler o schema dos outros.
+    username: ${BOOKING_DB_USERNAME:user_booking_service}
+    password: ${BOOKING_DB_PASSWORD:password}
   flyway:
     # Os três serviços com banco dividem uma instância só e se separam por schema. As
     # coordenadas de conexão continuam vindo do `DataSource`; o que o Flyway não tem como

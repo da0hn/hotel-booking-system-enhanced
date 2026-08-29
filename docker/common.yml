@@ -21,6 +21,9 @@ services:
     ports:
       - '5442:5432'
     volumes:
+      # O entrypoint do postgres só executa isto no primeiro start, com o volume vazio. Num
+      # volume que já tem dado, os papéis precisam ser criados à mão.
+      - ./scripts/01-create-service-roles.sql:/docker-entrypoint-initdb.d/01-create-service-roles.sql
       - hotel-booking-system-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: [ 'CMD-SHELL', 'pg_isready -U user -d hotel_booking_system' ]

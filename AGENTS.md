@@ -46,8 +46,8 @@ Os testes com sufixo `IT` sobem um container do banco pelo Testcontainers e fica
 em domínio, e `mvn verify` é a que exige Docker no host. A separação é só pelo sufixo:
 o surefire não coleta `*IT`, o failsafe coleta por padrão.
 
-Cada serviço com banco tem um `AbstractDatabaseIT` que declara o container e um
-`application-test.yml` com `hibernate.ddl-auto: validate`. **A asserção de forma mais
+Cada serviço com banco tem um `AbstractDatabaseIT` que declara o container, conecta com o
+usuário restrito do serviço e um `application-test.yml` com `hibernate.ddl-auto: validate`. **A asserção de forma mais
 forte não está em nenhum método de teste**: é o `validate`. Se o contexto sobe, o
 Hibernate já confrontou cada `@Column` das entidades contra as colunas que o Flyway
 acabou de criar. Os métodos cobrem o que ele não olha — dados de seed, acentuação,
@@ -197,8 +197,32 @@ domínio de outro, que é exatamente a dependência que a saga existe para evita
 os deploys e as migrations dos dois.
 
 Enquanto eram três instâncias de MySQL separadas, essa violação era impossível de escrever.
-Numa instância só ela compila, então o que a impede passou a ser esta linha. Os dois desenhos
-estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.jpg` e `-depois-postgres.jpg`.
+Numa instância só ela compila, e por isso o isolamento passou a ser sustentado por privilégio:
+**cada serviço conecta com o próprio usuário**, `user_hotel_service`, `user_booking_service` e
+`user_customer_service`, criados por `docker/scripts/01-create-service-roles.sql`.
+
+Não há `REVOKE` nesse arquivo, e não é esquecimento. Um schema no PostgreSQL pertence a quem o
+criou, e nenhum outro papel recebe `USAGE` nele por padrão — como cada serviço cria o seu pelo
+Flyway, com o próprio usuário, a negação já é o comportamento default. O que o script faz é só
+criar os papéis, tirar do `PUBLIC` o acesso ao banco e conceder `create` a cada um, que é o
+privilégio de que o Flyway precisa para criar o schema **e** o que o torna dono dele. Se algum
+dia o schema passar a nascer de outro papel, o isolamento some sem que uma linha de
+configuração mude; `IsolacaoEntreSchemasIT` existe para acusar isso.
+
+Duas consequências práticas disso:
+
+- **Os testes de integração conectam com o usuário do serviço, não com o dono do container.**
+  É o que faz uma migration que exija privilégio demais falhar no `mvn verify`, e não só no
+  ambiente onde ninguém está olhando. Foi assim que a V011 mudou: `create extension ... with
+  schema public` exige `CREATE` no `public`, que o `PUBLIC` perdeu no PostgreSQL 15 — sem
+  `with schema`, a extensão nasce no schema do próprio serviço, que ele possui.
+- **O `@ServiceConnection` não é usado.** Ele deriva usuário e senha do container, e o que se
+  quer é justamente conectar como outro; o `AbstractDatabaseIT` monta o `DataSource` com
+  `@DynamicPropertySource` e monta no container o mesmo arquivo de papéis que o compose usa,
+  para que os dois não divirjam.
+
+Os dois desenhos estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.jpg` e
+`-depois-postgres.jpg`.
 
 ### Camadas dentro de cada serviço
 

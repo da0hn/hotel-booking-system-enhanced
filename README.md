@@ -199,6 +199,21 @@ As credenciais de acesso e portas podem ser alteradas através das variáveis de
 |PostgreSQL|        5442        |  hotel-booking-system-db   |  user   | password |
 | RabbitMQ | 5672, 25676, 15672 | hotel-booking-system-queue |  root   |   root   |
 
+O usuário `user` acima é o dono do banco e existe para administração; **nenhum serviço conecta com ele.**
+Cada um tem o seu, com acesso apenas ao próprio schema:
+
+| Serviço | Usuário | Senha | Schema que enxerga |
+|---|---|---|---|
+| `hotel-service` | `user_hotel_service` | `password` | `hotel` |
+| `booking-service` | `user_booking_service` | `password` | `booking` |
+| `customer-service` | `user_customer_service` | `password` | `customer` |
+
+Os três papéis são criados por [`docker/scripts/01-create-service-roles.sql`](docker/scripts/01-create-service-roles.sql),
+que o container executa sozinho no primeiro start. O que impede um serviço de ler o schema do outro não é
+um `REVOKE` escrito à mão: um schema pertence a quem o criou, e nenhum outro papel recebe `USAGE` nele por
+padrão. Como cada serviço cria o seu pelo Flyway com o próprio usuário, a negação é o comportamento default
+do PostgreSQL — e `IsolacaoEntreSchemasIT`, no `hotel-service`, prova isso a cada `mvn verify`.
+
 ## 2.3. Tópicos e filas
 
 |         Exchange          |               Routing Key               |             Fila              |
@@ -269,8 +284,21 @@ docker volume create --name=hotel-booking-system-db-volume --driver local --opt 
 ```
 
 * Os três serviços com banco dividem a mesma instância e se separam por **schema** — `hotel`, `booking` e
-  `customer` —, cada um criado e migrado pelo Flyway do próprio serviço. Não há passo manual de criação de
-  schema, e o banco `hotel_booking_system` nasce do `POSTGRES_DB` do container.
+  `customer` —, cada um criado e migrado pelo Flyway do próprio serviço, com o usuário do próprio serviço.
+  Não há passo manual de criação de schema, e o banco `hotel_booking_system` nasce do `POSTGRES_DB` do
+  container.
+
+* Os três usuários, por outro lado, precisam existir antes dos serviços subirem. No compose isso é
+  automático: `01-create-service-roles.sql` está montado em `/docker-entrypoint-initdb.d/`, que o entrypoint
+  do PostgreSQL executa **apenas quando o volume está vazio**. Se você reaproveitar um volume que já tem
+  dado, ou for para um banco fora do compose, rode o mesmo arquivo à mão, uma vez, com um superusuário:
+
+  ```sh
+  psql -h <host> -p <porta> -U <superusuario> -d hotel_booking_system -f docker/scripts/01-create-service-roles.sql
+  ```
+
+  Ele é idempotente. E troque as senhas antes de usar em qualquer lugar que não seja a sua máquina — as do
+  arquivo são as mesmas do resto do repositório, e existem para o ambiente local funcionar sem configuração.
 
 * Após isso é possível iniciar todos os serviços e aplicações auxiliares como banco de dados e filas executando o comando abaixo dentro da pasta
   `docker`.

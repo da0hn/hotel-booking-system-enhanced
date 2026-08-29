@@ -4,8 +4,11 @@
 -- comportamento precisa ser pedido explicitamente — e é a `unaccent` que a `@Query` do
 -- HotelJpaRepository chama.
 --
--- A extensão nasce no `public` de propósito: ele está sempre no `search_path`, enquanto o
--- schema do serviço não está (o Hibernate qualifica tabelas, não muda o caminho de busca).
--- Desde o PostgreSQL 13 a `unaccent` é trusted, então o dono do banco a cria sem ser
--- superusuário.
-create extension if not exists unaccent with schema public;
+-- Sem `with schema`, a extensão nasce no primeiro schema do `search_path`, que durante a
+-- migração é o schema do próprio serviço. É de propósito: `with schema public` exigiria
+-- CREATE no `public`, privilégio que o PUBLIC perdeu no PostgreSQL 15 e que o
+-- `user_hotel_service` não tem — a migração passaria com superusuário e falharia em
+-- produção. Aqui ela roda com o mesmo usuário que é dono do schema.
+--
+-- Desde o PostgreSQL 13 a `unaccent` é trusted, então criá-la não exige superusuário.
+create extension if not exists unaccent;

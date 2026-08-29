@@ -15,9 +15,9 @@ services:
       DB_HOST: hotel-booking-system-db
       DB_PORT: 5432
       DB_NAME: hotel_booking_system
-      DB_USERNAME: user
-      DB_PASSWORD: password
       HOTEL_DB_SCHEMA: hotel
+      HOTEL_DB_USERNAME: user_hotel_service
+      HOTEL_DB_PASSWORD: password
       ENABLE_BUILTIN_DOCKER_COMPOSE: false
       RABBITMQ_HOST: hotel-booking-system-queue
       RABBITMQ_PORT: 5672
@@ -42,9 +42,9 @@ services:
       DB_HOST: hotel-booking-system-db
       DB_PORT: 5432
       DB_NAME: hotel_booking_system
-      DB_USERNAME: user
-      DB_PASSWORD: password
       BOOKING_DB_SCHEMA: booking
+      BOOKING_DB_USERNAME: user_booking_service
+      BOOKING_DB_PASSWORD: password
       ENABLE_BUILTIN_DOCKER_COMPOSE: false
       RABBITMQ_HOST: hotel-booking-system-queue
       RABBITMQ_PORT: 5672
@@ -91,9 +91,9 @@ services:
       DB_HOST: hotel-booking-system-db
       DB_PORT: 5432
       DB_NAME: hotel_booking_system
-      DB_USERNAME: user
-      DB_PASSWORD: password
       CUSTOMER_DB_SCHEMA: customer
+      CUSTOMER_DB_USERNAME: user_customer_service
+      CUSTOMER_DB_PASSWORD: password
       ENABLE_BUILTIN_DOCKER_COMPOSE: false
       RABBITMQ_HOST: hotel-booking-system-queue
       RABBITMQ_PORT: 5672

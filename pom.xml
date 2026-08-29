@@ -73,15 +73,6 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- O `@ServiceConnection`, que aponta o contexto de teste para o container.
-             É agnóstico de banco: o módulo do Testcontainers correspondente ao banco é
-             declarado por serviço, ao lado do driver de produção, para que os dois
-             troquem juntos na hora da migração. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-testcontainers</artifactId>
-            <scope>test</scope>
-        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
