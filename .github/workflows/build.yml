@@ -37,10 +37,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # O `Dockerfile` recebe este mesmo valor por `build-arg`, para que a base
-  # declarada no label OCI e a base real nunca divirjam. Trocar aqui sem
-  # trocar o default do `ARG JAVA_VERSION` do `Dockerfile` faria o build local
-  # e o do CI usarem JDKs diferentes sem ninguém perceber.
   JAVA_VERSION: '25'
 
 jobs:
@@ -220,7 +216,6 @@ jobs:
           # `lombok.config` ou neste workflow alcança os quatro serviços: eles
           # compilam a partir dos mesmos arquivos, e o `commons` carrega o
           # contrato de eventos que os quatro desserializam. O `lombok.config`
-          # entra na lista porque decide quais anotações o Lombok gera — ele
           # muda o bytecode dos quatro sem aparecer no diff de nenhum.
           comum='^(pom\.xml|Dockerfile|\.dockerignore|lombok\.config|commons/|\.github/workflows/build\.yml)'
 

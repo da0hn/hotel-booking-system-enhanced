@@ -149,6 +149,14 @@ Regras que o código segue e que devem ser mantidas:
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
 - Estilo: indentação de 2 espaços, `final` em parâmetros e campos, `this.` explícito em
   todo acesso a membro, `var` para locais.
+- **A explicação vai no Javadoc, não em comentário inline.** Se o que se quer dizer
+  descreve o que a classe ou o método é, faz ou pressupõe, o lugar é o Javadoc do
+  elemento — não um `//` solto acima da assinatura nem no meio do corpo. Comentário
+  inline fica reservado ao que **não cabe** no Javadoc: um contexto preso a uma linha
+  específica, que quem lê aquele trecho precisa saber ali e que se perderia descrito de
+  fora. Na dúvida, é Javadoc.
+- A mesma economia vale para `pom.xml` e para os workflows: comente o que surpreende, não
+  o que o próprio arquivo já diz.
 
 ### Fluxo da saga (o que é preciso entender antes de mexer)
 

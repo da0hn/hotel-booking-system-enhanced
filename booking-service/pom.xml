@@ -41,11 +41,6 @@
 
     <build>
         <plugins>
-            <!-- Declarado, e não herdado: o parent do Spring Boot mantém este plugin
-                 apenas em `pluginManagement`, então a execução `repackage` — a que
-                 transforma o jar em executável, e é dela que o `Dockerfile` depende —
-                 só acontece onde o plugin é declarado. O `commons` não o declara de
-                 propósito: é biblioteca, e não tem classe principal a empacotar. -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

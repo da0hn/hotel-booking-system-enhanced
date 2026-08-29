@@ -130,12 +130,14 @@ public class RabbitMQConfiguration {
       .with(this.routingKeyProperties.bookingRoomStatusChanged());
   }
 
+  /**
+   * Os pacotes confiáveis são declarados porque este converter, ao contrário do
+   * {@code Jackson2JsonMessageConverter} que ele substitui, nasce confiando apenas em
+   * {@code java.util} e {@code java.lang}. A lista vive no {@code commons}, junto do
+   * contrato de eventos que ela protege.
+   */
   @Bean
   public MessageConverter jsonMessageConverter(final JsonMapper jsonMapper) {
-    // Os pacotes confiáveis são declarados porque este converter, ao contrário
-    // do `Jackson2JsonMessageConverter` que ele substitui, nasce confiando só em
-    // `java.util` e `java.lang`. A lista vive no `commons`, junto do contrato que
-    // ela protege.
     return new JacksonJsonMessageConverter(jsonMapper, TrustedEventPackages.names());
   }
 

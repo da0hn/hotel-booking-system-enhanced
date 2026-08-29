@@ -8,12 +8,6 @@
 # Aqui as camadas estão ordenadas por volatilidade: as dependências e o
 # `commons` são idênticos nas quatro imagens e sobrevivem a qualquer mudança
 # no código de um serviço.
-#
-# JDK 25. O que antes prendia o build no 21 não era o Lombok em si: era o
-# javac, que a partir do 23 deixou de descobrir annotation processors pelo
-# classpath e passou a assumir `-proc:none` quando ninguém declara o caminho.
-# O `annotationProcessorPaths` no pom raiz declara esse caminho, e com ele o
-# Lombok volta a rodar em qualquer JDK recente.
 ARG JAVA_VERSION=25
 
 FROM maven:3.9-eclipse-temurin-${JAVA_VERSION} AS build
@@ -24,11 +18,8 @@ WORKDIR /build
 # Os cinco `pom.xml` entram porque o Maven precisa do reactor completo para
 # resolver o parent e o agregador.
 COPY pom.xml .
-# O `lombok.config` entra junto dos poms, e não com o código: ele decide quais
-# anotações o Lombok gera, então precisa estar no lugar antes da primeira
-# compilação. Sem ele, o `@Jacksonized` das classes de evento sai apontando
-# para o Jackson 2 e o build quebra em `package
-# com.fasterxml.jackson.databind.annotation does not exist`.
+# O `lombok.config` entra aqui, e não com o código: ele decide quais anotações
+# o Lombok gera, então precisa estar no lugar antes da primeira compilação.
 COPY lombok.config .
 COPY commons/pom.xml commons/
 COPY hotel-service/pom.xml hotel-service/

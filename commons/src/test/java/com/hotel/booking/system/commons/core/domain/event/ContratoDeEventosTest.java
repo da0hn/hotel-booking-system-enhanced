@@ -15,24 +15,22 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Trava a propriedade da qual a saga inteira depende: toda classe de evento
- * precisa ser construível pelo Jackson a partir de um objeto JSON.
+ * Trava a propriedade da qual a saga inteira depende: toda classe de evento precisa ser
+ * construível pelo Jackson a partir de um objeto JSON.
  * <p>
- * Este teste existe porque a atualização para o Jackson 3 quebrou exatamente
- * isso, e nada acusou: os serviços subiam saudáveis, o `POST /hotel/booking`
- * respondia 200, e a saga parava na primeira resposta. Um teste de domínio não
- * alcança esse tipo de falha, porque ela não está no domínio — está na ponte
- * entre ele e a fila.
- * <p>
- * As classes são descobertas varrendo o pacote, e não listadas à mão, para que
- * um evento novo entre na cobertura sem ninguém precisar lembrar disso.
+ * Este teste existe porque a atualização para o Jackson 3 quebrou exatamente isso, e nada
+ * acusou: os serviços subiam saudáveis, o {@code POST /hotel/booking} respondia 200, e a
+ * saga parava na primeira resposta. Um teste de domínio não alcança esse tipo de falha,
+ * porque ela não está no domínio — está na ponte entre ele e a fila.
  */
 @DisplayName("Contrato de desserialização dos eventos")
 class ContratoDeEventosTest {
 
-  // Deliberadamente sem configuração: se um evento só desserializa com um
-  // mapper ajustado, ele depende de uma combinação que os quatro serviços
-  // precisariam repetir — e que um deles vai esquecer.
+  /**
+   * Deliberadamente sem configuração: se um evento só desserializa com um mapper
+   * ajustado, ele depende de uma combinação que os quatro serviços precisariam repetir —
+   * e que um deles vai esquecer.
+   */
   private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
   @TestFactory
@@ -50,6 +48,16 @@ class ContratoDeEventosTest {
           .doesNotThrowAnyException()));
   }
 
+  /**
+   * Descobre as classes varrendo o pacote, em vez de listá-las à mão, para que um evento
+   * novo entre na cobertura sem ninguém precisar lembrar disso.
+   * <p>
+   * O critério é o pacote, e não {@code Event.class::isAssignableFrom}. O filtro por
+   * interface seria o reflexo natural e deixaria justamente as classes erradas de fora:
+   * {@code BookingRoomStatusUpdatedEvent} e {@code PaymentRequestedEvent} não implementam
+   * {@code Event}, e é sob a primeira que vivem as duas subclasses que quebraram na
+   * migração para o Jackson 3. A única exceção é nomeada.
+   */
   private List<Class<?>> classesDeEvento() throws IOException {
     final var raiz = Path.of("target", "classes");
     final var pacote = raiz.resolve(Path.of("com", "hotel", "booking", "system",
@@ -63,11 +71,6 @@ class ContratoDeEventosTest {
           .replace(".class", "")
           .replace(java.io.File.separatorChar, '.'))
         .map(ContratoDeEventosTest::carregar)
-        // Filtrar por `Event.class::isAssignableFrom` seria o reflexo natural e
-        // deixaria justamente as classes erradas de fora: `BookingRoomStatusUpdatedEvent`
-        // e `PaymentRequestedEvent` não implementam `Event`, e é sob a primeira que
-        // vivem as duas subclasses que quebraram na migração. O critério aqui é o
-        // pacote, e a única exceção é nomeada.
         .filter(t -> !t.isInterface())
         .filter(t -> !t.isEnum())
         .filter(t -> !Modifier.isAbstract(t.getModifiers()))
