@@ -1,0 +1,113 @@
+# Back-merge: abre o Pull Request que devolve a `master` para a `develop`.
+#
+# No gitflow, `release/*` e `hotfix/*` entram pela `master`. Sem devolver esse
+# merge para a `develop`, a correção existe em produção e não existe na linha
+# de integração — e some no próximo corte de release, porque a branch nova
+# nasce de uma `develop` que nunca soube da correção. É o modo de falha
+# clássico do gitflow, e ele é silencioso: nada quebra no dia do merge, só
+# semanas depois, quando o bug corrigido reaparece.
+#
+# Este workflow não faz o merge; ele abre o PR. A decisão de integrar, e a
+# resolução de conflito quando houver, continuam sendo de quem revisa.
+name: back-merge
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Dois merges seguidos na `master` abririam a corrida de criar o mesmo PR duas
+# vezes. Aqui a execução anterior termina antes: o segundo disparo encontra o
+# PR que o primeiro criou e apenas confirma que ele já cobre os dois merges,
+# porque um PR entre branches acompanha a `head` sozinho.
+concurrency:
+  group: back-merge
+  cancel-in-progress: false
+
+jobs:
+
+  abrir-pr:
+    name: Abrir PR da master para a develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # `fetch-depth: 0` traz todo o histórico da ref do evento, mas não traz
+      # as outras branches. Sem este fetch não existe `origin/develop` para
+      # comparar, e o job falharia com "unknown revision".
+      - name: Buscar as duas pontas
+        run: git fetch --quiet origin master develop
+
+      - name: Abrir ou confirmar o Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # A pergunta certa não é "as árvores diferem", e sim "existe commit
+          # na master que a develop não tem". As duas podem ter conteúdo
+          # idêntico e históricos distintos; nesse caso não há o que integrar,
+          # e um PR sem commits seria recusado pela API.
+          pendentes="$(git rev-list --count origin/develop..origin/master)"
+
+          if [ "$pendentes" -eq 0 ]; then
+            echo 'A develop já contém tudo o que está na master. Nada a fazer.'
+            exit 0
+          fi
+
+          echo "Commits na master ausentes na develop: ${pendentes}"
+
+          # Um PR entre branches segue a `head` automaticamente: o merge da
+          # release e o hotfix que vier depois cabem no mesmo PR. Abrir um
+          # segundo só produziria ruído e um conflito garantido entre eles.
+          existente="$(
+            gh pr list --base develop --head master --state open \
+              --json number --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$existente" ]; then
+            echo "O PR #${existente} já está aberto e passou a cobrir estes commits."
+            exit 0
+          fi
+
+          # A origem do merge muda o título porque muda a urgência de quem lê
+          # a lista de PRs: um hotfix devolvido é uma correção de produção que
+          # ainda não está na linha de integração.
+          assunto="$(git log -1 --pretty=%s origin/master)"
+          case "$assunto" in
+            *hotfix/*) titulo='chore: back-merge do hotfix da master para a develop' ;;
+            *release/*) titulo='chore: back-merge da release da master para a develop' ;;
+            *) titulo='chore: back-merge da master para a develop' ;;
+          esac
+
+          {
+            echo 'Devolve para a `develop` o que entrou na `master`, para que a'
+            echo 'próxima release não nasça de uma linha de integração que'
+            echo 'desconhece a correção já publicada.'
+            echo
+            echo "Commits pendentes (${pendentes}):"
+            echo
+            git log --pretty='- %h %s' origin/develop..origin/master
+            echo
+            echo '---'
+            echo
+            echo 'PR aberto automaticamente pelo workflow `back-merge`. Como ele'
+            echo 'foi criado com o `GITHUB_TOKEN` do job, o GitHub não dispara o'
+            echo 'workflow `build` para ele — feche e reabra o PR, ou empurre um'
+            echo 'commit, se precisar dos checks antes de integrar.'
+          } > corpo.md
+
+          gh pr create \
+            --base develop \
+            --head master \
+            --title "$titulo" \
+            --body-file corpo.md
+
+          echo "PR aberto: ${titulo}"

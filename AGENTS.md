@@ -45,8 +45,45 @@ imagens e vêm do cache. Ao adicionar um módulo ao reator, o `COPY` do `pom.xml
 precisa entrar no `Dockerfile` — o Maven exige o reactor completo para resolver o parent.
 
 O workflow `.github/workflows/build.yml` roda `mvn verify` no reactor inteiro e publica
-no GHCR só o que mudou, com tag imutável `X.Y.Z-<run_number>` (nunca `latest`) e labels
-OCI de proveniência. `commons` não vira imagem: é gatilho de reconstrução dos quatro.
+no GHCR só o que mudou, com labels OCI de proveniência. `commons` não vira imagem: é
+gatilho de reconstrução dos quatro. O que sai do build depende de onde o commit caiu:
+
+| Gatilho | Roda | Publica |
+|---|---|---|
+| `pull_request` (qualquer origem) | `mvn verify` | — |
+| push em `develop` | `mvn verify` | — |
+| push em `release/X.Y.Z` ou `hotfix/X.Y.Z` | bump do `<revision>` + `mvn verify` | `X.Y.Z-RC.<run_number>` e `X.Y.Z-RC-latest` |
+| push em `master` | `mvn verify` + `git tag X.Y.Z` | `X.Y.Z-<run_number>` e `X.Y.Z-latest` |
+
+A tag imutável (`-<run_number>`) é a que se cita num diagnóstico: ela responde qual
+imagem está rodando no homelab. A móvel (`-latest`) existe só para quem não quer
+descobrir o número do build, e nunca substitui a primeira.
+
+`.github/workflows/back-merge.yml` abre o PR `master → develop` a cada push na `master`,
+para que a correção que entrou por `hotfix/*` não desapareça no próximo corte de release.
+Ele não faz o merge — só abre o PR, e reaproveita o que já estiver aberto.
+
+O desenho completo do fluxo está em `docs/diagrams/06-gitflow-pipeline.jpg`.
+
+### Gitflow
+
+Nenhum trabalho nasce na `master` nem na `develop`:
+
+- `feature/*` nasce da `develop` e volta para ela por PR.
+- `release/X.Y.Z` nasce da `develop`; `hotfix/X.Y.Z` nasce da `master`. Nas duas, **a
+  versão vem do nome da branch** e o pom é ajustado para segui-la — a pipeline commita
+  `chore(release): bump da versão para X.Y.Z` na própria branch. O `<revision>` recebe
+  apenas o semver; o `run_number` existe só na tag da imagem.
+- `release/*` e `hotfix/*` entram na `master` por PR, e a `master` volta para a `develop`
+  pelo PR que o `back-merge` abre.
+- Ao entrar na `master`, o commit ganha a tag anotada `X.Y.Z` — sem prefixo `v`, e criada
+  depois do build e da publicação, nunca antes. Ela é idempotente: um push posterior na
+  `master` que não mexa no `<revision>` encontra a tag existente e não tenta recriá-la.
+
+Dois efeitos do `GITHUB_TOKEN` que explicam decisões do workflow: pushes feitos com ele
+não disparam novas execuções — é o que impede o bump de entrar em loop, e é por isso que
+a imagem RC precisa ser construída na mesma execução que fez o bump. Pela mesma razão, o
+PR de back-merge nasce sem checks.
 
 Para rodar um serviço isolado na IDE, as portas de banco default do `application.yml`
 apontam para as portas publicadas pelo compose (3311/3312/3313), não para 3306.
