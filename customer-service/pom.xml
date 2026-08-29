@@ -39,6 +39,20 @@
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- No Spring Boot 4 as fatias de teste sairam do `spring-boot-test-autoconfigure`
+             e foram para artefatos por tecnologia. Este starter traz o `@DataJpaTest`
+             (`spring-boot-data-jpa-test`) e o `@AutoConfigureTestDatabase`
+             (`spring-boot-jdbc-test`), que ate a 3.x vinham no `spring-boot-starter-test`. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

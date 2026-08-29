@@ -24,10 +24,6 @@ spring:
       hibernate:
         enable_lazy_load_no_trans: true
         format_sql: true
-  flyway:
-    url: jdbc:mysql://${BOOKING_DB_HOST:localhost}:${BOOKING_DB_PORT:3312}/${BOOKING_DB_NAME:booking_db}?autoReconnect=true&useSSL=false&serverTimezone=UTC&enabledTLSProtocols=TLSv1.2
-    user: ${BOOKING_DB_USERNAME:user}
-    password: ${BOOKING_DB_PASSWORD:password}
   docker:
     compose:
       file: '.\docker\common.yml'

@@ -29,13 +29,45 @@ de o erro voltar exatamente com essa cara.
 | Objetivo | Comando |
 |---|---|
 | Build completo (reator) | `mvn -B clean install -DskipTests` |
-| Rodar todos os testes | `mvn -B test` |
+| Rodar os testes unitários | `mvn -B test` |
+| Rodar tudo, incluindo os de integração | `mvn -B verify` |
 | Testes de um módulo | `mvn -B test -pl hotel-service` |
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
+| Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
+
+### Testes de integração
+
+Os testes com sufixo `IT` sobem um container do banco pelo Testcontainers e ficam sob o
+**failsafe**, não sob o surefire — `mvn test` continua sendo a volta rápida de quem mexe
+em domínio, e `mvn verify` é a que exige Docker no host. A separação é só pelo sufixo:
+o surefire não coleta `*IT`, o failsafe coleta por padrão.
+
+Cada serviço com banco tem um `AbstractDatabaseIT` que declara o container e um
+`application-test.yml` com `hibernate.ddl-auto: validate`. **A asserção de forma mais
+forte não está em nenhum método de teste**: é o `validate`. Se o contexto sobe, o
+Hibernate já confrontou cada `@Column` das entidades contra as colunas que o Flyway
+acabou de criar. Os métodos cobrem o que ele não olha — dados de seed, acentuação,
+precisão decimal, chaves e a semântica das `@Query`.
+
+O `AbstractDatabaseIT` é o **único ponto de cada módulo que nomeia o banco**. Trocar de
+engine é trocar aquela declaração; nenhuma subclasse menciona MySQL ou PostgreSQL, e é
+por isso que elas provam equivalência em vez de provar que um banco funciona.
+
+Dois testes afirmam de propósito um comportamento **errado** de hoje, e o Javadoc de cada
+um diz isso: `FlywayMigrationIT#arredondaCentavosNoPrecoDoQuarto` (hotel) e
+`#arredondaCentavosNoTotalDaReserva` (booking). As colunas de dinheiro são `decimal` sem
+precisão, o que no MySQL significa `DECIMAL(10,0)` — zero casas. Eles existem para
+quebrar quando isso for corrigido; a asserção é atualizada no mesmo commit da correção.
+
+No sentido oposto, `HotelJpaRepositoryIT#achaCidadeSemAcento` afirma um comportamento
+**desejado** que hoje existe por acidente: a colação `utf8mb4_0900_ai_ci` do MySQL é
+accent-insensitive, então `cuiaba` acha `Cuiabá` sem que nenhuma linha de código peça
+isso. Se uma mudança de banco quebrar esse teste, o certo é consertar a mudança — nunca
+afrouxar a asserção.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.

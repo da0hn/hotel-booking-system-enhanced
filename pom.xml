@@ -73,6 +73,15 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- O `@ServiceConnection`, que aponta o contexto de teste para o container.
+             É agnóstico de banco: o módulo do Testcontainers correspondente ao banco é
+             declarado por serviço, ao lado do driver de produção, para que os dois
+             troquem juntos na hora da migração. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
@@ -111,6 +120,26 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- Os testes que sobem um container ficam sob o failsafe, e não sob o
+                 surefire, por causa do custo: `mvn test` continua sendo a volta rápida
+                 de quem está mexendo em domínio, e `mvn verify` é a volta que exige
+                 Docker. A separação é pelo sufixo `IT`, que o surefire não coleta e o
+                 failsafe coleta por padrão — nenhuma configuração de includes.
+
+                 O goal `verify` é obrigatório: sem ele o failsafe registra a falha no
+                 relatório e o build passa mesmo assim. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

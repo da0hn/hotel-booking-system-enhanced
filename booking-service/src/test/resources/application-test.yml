@@ -1,0 +1,16 @@
+# Perfil dos testes de integração. A url, o usuário e a senha vêm do container pelo
+# `@ServiceConnection`, em tempo de execução — aqui só fica o que o container não sabe.
+spring:
+  jpa:
+    hibernate:
+      # `validate` é a asserção de forma mais forte deste módulo, e não custa uma linha de
+      # teste: o Hibernate confronta cada `@Column` das entidades contra as colunas que o
+      # Flyway acabou de criar e recusa a subir se divergirem. Uma migration que renomeie
+      # ou apague uma coluna quebra aqui, no arranque do contexto.
+      ddl-auto: validate
+  docker:
+    compose:
+      # O `application.yml` lê esta chave de `ENABLE_BUILTIN_DOCKER_COMPOSE`. Fixá-la aqui
+      # impede que a variável de ambiente de quem roda o teste faça o Spring subir o
+      # compose do repositório por baixo do container do Testcontainers.
+      enabled: false
