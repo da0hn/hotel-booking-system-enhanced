@@ -1,0 +1,14 @@
+-- A busca de hotéis por cidade encontrava `Cuiabá` digitando `cuiaba` sem que nenhuma
+-- linha de código pedisse isso: era a colação `utf8mb4_0900_ai_ci` do MySQL, que é
+-- accent-insensitive por padrão. O PostgreSQL compara texto byte a byte, então o mesmo
+-- comportamento precisa ser pedido explicitamente — e é a `unaccent` que a `@Query` do
+-- HotelJpaRepository chama.
+--
+-- Sem `with schema`, a extensão nasce no primeiro schema do `search_path`, que durante a
+-- migração é o schema do próprio serviço. É de propósito: `with schema public` exigiria
+-- CREATE no `public`, privilégio que o PUBLIC perdeu no PostgreSQL 15 e que o
+-- `user_hotel_service` não tem — a migração passaria com superusuário e falharia em
+-- produção. Aqui ela roda com o mesmo usuário que é dono do schema.
+--
+-- Desde o PostgreSQL 13 a `unaccent` é trusted, então criá-la não exige superusuário.
+create extension if not exists unaccent;

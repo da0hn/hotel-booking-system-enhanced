@@ -29,13 +29,52 @@ de o erro voltar exatamente com essa cara.
 | Objetivo | Comando |
 |---|---|
 | Build completo (reator) | `mvn -B clean install -DskipTests` |
-| Rodar todos os testes | `mvn -B test` |
+| Rodar os testes unitários | `mvn -B test` |
+| Rodar tudo, incluindo os de integração | `mvn -B verify` |
 | Testes de um módulo | `mvn -B test -pl hotel-service` |
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
+| Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
+
+### Testes de integração
+
+Os testes com sufixo `IT` sobem um container do banco pelo Testcontainers e ficam sob o
+**failsafe**, não sob o surefire — `mvn test` continua sendo a volta rápida de quem mexe
+em domínio, e `mvn verify` é a que exige Docker no host. A separação é só pelo sufixo:
+o surefire não coleta `*IT`, o failsafe coleta por padrão.
+
+Cada serviço com banco tem um `AbstractDatabaseIT` que declara o container, conecta com o
+usuário restrito do serviço e um `application-test.yml` com `hibernate.ddl-auto: validate`. **A asserção de forma mais
+forte não está em nenhum método de teste**: é o `validate`. Se o contexto sobe, o
+Hibernate já confrontou cada `@Column` das entidades contra as colunas que o Flyway
+acabou de criar. Os métodos cobrem o que ele não olha — dados de seed, acentuação,
+precisão decimal, chaves e a semântica das `@Query`.
+
+O `AbstractDatabaseIT` é o **único ponto de cada módulo que nomeia o banco**. Trocar de
+engine é trocar aquela declaração; nenhuma subclasse menciona MySQL ou PostgreSQL, e é
+por isso que elas provam equivalência em vez de provar que um banco funciona.
+
+Essa rede foi escrita **antes** da troca de MySQL por PostgreSQL, e verde contra o banco
+antigo. É o que a fez provar equivalência: um teste que nasce junto com o banco novo prova
+apenas que o banco novo funciona. Dos 61, só um precisou mudar por motivo não previsto —
+`aplicaTodasAsVersoes`, por causa da linha sem versão que o `create-schemas` grava.
+
+Três testes carregam intenção que o nome não entrega, e o Javadoc de cada um explica:
+
+| Teste | O que ele guarda |
+|---|---|
+| `FlywayMigrationIT#preservaCentavosNoPrecoDoQuarto` (hotel) | Nasceu cobrando `200` para quebrar na migração. Quebrou: `numeric(10, 2)` devolve `199.99` |
+| `FlywayMigrationIT#preservaCentavosNoTotalDaReserva` (booking) | O mesmo, com `1235` → `1234.56` |
+| `HotelJpaRepositoryIT#achaCidadeSemAcento` | Cobrava um comportamento que o MySQL dava de graça pela colação `utf8mb4_0900_ai_ci`. Continuou verde porque a migração o tornou explícito, não porque sobreviveu sozinho |
+
+A busca sem acento é o caso que mais ensina: `cuiaba` achava `Cuiabá` sem que nenhuma linha
+de código pedisse isso. No PostgreSQL ela depende de três peças que precisam continuar
+casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` que declara o
+tipo de retorno ao Hibernate, e o `public` no fim do `currentSchema` da URL. Tirar qualquer
+uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
@@ -86,8 +125,22 @@ não disparam novas execuções — é o que impede o bump de entrar em loop, e 
 a imagem RC precisa ser construída na mesma execução que fez o bump. Pela mesma razão, o
 PR de back-merge nasce sem checks.
 
-Para rodar um serviço isolado na IDE, as portas de banco default do `application.yml`
-apontam para as portas publicadas pelo compose (3311/3312/3313), não para 3306.
+Para rodar um serviço isolado na IDE não é preciso configurar nada: os defaults do
+`application.yml` apontam para `localhost:5442`, que é a porta que o compose **publica** — não
+a 5432, que é a que o PostgreSQL escuta dentro da rede. O deslocamento é o mesmo que os
+containers de MySQL faziam com 3311/3312/3313, e pela mesma razão: a porta default costuma já
+estar ocupada por outro banco na máquina de quem desenvolve.
+
+Os três serviços com banco dividem uma instância e se separam por **schema**. O nome do
+schema aparece em três lugares por serviço, e cada um governa um subsistema diferente:
+`spring.flyway.schemas` diz onde criar as tabelas, `hibernate.default_schema` qualifica o
+SQL gerado e o validador do `ddl-auto`, e o `currentSchema` da URL resolve o `search_path`
+de quem não passa por nenhum dos dois — as consultas nativas. Os três leem a mesma variável
+de ambiente (`HOTEL_DB_SCHEMA` e afins), então a fonte da verdade continua sendo uma.
+
+O `default_schema` não é opcional neste layout: sem ele o validador procura a tabela sem
+qualificar o schema, e `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo
+banco.
 
 Os diagramas do README ficam em `docs/diagrams/`. O `.excalidraw` é a fonte; o `.jpg`
 é derivado e precisa ser regerado sempre que a fonte mudar:
@@ -111,6 +164,12 @@ for p in glob.glob('*.png'):
 
 Só o `.jpg` é versionado — o `.png` é intermediário.
 
+O `05-data-model` existe em duas versões, `-antes-mysql` e `-depois-postgres`, e a
+primeira é **deliberada**: ela registra o desenho de três bancos separados que a migração
+desfez. Não a regenere, não a "atualize" e não a apague — o que ela documenta é justamente
+o estado que não existe mais. Quando uma mudança estrutural merecer o mesmo tratamento, o
+par segue esse nome; nos outros casos o diagrama é editado no lugar.
+
 ## Arquitetura
 
 ### Módulos
@@ -123,7 +182,47 @@ Só o `.jpg` é versionado — o `.png` é intermediário.
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
 
-Cada serviço tem banco MySQL próprio com migrations Flyway em `src/main/resources/db/migration`.
+Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
+(`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
+
+O padrão é *database per service*, e a redução para um schema por serviço é consequência da
+limitação de recurso do homelab, não uma mudança de desenho: **cada serviço continua dono
+exclusivo do seu dado, e nenhum outro o alcança — nem por consulta, nem por constraint.**
+
+Daí uma regra que o layout compartilhado deixou de proteger sozinho: **nunca declare uma
+chave estrangeira atravessando schemas.** Colunas como `booking.booking.customer_id` e
+`booking.room.hotel_id` guardam ids de domínios alheios de propósito; a ausência de FK ali é
+o desenho, não uma lacuna a corrigir. Uma FK faria o serviço depender estruturalmente do
+domínio de outro, que é exatamente a dependência que a saga existe para evitar — e acoplaria
+os deploys e as migrations dos dois.
+
+Enquanto eram três instâncias de MySQL separadas, essa violação era impossível de escrever.
+Numa instância só ela compila, e por isso o isolamento passou a ser sustentado por privilégio:
+**cada serviço conecta com o próprio usuário**, `user_hotel_service`, `user_booking_service` e
+`user_customer_service`, criados por `docker/scripts/01-create-service-roles.sql`.
+
+Não há `REVOKE` nesse arquivo, e não é esquecimento. Um schema no PostgreSQL pertence a quem o
+criou, e nenhum outro papel recebe `USAGE` nele por padrão — como cada serviço cria o seu pelo
+Flyway, com o próprio usuário, a negação já é o comportamento default. O que o script faz é só
+criar os papéis, tirar do `PUBLIC` o acesso ao banco e conceder `create` a cada um, que é o
+privilégio de que o Flyway precisa para criar o schema **e** o que o torna dono dele. Se algum
+dia o schema passar a nascer de outro papel, o isolamento some sem que uma linha de
+configuração mude; `IsolacaoEntreSchemasIT` existe para acusar isso.
+
+Duas consequências práticas disso:
+
+- **Os testes de integração conectam com o usuário do serviço, não com o dono do container.**
+  É o que faz uma migration que exija privilégio demais falhar no `mvn verify`, e não só no
+  ambiente onde ninguém está olhando. Foi assim que a V011 mudou: `create extension ... with
+  schema public` exige `CREATE` no `public`, que o `PUBLIC` perdeu no PostgreSQL 15 — sem
+  `with schema`, a extensão nasce no schema do próprio serviço, que ele possui.
+- **O `@ServiceConnection` não é usado.** Ele deriva usuário e senha do container, e o que se
+  quer é justamente conectar como outro; o `AbstractDatabaseIT` monta o `DataSource` com
+  `@DynamicPropertySource` e monta no container o mesmo arquivo de papéis que o compose usa,
+  para que os dois não divirjam.
+
+Os dois desenhos estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.jpg` e
+`-depois-postgres.jpg`.
 
 ### Camadas dentro de cada serviço
 

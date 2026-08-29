@@ -64,7 +64,7 @@ public class BookingEntity {
   private BookingStatus status;
 
   @NotNull
-  @Column(name = "total_price", nullable = false, precision = 10)
+  @Column(name = "total_price", nullable = false, precision = 10, scale = 2)
   private BigDecimal totalPrice;
 
   @Column(name = "created_at")

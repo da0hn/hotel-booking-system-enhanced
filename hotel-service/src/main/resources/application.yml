@@ -13,21 +13,31 @@ spring:
     username: ${RABBITMQ_USERNAME:root}
     password: ${RABBITMQ_PASSWORD:root}
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${HOTEL_DB_HOST:localhost}:${HOTEL_DB_PORT:3311}/${HOTEL_DB_NAME:hotel_db}?autoReconnect=true&useSSL=false&serverTimezone=UTC&enabledTLSProtocols=TLSv1.2
-    username: ${HOTEL_DB_USERNAME:user}
+    driver-class-name: org.postgresql.Driver
+    # O `currentSchema` existe porque nem tudo passa pelo `default_schema` do Hibernate: uma
+    # consulta nativa resolve o nome da tabela pelo `search_path` da conexão. Só o schema do
+    # serviço entra no caminho — é o único que este usuário enxerga.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5442}/${DB_NAME:hotel_booking_system}?currentSchema=${HOTEL_DB_SCHEMA:hotel}
+    # As coordenadas do banco são compartilhadas; a identidade, não. Cada serviço conecta com
+    # o próprio usuário, e é isso que o impede de ler o schema dos outros.
+    username: ${HOTEL_DB_USERNAME:user_hotel_service}
     password: ${HOTEL_DB_PASSWORD:password}
+  flyway:
+    # Os três serviços com banco dividem uma instância só e se separam por schema. As
+    # coordenadas de conexão continuam vindo do `DataSource`; o que o Flyway não tem como
+    # deduzir é onde criar as tabelas.
+    schemas: ${HOTEL_DB_SCHEMA:hotel}
+    create-schemas: true
   jpa:
     open-in-view: false
     show-sql: false
     properties:
       hibernate:
+        # Sem isto o validador do `ddl-auto` procura a tabela sem qualificar o schema, e
+        # `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo banco.
+        default_schema: ${HOTEL_DB_SCHEMA:hotel}
         enable_lazy_load_no_trans: true
         format_sql: true
-  flyway:
-    url: jdbc:mysql://${HOTEL_DB_HOST:localhost}:${HOTEL_DB_PORT:3311}/${HOTEL_DB_NAME:hotel_db}?autoReconnect=true&useSSL=false&serverTimezone=UTC&enabledTLSProtocols=TLSv1.2
-    user: ${HOTEL_DB_USERNAME:user}
-    password: ${HOTEL_DB_PASSWORD:password}
   docker:
     compose:
       file: '.\docker\common.yml'

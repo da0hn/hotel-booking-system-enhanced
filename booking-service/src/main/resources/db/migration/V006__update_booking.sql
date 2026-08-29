@@ -1,6 +1,5 @@
 alter table booking
-    add created_at datetime default now() null;
+    add column created_at timestamp with time zone default now();
 
 alter table booking
-    add updated_at datetime default now() null;
-
+    add column updated_at timestamp with time zone default now();

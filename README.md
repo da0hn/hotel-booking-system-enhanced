@@ -112,34 +112,59 @@ com o **nome completo da classe Java**. É o que permite o `switch` por subtipo 
 o que faz renomear ou mover uma classe de evento no módulo `commons` quebrar a comunicação entre serviços
 em versões diferentes.
 
-## 1.5. Modelo de dados e correlação entre os bancos
+## 1.5. Modelo de dados e correlação entre os schemas
 
-As dez tabelas dos três bancos, com o detalhe que mais importa em um sistema distribuído: **quais colunas
-guardam identificadores que pertencem a outro banco**, e o que sustenta essa ligação.
+As dez tabelas dos três schemas, com o detalhe que mais importa em um sistema distribuído: **quais colunas
+guardam identificadores que pertencem a outro serviço**, e o que sustenta essa ligação.
 
-![Modelo de dados dos três bancos e suas correlações](docs/diagrams/05-data-model.jpg)
+![Modelo de dados dos três schemas e suas correlações](docs/diagrams/05-data-model-depois-postgres.jpg)
 
-Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo MySQL — e todas elas ficam
-**dentro** de um único banco. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos dois
-lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
+Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo PostgreSQL — e todas elas
+ficam **dentro** de um único schema. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos
+dois lados, sem `FOREIGN KEY`, sem validação e sem ninguém verificando se o outro lado ainda existe.
+
+As travessias abaixo não têm chave estrangeira **de propósito**, e a razão não é técnica. O padrão que o
+sistema segue é *database per service*: cada serviço é dono exclusivo do seu dado, e nenhum outro alcança
+esse dado — nem por consulta, nem por constraint. Uma FK de `booking` para `customer` diria que o
+`booking-service` depende estruturalmente de uma tabela que pertence ao domínio do `customer-service`, e é
+precisamente essa dependência que a saga existe para evitar.
 
 São quatro travessias, e cada uma se sustenta em algo diferente:
 
 | # | Correlação | O que a mantém |
 |:-:|---|---|
-| 1 | `hotel_db.room.id` ≡ `booking_db.room.id` | Dois seeds Flyway independentes com os mesmos 13 UUIDs. Nada propaga alterações |
-| 2 | `booking_db.booking.customer_id` ≡ `customer_db.customer.id` | Nada. O id vem no corpo do `POST` e é gravado sem consulta |
-| 3 | `booking_db.booking.reservation_order_id` ≡ `customer_db.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
-| 4 | `hotel_db.hotel.id` → `hotel_id` nos outros dois bancos | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
+| 1 | `hotel.room.id` ≡ `booking.room.id` | Dois seeds Flyway independentes com os mesmos 13 UUIDs. Nada propaga alterações |
+| 2 | `booking.booking.customer_id` ≡ `customer.customer.id` | Nada. O id vem no corpo do `POST` e é gravado sem consulta |
+| 3 | `booking.booking.reservation_order_id` ≡ `customer.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
+| 4 | `hotel.hotel.id` → `hotel_id` nos outros dois schemas | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
 
-O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum banco a declara
-como tal**. No `customer_db` ela é a PK de `reservation_order`; no `booking_db` é uma coluna comum, sem
+O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum schema a declara
+como tal**. No `customer` ela é a PK de `reservation_order`; no `booking` é uma coluna comum, sem
 índice único, o que significa que reprocessar a mesma mensagem grava uma segunda reserva para a mesma
 ordem. O `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é
 sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa.
 
-Vale notar também que todas as colunas monetárias são `decimal` sem precisão declarada, o que o MySQL
-resolve como `DECIMAL(10,0)` — centavos são arredondados na gravação.
+As colunas monetárias são `numeric(10, 2)`. Até a migração para o PostgreSQL elas eram `decimal` sem
+precisão declarada, o que o MySQL resolve como `DECIMAL(10,0)` — centavos eram arredondados na gravação.
+
+### O desenho anterior
+
+O diagrama acima é o de depois da migração. O de antes está versionado ao lado, em
+[`05-data-model-antes-mysql.jpg`](docs/diagrams/05-data-model-antes-mysql.jpg), e vale abrir os dois lado a
+lado: eram três instâncias de MySQL, uma por serviço, em portas separadas.
+
+A diferença que o desenho revela e a prosa esconde não é sobre o modelo, que é o mesmo. É sobre **o que
+protege o isolamento entre os serviços**.
+
+*Database per service* continua sendo o padrão seguido; o que a limitação de recurso do homelab impôs foi a
+variante reduzida, um schema por serviço, com a mesma regra de propriedade do dado. A regra não afrouxou —
+mas quem a fazia valer, sim. Com três instâncias separadas, uma FK atravessando a fronteira era impossível
+de escrever: o erro não tinha como ser cometido. Com três schemas na mesma instância ela passou a ser
+sintaticamente válida, e o que impede a violação hoje é disciplina, não infraestrutura.
+
+Isso não é um convite para declará-la. É o inverso: a barreira que era física virou combinado, e vale saber
+disso antes que alguém adicione a constraint "para garantir a integridade" e acople o deploy de dois
+serviços sem perceber.
 
 ---
 
@@ -161,7 +186,7 @@ código.
 | Java        | OpenJDK 25            |
 | Maven       | 3.9.11                |
 | Spring Boot | 4.1.1                 |
-| MySQL       | 8.0.33                |
+| PostgreSQL  | 17-alpine             |
 | RabbitMQ    | 3-management          |
 
 ## 2.2. Aplicações de suporte (infraestrutura)
@@ -171,10 +196,23 @@ As credenciais de acesso e portas podem ser alteradas através das variáveis de
 
 |   Tipo   |       Porta        |          Serviço           | Usuário |  Senha   | 
 |:--------:|:------------------:|:--------------------------:|:-------:|:--------:|
-|  MySQL   |        3311        |          hotel-db          |  user   | password |
-|  MySQL   |        3312        |         booking-db         |  user   | password |
-|  MySQL   |        3313        |        customer-db         |  user   | password |
+|PostgreSQL|        5442        |  hotel-booking-system-db   |  user   | password |
 | RabbitMQ | 5672, 25676, 15672 | hotel-booking-system-queue |  root   |   root   |
+
+O usuário `user` acima é o dono do banco e existe para administração; **nenhum serviço conecta com ele.**
+Cada um tem o seu, com acesso apenas ao próprio schema:
+
+| Serviço | Usuário | Senha | Schema que enxerga |
+|---|---|---|---|
+| `hotel-service` | `user_hotel_service` | `password` | `hotel` |
+| `booking-service` | `user_booking_service` | `password` | `booking` |
+| `customer-service` | `user_customer_service` | `password` | `customer` |
+
+Os três papéis são criados por [`docker/scripts/01-create-service-roles.sql`](docker/scripts/01-create-service-roles.sql),
+que o container executa sozinho no primeiro start. O que impede um serviço de ler o schema do outro não é
+um `REVOKE` escrito à mão: um schema pertence a quem o criou, e nenhum outro papel recebe `USAGE` nele por
+padrão. Como cada serviço cria o seu pelo Flyway com o próprio usuário, a negação é o comportamento default
+do PostgreSQL — e `IsolacaoEntreSchemasIT`, no `hotel-service`, prova isso a cada `mvn verify`.
 
 ## 2.3. Tópicos e filas
 
@@ -239,13 +277,28 @@ execução a da aplicação.
 
 ## 3.2. Instalação
 
-* Construa os volumes correspondentes para armazenamento de dados dos bancos de dados utilizando o comando:
+* Construa o volume correspondente ao armazenamento de dados do banco utilizando o comando:
 
 ```sh
-docker volume create --name=hotel-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/hotel-db/mysql --opt o=bind
-docker volume create --name=booking-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/booking-db/mysql --opt o=bind
-docker volume create --name=customer-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/customer-db/mysql --opt o=bind
+docker volume create --name=hotel-booking-system-db-volume --driver local --opt type=none --opt device=D:/opt/hotel-booking-system/db/postgres --opt o=bind
 ```
+
+* Os três serviços com banco dividem a mesma instância e se separam por **schema** — `hotel`, `booking` e
+  `customer` —, cada um criado e migrado pelo Flyway do próprio serviço, com o usuário do próprio serviço.
+  Não há passo manual de criação de schema, e o banco `hotel_booking_system` nasce do `POSTGRES_DB` do
+  container.
+
+* Os três usuários, por outro lado, precisam existir antes dos serviços subirem. No compose isso é
+  automático: `01-create-service-roles.sql` está montado em `/docker-entrypoint-initdb.d/`, que o entrypoint
+  do PostgreSQL executa **apenas quando o volume está vazio**. Se você reaproveitar um volume que já tem
+  dado, ou for para um banco fora do compose, rode o mesmo arquivo à mão, uma vez, com um superusuário:
+
+  ```sh
+  psql -h <host> -p <porta> -U <superusuario> -d hotel_booking_system -f docker/scripts/01-create-service-roles.sql
+  ```
+
+  Ele é idempotente. E troque as senhas antes de usar em qualquer lugar que não seja a sua máquina — as do
+  arquivo são as mesmas do resto do repositório, e existem para o ambiente local funcionar sem configuração.
 
 * Após isso é possível iniciar todos os serviços e aplicações auxiliares como banco de dados e filas executando o comando abaixo dentro da pasta
   `docker`.
