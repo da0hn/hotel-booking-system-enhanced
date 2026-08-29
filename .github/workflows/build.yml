@@ -5,19 +5,31 @@
 # imagem nova é o homelab, observando o registry. Por isso aqui não existe
 # credencial de escrita em outro repositório — só o `GITHUB_TOKEN` efêmero do
 # próprio job.
+#
+# O repositório segue uma variação de gitflow, e este workflow é a metade
+# automatizada dela:
+#
+#   feature/*            PR   ->  build e testes, nada publicado
+#   develop              push ->  build e testes, nada publicado
+#   release/X.Y.Z        push ->  bump do pom + X.Y.Z-RC.<build> e X.Y.Z-RC-latest
+#   hotfix/X.Y.Z         push ->  idem, a partir da master
+#   master               push ->  X.Y.Z-<build> e X.Y.Z-latest
+#
+# O desenho completo, com os cortes de branch e os pontos de publicação, está
+# em `docs/diagrams/06-gitflow-pipeline.jpg`.
 name: build
 
 on:
   push:
-    branches: [master]
+    branches: [master, develop, 'release/**', 'hotfix/**']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Dois pushes seguidos na `master` publicariam duas versões em paralelo, e a
-# ordem de chegada ao GHCR deixaria de ser a ordem dos commits. Na `master` a
+# Dois pushes seguidos na mesma branch publicariam duas versões em paralelo, e
+# a ordem de chegada ao GHCR deixaria de ser a ordem dos commits. Num push a
 # execução anterior termina; num Pull Request ela é cancelada, porque ali o
 # que importa é o veredito do último push.
 concurrency:
@@ -33,6 +45,105 @@ env:
   JAVA_VERSION: '21'
 
 jobs:
+
+  contexto:
+    name: Versão e canal de publicação
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A escrita existe por um motivo só: o bump do `<revision>` numa branch de
+    # release ou de hotfix. Nenhum outro job deste workflow escreve no repo.
+    permissions:
+      contents: write
+    outputs:
+      versao: ${{ steps.decidir.outputs.versao }}
+      canal: ${{ steps.decidir.outputs.canal }}
+      sha: ${{ steps.decidir.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Aqui se decide tudo o que os jobs seguintes precisam saber: qual é a
+      # versão, se ela vai ao registry e sob qual canal, e qual commit carrega
+      # o código a ser empacotado.
+      #
+      # A versão de uma release NÃO é lida do pom: ela é lida do nome da
+      # branch, e o pom é ajustado para segui-la. O nome é a declaração de
+      # intenção de quem cortou a release; o pom é uma consequência. Fosse o
+      # contrário, `release/1.4.0` poderia publicar `1.3.0` sem que nada
+      # reclamasse.
+      - name: Decidir versão, canal e commit
+        id: decidir
+        run: |
+          set -euo pipefail
+
+          evento='${{ github.event_name }}'
+          ref='${{ github.ref }}'
+          sha='${{ github.sha }}'
+
+          # O sufixo `-SNAPSHOT` sai porque tag OCI nomeia artefato publicado,
+          # e não candidato local.
+          versao_do_pom() {
+            local v
+            v="$(grep -m1 -oP '(?<=<revision>)[^<]+' pom.xml)"
+            printf '%s' "${v%-SNAPSHOT}"
+          }
+
+          case "${evento}:${ref}" in
+            push:refs/heads/release/*|push:refs/heads/hotfix/*)
+              alvo="${ref#refs/heads/}"   # release/1.4.0
+              alvo="${alvo#*/}"           # 1.4.0
+              canal='rc'
+              ;;
+            push:refs/heads/master)
+              # Na master a versão já veio pronta: é o bump que a release
+              # commitou e que o merge trouxe junto.
+              alvo="$(versao_do_pom)"
+              canal='final'
+              ;;
+            *)
+              alvo="$(versao_do_pom)"
+              canal='nenhum'
+              ;;
+          esac
+
+          if [ "$canal" = 'rc' ] \
+            && ! printf '%s' "$alvo" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Branch '${ref#refs/heads/}' não nomeia uma versão." \
+                 "O formato exigido é release/X.Y.Z ou hotfix/X.Y.Z."
+            exit 1
+          fi
+
+          # O bump é commitado na própria branch de release, e não passado por
+          # `-Drevision=`: quem abre o repositório na tag precisa ver a versão
+          # que foi publicada, sem ter que reconstruir o argumento da linha de
+          # comando do CI.
+          #
+          # Este push não redispara o workflow: o GitHub ignora eventos
+          # gerados pelo `GITHUB_TOKEN` do próprio job. É o que impede o loop
+          # infinito — e é também por isso que a imagem tem de ser construída
+          # nesta mesma execução, já que não haverá uma segunda.
+          if [ "$canal" = 'rc' ] && [ "$(versao_do_pom)" != "$alvo" ]; then
+            echo "Bump: $(versao_do_pom) -> ${alvo}"
+
+            sed -i "0,/<revision>[^<]*<\/revision>/s//<revision>${alvo}<\/revision>/" pom.xml
+
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add pom.xml
+            git commit -m "chore(release): bump da versão para ${alvo}"
+            git push origin "HEAD:${{ github.ref_name }}"
+
+            sha="$(git rev-parse HEAD)"
+          fi
+
+          {
+            echo "versao=${alvo}"
+            echo "canal=${canal}"
+            echo "sha=${sha}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Versão ${alvo}, canal ${canal}, commit ${sha}."
 
   mudancas:
     name: Módulos alterados
@@ -53,10 +164,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          case "${{ github.event_name }}" in
-            pull_request) base='${{ github.event.pull_request.base.sha }}' ;;
-            push)         base='${{ github.event.before }}' ;;
-            *)            base='' ;;
+          # A base do diff muda com o contexto, e escolher errado aqui publica
+          # a imagem errada.
+          #
+          # Numa release ou hotfix a base é a `master`, e não o push anterior.
+          # O que a release entrega é tudo o que mudou desde a última produção;
+          # comparar contra o push anterior publicaria só o serviço tocado no
+          # último ajuste do RC e deixaria os outros para trás.
+          case "${{ github.event_name }}:${{ github.ref }}" in
+            push:refs/heads/release/*|push:refs/heads/hotfix/*)
+              git fetch --quiet origin master
+              base="$(git merge-base origin/master HEAD)"
+              ;;
+            pull_request)
+              base='${{ github.event.pull_request.base.sha }}'
+              ;;
+            push)
+              base='${{ github.event.before }}'
+              ;;
+            *)
+              base=''
+              ;;
           esac
 
           # Primeiro push de uma branch, force-push e `workflow_dispatch` não
@@ -72,6 +200,21 @@ jobs:
             alterados="$(git diff --name-only "$base" '${{ github.sha }}')"
             echo "Base: $base"
             echo "$alterados"
+          fi
+
+          # O bump da própria pipeline toca o pom agregador, que é arquivo
+          # comum aos quatro serviços — sem este descarte, toda release
+          # reconstruiria os quatro por causa de uma linha de versão que o CI
+          # mesmo escreveu. Só o `<revision>` é perdoado: qualquer outra
+          # alteração no pom raiz continua alcançando todo mundo.
+          if [ "$alterados" != 'TODOS' ] \
+            && printf '%s\n' "$alterados" | grep -qx 'pom\.xml'; then
+            corpo="$(git diff "$base" '${{ github.sha }}' -- pom.xml \
+              | grep -E '^[+-][^+-]' || true)"
+            if [ -n "$corpo" ] && ! printf '%s\n' "$corpo" | grep -qv '<revision>'; then
+              echo 'No pom raiz só mudou a <revision>: não conta como alteração comum.'
+              alterados="$(printf '%s\n' "$alterados" | grep -vx 'pom\.xml' || true)"
+            fi
           fi
 
           # Uma mudança no `commons`, no pom agregador, no `Dockerfile` ou
@@ -118,6 +261,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # O checkout aqui é o do evento, e não o commit pós-bump: a única coisa
+      # que o bump altera é a string do `<revision>`, que nenhum teste observa.
+      # Em troca, este job não espera pelo `contexto` e roda em paralelo com
+      # ele.
       - uses: actions/checkout@v5
 
       - uses: actions/setup-java@v5
@@ -134,12 +281,14 @@ jobs:
 
   imagem:
     name: Publicar no GHCR
-    needs: [mudancas, provas]
-    # A lista vazia acontece quando o commit tocou só documentação, e aí não
-    # há imagem a publicar. Sem esta condição, todo commit no `README` ou nos
-    # diagramas publicaria quatro tags novas de conteúdo idêntico.
+    needs: [contexto, mudancas, provas]
+    # Três condições, e cada uma barra um caso real: Pull Request e push na
+    # `develop` não publicam nada; a lista vazia acontece quando o commit
+    # tocou só documentação, e aí não há imagem a publicar. Sem a segunda,
+    # todo commit no `README` ou nos diagramas publicaria quatro tags novas de
+    # conteúdo idêntico.
     if: >
-      github.ref == 'refs/heads/master'
+      needs.contexto.outputs.canal != 'nenhum'
       && needs.mudancas.outputs.modulos != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -151,7 +300,11 @@ jobs:
       matrix:
         incluir: ${{ fromJSON(needs.mudancas.outputs.modulos) }}
     steps:
+      # O commit vem do `contexto`, e não do evento: numa release ele é o
+      # commit do bump, que o evento ainda não conhecia.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.contexto.outputs.sha }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -163,11 +316,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A versão é lida de onde ela vive — a property `revision` do pom
-      # agregador, que os quatro serviços herdam. Um número copiado para este
-      # arquivo seria um segundo lugar de verdade, e os dois divergiriam na
-      # primeira release. O sufixo `-SNAPSHOT` sai, porque tag OCI nomeia
-      # artefato publicado e não candidato local.
+      # Cada publicação sai com duas tags, e elas respondem perguntas
+      # diferentes.
+      #
+      # A imutável — `1.4.0-RC.87`, `1.4.0-88` — responde "qual imagem está
+      # rodando no homelab quando um pagamento falha". O `github.run_number`
+      # cresce a cada execução e nunca se repete; o commit exato fica em
+      # `org.opencontainers.image.revision`. O número pula por imagem: se um
+      # commit toca só `payment-service`, ele sobe para `-42` enquanto
+      # `customer-service` fica em `-37`. É o comportamento desejado — nada
+      # exige que as quatro imagens existam na mesma versão, já que cada
+      # serviço sobe sozinho.
+      #
+      # A móvel — `1.4.0-RC-latest`, `1.4.0-latest` — responde "qual é a mais
+      # recente daquela versão", e existe para que o homelab e quem homologa o
+      # RC não precisem descobrir o número do build. Ela não substitui a
+      # primeira: as duas apontam para o mesmo push, e é sempre a imutável que
+      # se cita num diagnóstico.
       #
       # A data vem do COMMIT, e não do relógio do runner: um `created` com a
       # hora do build faz duas construções da mesma árvore produzirem digests
@@ -177,18 +342,27 @@ jobs:
       # O digest da base é resolvido agora e registrado como metadado. As tags
       # de base são móveis; o digest não é — `revision` diz qual código entrou
       # na imagem, mas não diz qual JRE entrou.
-      - name: Resolver versão, data do commit e digest da base
+      - name: Resolver tags, data do commit e digest da base
         id: proveniencia
         run: |
           set -euo pipefail
 
-          versao="$(grep -m1 -oP '(?<=<revision>)[^<]+' pom.xml)"
-          versao="${versao%-SNAPSHOT}"
+          versao='${{ needs.contexto.outputs.versao }}'
+          build='${{ github.run_number }}'
+          imagem="ghcr.io/${{ github.repository }}/${{ matrix.incluir.modulo }}"
+
+          case '${{ needs.contexto.outputs.canal }}' in
+            rc)    fixa="${versao}-RC.${build}"; movel="${versao}-RC-latest" ;;
+            final) fixa="${versao}-${build}";    movel="${versao}-latest" ;;
+            *)     echo '::error::Canal de publicação indefinido.'; exit 1 ;;
+          esac
+
           epoch="$(git log -1 --pretty=%ct)"
           base="eclipse-temurin:${JAVA_VERSION}-jre-alpine"
 
           {
-            echo "versao=${versao}"
+            echo "fixa=${fixa}"
+            echo "tags=${imagem}:${fixa},${imagem}:${movel}"
             echo "epoch=${epoch}"
             echo "criado=$(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ)"
             echo "base=${base}"
@@ -198,16 +372,8 @@ jobs:
             )"
           } >> "$GITHUB_OUTPUT"
 
-      # A tag é `X.Y.Z-<build>`, e nunca `latest`. O que a regra protege é
-      # poder dizer qual imagem está rodando no homelab quando um pagamento
-      # falha: `latest` é móvel e não responde essa pergunta. O
-      # `github.run_number` cresce a cada execução e nunca se repete; o commit
-      # exato fica em `org.opencontainers.image.revision`.
-      #
-      # O número pula por imagem: se um commit toca só `payment-service`, ele
-      # sobe para `-42` enquanto `customer-service` fica em `-37`. É o
-      # comportamento desejado — nada exige que as quatro imagens existam na
-      # mesma versão, já que cada serviço sobe sozinho.
+          echo "Publicando ${imagem} como ${fixa} e ${movel}."
+
       - name: Construir e publicar
         uses: docker/build-push-action@v6
         env:
@@ -219,13 +385,12 @@ jobs:
             MODULE=${{ matrix.incluir.modulo }}
             JAVA_VERSION=${{ env.JAVA_VERSION }}
           push: true
-          tags: >
-            ghcr.io/${{ github.repository }}/${{ matrix.incluir.modulo }}:${{ steps.proveniencia.outputs.versao }}-${{ github.run_number }}
+          tags: ${{ steps.proveniencia.outputs.tags }}
           labels: |
             org.opencontainers.image.title=${{ matrix.incluir.modulo }}
             org.opencontainers.image.description=${{ matrix.incluir.descricao }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.proveniencia.outputs.versao }}-${{ github.run_number }}
+            org.opencontainers.image.revision=${{ needs.contexto.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.proveniencia.outputs.fixa }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.created=${{ steps.proveniencia.outputs.criado }}
             org.opencontainers.image.base.name=${{ steps.proveniencia.outputs.base }}
@@ -236,6 +401,60 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.incluir.modulo }}
           cache-to: type=gha,mode=max,scope=${{ matrix.incluir.modulo }}
 
+  marco:
+    name: Marcar a versão na master
+    needs: [contexto, provas, imagem]
+    # `always()` é obrigatório aqui: `imagem` é legitimamente `skipped` quando
+    # o merge só tocou documentação, e sem isto o `needs` pularia este job
+    # junto — a master ficaria sem a marca da versão que entrou em produção.
+    # As duas provas que importam são conferidas à mão logo abaixo.
+    if: >
+      always()
+      && needs.contexto.outputs.canal == 'final'
+      && needs.provas.result == 'success'
+      && (needs.imagem.result == 'success' || needs.imagem.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Sem as tags remotas não há como saber se esta versão já foi
+          # marcada, e a criação falharia no push em vez de ser ignorada.
+          fetch-tags: true
+
+      # A tag nasce depois do build e da publicação, nunca antes: ela é o
+      # registro de que aquela versão chegou inteira em produção, e marcar um
+      # commit cuja imagem falhou apontaria para uma release que não existe no
+      # registry.
+      - name: Criar a tag da versão
+        run: |
+          set -euo pipefail
+
+          versao='${{ needs.contexto.outputs.versao }}'
+          sha='${{ needs.contexto.outputs.sha }}'
+
+          # Push de documentação na master não muda o `<revision>`, e cai aqui
+          # com uma versão que já foi marcada. Repetir a tag seria um erro de
+          # push; ignorá-la é o comportamento correto, porque a versão em
+          # produção continua sendo a mesma.
+          if git rev-parse -q --verify "refs/tags/${versao}" >/dev/null; then
+            echo "A versão ${versao} já está marcada em $(git rev-parse --short "${versao}^{commit}")."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Anotada, e não leve: a tag anotada carrega autor, data e mensagem
+          # próprios, e é a única que `git describe` enxerga por padrão.
+          git tag -a "$versao" -m "Versão ${versao} em produção" "$sha"
+          git push origin "refs/tags/${versao}"
+
+          echo "Marcado ${sha} como ${versao}."
+
   # O único check obrigatório é este. Um check que depende de matriz filtrada
   # NUNCA reporta status quando a matriz sai vazia, e o Pull Request travaria
   # para sempre esperando por ele. `if: always()` faz este job rodar mesmo
@@ -243,7 +462,7 @@ jobs:
   # sozinho pularia o job junto com o que falhou.
   porta:
     name: Porta do build
-    needs: [mudancas, provas, imagem]
+    needs: [contexto, mudancas, provas, imagem, marco]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -251,17 +470,27 @@ jobs:
       - name: Conferir o veredito de cada job
         run: |
           set -euo pipefail
+          echo "contexto: ${{ needs.contexto.result }}"
           echo "mudancas: ${{ needs.mudancas.result }}"
           echo "provas:   ${{ needs.provas.result }}"
           echo "imagem:   ${{ needs.imagem.result }}"
+          echo "marco:    ${{ needs.marco.result }}"
 
-          for r in '${{ needs.mudancas.result }}' '${{ needs.provas.result }}'; do
+          for r in '${{ needs.contexto.result }}' \
+                   '${{ needs.mudancas.result }}' \
+                   '${{ needs.provas.result }}'; do
             [ "$r" = 'success' ] || { echo 'Prova obrigatória falhou.'; exit 1; }
           done
 
-          # `skipped` é resultado legítimo para `imagem`: Pull Request não
-          # publica, e commit que só toca documentação não tem o que publicar.
+          # `skipped` é resultado legítimo para os dois: Pull Request e push na
+          # `develop` não publicam nem marcam versão, e commit que só toca
+          # documentação não tem imagem a publicar.
           case '${{ needs.imagem.result }}' in
             success|skipped) ;;
             *) echo 'A publicação da imagem falhou.'; exit 1 ;;
+          esac
+
+          case '${{ needs.marco.result }}' in
+            success|skipped) ;;
+            *) echo 'A marcação da versão falhou.'; exit 1 ;;
           esac
