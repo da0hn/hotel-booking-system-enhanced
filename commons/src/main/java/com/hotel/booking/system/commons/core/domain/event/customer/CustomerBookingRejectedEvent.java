@@ -1,5 +1,6 @@
 package com.hotel.booking.system.commons.core.domain.event.customer;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import lombok.Getter;
 import lombok.experimental.SuperBuilder;
@@ -13,6 +14,7 @@ import java.util.List;
 public final class CustomerBookingRejectedEvent extends CustomerBookingFailureStatusUpdateEvent {
 
 
+  @JsonCreator
   public CustomerBookingRejectedEvent(
     final String reservationOrderId,
     final String customerId,

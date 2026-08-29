@@ -37,12 +37,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # 21 e não a mais nova: o Lombok gerenciado pelo Spring Boot 3.2.0 não
-  # suporta o JDK 25 e desabilita o annotation processor em silêncio. O erro
-  # que aparece é `cannot infer type arguments`, que não diz nada sobre a
-  # causa. O `Dockerfile` recebe este mesmo valor por `build-arg`, para que a
-  # base declarada no label e a base real nunca divirjam.
-  JAVA_VERSION: '21'
+  # O `Dockerfile` recebe este mesmo valor por `build-arg`, para que a base
+  # declarada no label OCI e a base real nunca divirjam. Trocar aqui sem
+  # trocar o default do `ARG JAVA_VERSION` do `Dockerfile` faria o build local
+  # e o do CI usarem JDKs diferentes sem ninguém perceber.
+  JAVA_VERSION: '25'
 
 jobs:
 

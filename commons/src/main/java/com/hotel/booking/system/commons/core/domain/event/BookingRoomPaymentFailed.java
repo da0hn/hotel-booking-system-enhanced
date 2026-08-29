@@ -1,5 +1,6 @@
 package com.hotel.booking.system.commons.core.domain.event;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import lombok.Getter;
 import lombok.experimental.SuperBuilder;
@@ -14,6 +15,7 @@ public final class BookingRoomPaymentFailed extends BookingRoomStatusUpdatedEven
 
   private final List<String> failureMessages;
 
+  @JsonCreator
   public BookingRoomPaymentFailed(
     final String reservationOrderId,
     final String customerId,

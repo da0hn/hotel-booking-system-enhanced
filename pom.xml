@@ -15,7 +15,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.0</version>
+        <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
 
@@ -27,12 +27,10 @@
 
     <properties>
         <revision>1.0.0</revision>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <maven.compiler.release>21</maven.compiler.release>
+        <!-- O parent do Spring Boot deriva `maven.compiler.release` desta property,
+             então ela sozinha governa source, target e release dos cinco módulos. -->
+        <java.version>25</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
-        <commons-lang3>3.12.0</commons-lang3>
     </properties>
 
     <dependencyManagement>
@@ -42,12 +40,6 @@
                 <artifactId>commons</artifactId>
                 <version>${revision}</version>
             </dependency>
-            <dependency>
-                <groupId>org.apache.commons</groupId>
-                <artifactId>commons-lang3</artifactId>
-                <version>${commons-lang3}</version>
-            </dependency>
-
         </dependencies>
     </dependencyManagement>
 
@@ -64,6 +56,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
@@ -97,11 +90,26 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>${maven-compiler-plugin.version}</version>
                 <configuration>
-                    <release>${maven.compiler.release}</release>
-                    <source>${maven.compiler.source}</source>
-                    <target>${maven.compiler.target}</target>
+                    <!-- O `annotationProcessorPaths` é obrigatório a partir do JDK 23:
+                         o javac deixou de descobrir processadores pelo classpath e passou
+                         a assumir `-proc:none` quando ninguém declara o caminho. Sem este
+                         bloco o Lombok não roda, e a falha não se anuncia — ela aparece
+                         mais adiante como `cannot infer type arguments` no código que
+                         dependia do construtor ou do getter que não foram gerados.
+
+                         As versões vêm do `dependencyManagement` do BOM do Spring Boot,
+                         resolução que o maven-compiler-plugin suporta desde a 3.12.0. -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                        <path>
+                            <groupId>org.springframework.boot</groupId>
+                            <artifactId>spring-boot-configuration-processor</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
         </plugins>

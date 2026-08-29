@@ -158,9 +158,9 @@ código.
 | Tecnologia  | Versão                |
 |-------------|-----------------------|
 | Docker      | 24.0.5, build ced0996 |
-| Java        | OpenJDK 21            |
-| Maven       | 3.9.2                 |
-| Spring Boot | 3.2.0                 |
+| Java        | OpenJDK 25            |
+| Maven       | 3.9.11                |
+| Spring Boot | 4.1.1                 |
 | MySQL       | 8.0.33                |
 | RabbitMQ    | 3-management          |
 
@@ -233,11 +233,9 @@ execução a da aplicação.
   * Para verificar se o docker foi instalado corretamente execute o comando `docker --version`
 * [Docker Compose](https://docs.docker.com/compose/install/)
   * Para verificar se o docker-compose foi instalado corretamente execute o comando `docker-compose --version`
-* [Java](https://jdk.java.net/21/)
+* [Java](https://jdk.java.net/25/)
   * Para verificar se o java foi instalado corretamente execute o comando `java --version`
-  * A instalação do `jdk` na `versão 21` só será necessária caso você deseje executar a aplicação localmente sem utilizar o `docker`
-  * A compilação **exige o JDK 21**. Versões mais novas desabilitam silenciosamente o processador de
-    anotações do Lombok e o build falha com erros de construtor ausente.
+  * A instalação do `jdk` na `versão 25` só será necessária caso você deseje executar a aplicação localmente sem utilizar o `docker`
 
 ## 3.2. Instalação
 

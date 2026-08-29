@@ -9,10 +9,12 @@
 # `commons` são idênticos nas quatro imagens e sobrevivem a qualquer mudança
 # no código de um serviço.
 #
-# JDK 21 e não 25: o Lombok gerenciado pelo Spring Boot 3.2.0 não suporta o
-# 25 e desabilita o annotation processor em silêncio — os erros aparecem como
-# `cannot infer type arguments`, escondendo a causa real.
-ARG JAVA_VERSION=21
+# JDK 25. O que antes prendia o build no 21 não era o Lombok em si: era o
+# javac, que a partir do 23 deixou de descobrir annotation processors pelo
+# classpath e passou a assumir `-proc:none` quando ninguém declara o caminho.
+# O `annotationProcessorPaths` no pom raiz declara esse caminho, e com ele o
+# Lombok volta a rodar em qualquer JDK recente.
+ARG JAVA_VERSION=25
 
 FROM maven:3.9-eclipse-temurin-${JAVA_VERSION} AS build
 WORKDIR /build

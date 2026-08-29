@@ -27,8 +27,8 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -51,36 +51,14 @@
 
     <build>
         <plugins>
+            <!-- Declarado, e não herdado: o parent do Spring Boot mantém este plugin
+                 apenas em `pluginManagement`, então a execução `repackage` — a que
+                 transforma o jar em executável, e é dela que o `Dockerfile` depende —
+                 só acontece onde o plugin é declarado. O `commons` não o declara de
+                 propósito: é biblioteca, e não tem classe principal a empacotar. -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <image>
-                        <name>${project.groupId}/customer-service</name>
-                        <tags>
-                            <tag>${project.groupId}/customer-service:${revision}</tag>
-                            <tag>${project.groupId}/customer-service:latest</tag>
-                        </tags>
-                    </image>
-                    <layers>
-                        <enabled>true</enabled>
-                        <includeLayerTools>true</includeLayerTools>
-                    </layers>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-                <executions>
-                    <execution>
-                        <phase>install</phase>
-                        <goals>
-                            <goal>build-image</goal>
-                        </goals>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>

@@ -15,15 +15,16 @@ duplique esse conteúdo aqui.
 
 ## Comandos
 
-O toolchain do host resolve `java` para o **JDK 25** (mise), mas o projeto **não compila
-nele**: o Lombok gerenciado pelo Spring Boot 3.2.0 não suporta JDK 25 e o annotation
-processor é desabilitado em silêncio — os erros aparecem como `constructor ... cannot be
-applied to given types` e `cannot infer type arguments`, mascarando a causa real. Sempre
-force o JDK 21:
+O projeto compila no **JDK 25**, que é para onde o `java` do host resolve (mise). Não é
+preciso forçar `JAVA_HOME`.
 
-```bash
-export JAVA_HOME=$(cygpath -w "$HOME/AppData/Local/mise/installs/java/21.0.2")
-```
+Até a atualização para o Spring Boot 4.1.1 o build exigia o JDK 21, e a explicação que
+circulava — "o Lombok não suporta o 25" — descrevia o sintoma, não a causa. O que mudou
+foi o `javac`: o JDK 21 depreciou a descoberta de annotation processors pelo classpath e
+o 23 passou a assumir `-proc:none` quando ninguém declara o caminho. O Lombok deixava de
+rodar sem dizer nada, e a falha aparecia adiante como `cannot infer type arguments`. O
+`annotationProcessorPaths` no pom raiz declara esse caminho — **não o remova**, sob pena
+de o erro voltar exatamente com essa cara.
 
 | Objetivo | Comando |
 |---|---|
@@ -179,10 +180,32 @@ handler correspondente no `hotel-service`.
 - Eventos vivem em `commons/core/domain/event/`, organizados em hierarquias `sealed`
   (`BookingRoomResponseEvent`, `PaymentResponseEvent`, `CustomerBookingStatusUpdatedEvent`).
   Os handlers despacham com `switch` sobre pattern matching de tipo.
-- A desserialização usa `Jackson2JsonMessageConverter`, que grava o **FQCN da classe no
-  header `__TypeId__`**. Isso significa que **mover ou renomear uma classe de evento no
-  `commons` quebra a comunicação entre serviços em versões diferentes** — mensagens já na
-  fila deixam de ser desserializáveis.
+- A desserialização usa `JacksonJsonMessageConverter` (Jackson 3), que grava o **FQCN da
+  classe no header `__TypeId__`**. Isso significa que **mover ou renomear uma classe de
+  evento no `commons` quebra a comunicação entre serviços em versões diferentes** —
+  mensagens já na fila deixam de ser desserializáveis.
+- O FQCN que chega no `__TypeId__` só é instanciado se o **pacote** dele estiver em
+  `TrustedEventPackages` (no `commons`), que os quatro `RabbitMQConfiguration` passam ao
+  converter. O `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote
+  por padrão; o sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
+  `IllegalArgumentException` **no listener**. A falha não aparece no arranque: os quatro
+  serviços sobem saudáveis, o `POST /hotel/booking` responde 200, e a saga simplesmente
+  não avança. O casamento é por igualdade de pacote, não por prefixo — **um subpacote novo
+  de evento precisa entrar naquela lista**.
+- Duas coisas mantêm as classes de evento desserializáveis, e as duas são fáceis de
+  desfazer sem perceber:
+  1. `ConstructorDetector.USE_PROPERTIES_BASED` no `JsonMapperConfiguration`. O Jackson 3
+     absorveu o `ParameterNamesModule`, mas não a permissão que ele dava a um construtor
+     **não anotado** de vários argumentos para servir de creator. Sem essa linha, as
+     classes de construtor único param de ser instanciáveis.
+  2. `@JsonCreator` no construtor de campos de toda classe que usa `@SuperBuilder`. O
+     Lombok gera um segundo construtor (o que recebe o builder), e com dois candidatos o
+     Jackson não escolhe implicitamente nenhum — a anotação desempata. **Toda subclasse
+     nova de `BookingRoomStatusUpdatedEvent` ou `CustomerBookingStatusUpdatedEvent`
+     precisa dela.** As abstratas não, porque o `__TypeId__` sempre nomeia a concreta.
+
+  As duas falham do mesmo jeito: `no Creators, like default constructor, exist`, no
+  listener, com os serviços saudáveis e a saga parada.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.

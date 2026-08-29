@@ -1,5 +1,6 @@
 package com.hotel.booking.system.commons.core.domain.event.customer;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import lombok.Getter;
 import lombok.experimental.SuperBuilder;
@@ -12,6 +13,7 @@ public final class CustomerBookingPaymentRequestedEvent extends CustomerBookingS
 
   private final String bookingRoomId;
 
+  @JsonCreator
   public CustomerBookingPaymentRequestedEvent(
     final String reservationOrderId,
     final String customerId,
