@@ -142,7 +142,8 @@ Diagramas que existem hoje — não invente nome de arquivo:
 | `02-saga-events.jpg` | Fluxo de eventos da saga de reserva |
 | `03-hexagonal.jpg` | Camadas dentro de um serviço |
 | `04-queues.jpg` | Exchanges, routing keys e filas |
-| `05-data-model.jpg` | Modelo de dados dos três bancos |
+| `05-data-model-antes-mysql.jpg` | Modelo de dados de antes da migração: três bancos MySQL |
+| `05-data-model-depois-postgres.jpg` | O mesmo modelo depois: três schemas numa instância PostgreSQL |
 
 Se o achado precisar de imagem que ainda não existe, escreva a descrição em vez do nome (`"Antes/depois: waterfall no Tempo"`).
 

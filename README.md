@@ -117,7 +117,7 @@ em versões diferentes.
 As dez tabelas dos três schemas, com o detalhe que mais importa em um sistema distribuído: **quais colunas
 guardam identificadores que pertencem a outro serviço**, e o que sustenta essa ligação.
 
-![Modelo de dados dos três schemas e suas correlações](docs/diagrams/05-data-model.jpg)
+![Modelo de dados dos três schemas e suas correlações](docs/diagrams/05-data-model-depois-postgres.jpg)
 
 Linha sólida é chave estrangeira de verdade, declarada no DDL e garantida pelo PostgreSQL — e todas elas
 ficam **dentro** de um único schema. Linha tracejada laranja é correlação lógica: o mesmo UUID gravado dos
@@ -144,6 +144,18 @@ sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou m
 
 As colunas monetárias são `numeric(10, 2)`. Até a migração para o PostgreSQL elas eram `decimal` sem
 precisão declarada, o que o MySQL resolve como `DECIMAL(10,0)` — centavos eram arredondados na gravação.
+
+### O desenho anterior
+
+O diagrama acima é o de depois da migração. O de antes está versionado ao lado, em
+[`05-data-model-antes-mysql.jpg`](docs/diagrams/05-data-model-antes-mysql.jpg), e vale abrir os dois lado a
+lado: eram três instâncias de MySQL, uma por serviço, em portas separadas.
+
+A diferença que o desenho revela e a prosa esconde é qual era o **motivo** da ausência de integridade entre
+os serviços. Com três bancos separados, um `FOREIGN KEY` atravessando a fronteira era impossível — não havia
+o que discutir. Com três schemas na mesma instância ele passou a ser declarável, e a ausência virou decisão:
+uma FK entre schemas amarraria o deploy de dois serviços. O sistema continua exatamente tão frouxo quanto
+era; o que mudou é que agora isso é uma escolha.
 
 ---
 

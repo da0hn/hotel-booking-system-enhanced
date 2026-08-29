@@ -164,6 +164,12 @@ for p in glob.glob('*.png'):
 
 Só o `.jpg` é versionado — o `.png` é intermediário.
 
+O `05-data-model` existe em duas versões, `-antes-mysql` e `-depois-postgres`, e a
+primeira é **deliberada**: ela registra o desenho de três bancos separados que a migração
+desfez. Não a regenere, não a "atualize" e não a apague — o que ela documenta é justamente
+o estado que não existe mais. Quando uma mudança estrutural merecer o mesmo tratamento, o
+par segue esse nome; nos outros casos o diagrama é editado no lugar.
+
 ## Arquitetura
 
 ### Módulos
