@@ -7,6 +7,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008");
   }
 
   @Test
@@ -185,16 +186,44 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     assertThat(gravada).isEqualTo(razaoLonga);
   }
 
+  /**
+   * O {@code customer-service} é read-model: ele não soma nem multiplica nada, só guarda o
+   * total que o {@code booking-service} calculou e mandou no evento. Por isso a escala aqui não
+   * protege um cálculo — protege a fidelidade da projeção. Uma coluna mais curta que a de
+   * origem faria a timeline mostrar ao cliente um total que difere do que foi cobrado, e nada
+   * acusaria: não há exceção, só um arredondamento na gravação.
+   */
+  @Test
+  @DisplayName("preserva a escala de cálculo do total recebido do booking")
+  void preservaAEscalaDeCalculoDoTotalRecebidoDoBooking() {
+    final var id = this.inserirPedido(new BigDecimal("1234.5678"));
+    this.entityManager.clear();
+
+    final var gravado = (BigDecimal) this.entityManager
+      .createNativeQuery("select total_price from reservation_order where id = :id")
+      .setParameter("id", id.toString())
+      .getSingleResult();
+
+    assertThat(gravado)
+      .as("`numeric(19, 4)`; com a escala 2 anterior o total voltaria 1234.57")
+      .isEqualByComparingTo("1234.5678");
+  }
+
   private UUID inserirPedido() {
+    return this.inserirPedido(new BigDecimal("800"));
+  }
+
+  private UUID inserirPedido(final BigDecimal total) {
     final var id = UUID.randomUUID();
     this.entityManager
       .createNativeQuery("""
         insert into reservation_order (id, customer_id, hotel_id, guests, check_in, check_out, total_price, current_status)
-        values (:id, :cliente, :hotel, 2, '2026-04-10', '2026-04-15', 800, 'AWAITING_RESERVATION')
+        values (:id, :cliente, :hotel, 2, '2026-04-10', '2026-04-15', :total, 'AWAITING_RESERVATION')
         """)
       .setParameter("id", id.toString())
       .setParameter("cliente", CLIENTE_GABRIEL)
       .setParameter("hotel", UUID.randomUUID().toString())
+      .setParameter("total", total)
       .executeUpdate();
     this.entityManager.flush();
     return id;

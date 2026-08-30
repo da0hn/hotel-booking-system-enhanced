@@ -48,7 +48,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
 
     assertThat(aplicadas)
       .as("uma migration nova precisa ser somada aqui de propósito, para que a lista continue sendo uma trava")
-      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011");
+      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012");
   }
 
   @Test
@@ -139,8 +139,10 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
    * seed são todos inteiros. O teste foi escrito na rede de segurança cobrando
    * {@code 200}, para quebrar no commit da migração.</p>
    *
-   * <p>Foi o que aconteceu: com {@code numeric(10, 2)} o valor volta {@code 199.99}. A issue
-   * #1 foi corrigida como efeito colateral da troca de banco.</p>
+   * <p>Foi o que aconteceu: a migração para o PostgreSQL trouxe {@code numeric(10, 2)} e o
+   * valor passou a voltar {@code 199.99}. A escala vigente hoje é a 4 da V012, e este teste
+   * continua verde nas duas — o que ele guarda é que o centavo sobrevive, não quantas casas a
+   * coluna tem, que fica em {@link #preservaAEscalaDeCalculoDoPreco()}.</p>
    */
   @Test
   @DisplayName("preserva os centavos no preço do quarto")
@@ -155,8 +157,35 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(gravado)
-      .as("`numeric(10, 2)`; o `DECIMAL(10,0)` herdado do MySQL devolvia 200")
+      .as("o `DECIMAL(10,0)` herdado do MySQL devolvia 200")
       .isEqualByComparingTo("199.99");
+  }
+
+  /**
+   * Prova a V012, e é o teste que o anterior não consegue ser: {@code 199.99} atravessa
+   * {@code numeric(10, 2)} sem perder nada, então ele ficaria verde mesmo que a migration não
+   * tivesse rodado. Só um valor que precise da quarta casa distingue as duas escalas.
+   *
+   * <p>A quarta casa não existe para ser exibida — a resposta HTTP reduz para duas em
+   * {@code Money#getPresentationValue()}. Ela existe porque a saga soma diárias e multiplica
+   * por quantidade antes de o valor chegar a qualquer tela, e arredondar cada parcela nesse
+   * meio do caminho não dá o mesmo total que arredondar no fim.</p>
+   */
+  @Test
+  @DisplayName("preserva a escala de cálculo do preço")
+  void preservaAEscalaDeCalculoDoPreco() {
+    final var id = UUID.randomUUID();
+    this.inserirQuarto(id, HOTEL_AMAZON_PLAZA, "199.9999");
+    this.entityManager.clear();
+
+    final var gravado = (BigDecimal) this.entityManager
+      .createNativeQuery("select current_price from room where id = :id")
+      .setParameter("id", id.toString())
+      .getSingleResult();
+
+    assertThat(gravado)
+      .as("`numeric(19, 4)`; com a escala 2 anterior o valor voltaria 200.00")
+      .isEqualByComparingTo("199.9999");
   }
 
   /**

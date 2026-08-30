@@ -43,7 +43,7 @@ public class BookingRoomEntity {
   private BookingEntity booking;
 
   @NotNull
-  @Column(name = "price", nullable = false, precision = 10, scale = 2)
+  @Column(name = "price", nullable = false, precision = 19, scale = 4)
   private BigDecimal price;
 
   @NotNull

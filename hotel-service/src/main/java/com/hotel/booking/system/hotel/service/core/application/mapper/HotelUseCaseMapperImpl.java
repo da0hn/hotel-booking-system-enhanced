@@ -77,7 +77,7 @@ public class HotelUseCaseMapperImpl implements HotelUseCaseMapper {
             .id(roomQueryResult.getRoomId().toString())
             .name(roomQueryResult.getRoomName())
             .description(roomQueryResult.getRoomDescription())
-            .currentPrice(roomQueryResult.getRoomCurrentPrice().getValue())
+            .currentPrice(roomQueryResult.getRoomCurrentPrice().getPresentationValue())
             .quantity(roomQueryResult.getRoomQuantity())
             .capacity(roomQueryResult.getRoomCapacity())
             .build()

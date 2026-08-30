@@ -53,7 +53,7 @@ public class RoomEntity implements Serializable {
   private Integer capacity;
 
   @NotNull
-  @Column(name = "current_price", nullable = false, precision = 10, scale = 2)
+  @Column(name = "current_price", nullable = false, precision = 19, scale = 4)
   private BigDecimal currentPrice;
 
   @NotNull

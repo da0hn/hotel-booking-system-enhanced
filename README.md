@@ -144,8 +144,12 @@ como tal**. No `customer` ela é a PK de `reservation_order`; no `booking` é um
 ordem. O `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é
 sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa.
 
-As colunas monetárias são `numeric(10, 2)`. Até a migração para o PostgreSQL elas eram `decimal` sem
+As colunas monetárias são `numeric(19, 4)`. Até a migração para o PostgreSQL elas eram `decimal` sem
 precisão declarada, o que o MySQL resolve como `DECIMAL(10,0)` — centavos eram arredondados na gravação.
+A migração trouxe a escala 2, que já preservava o centavo; a 4 veio depois porque **a escala do cálculo
+não é a da exibição**. A saga soma diárias e multiplica por quantidade antes de o valor chegar a qualquer
+tela, e arredondar cada parcela nesse meio do caminho não dá o mesmo total que arredondar no fim. As duas
+casas que o usuário vê saem de `Money#getPresentationValue()`, nas respostas HTTP.
 
 ### O desenho anterior
 
