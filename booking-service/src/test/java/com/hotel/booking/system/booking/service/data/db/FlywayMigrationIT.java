@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007");
   }
 
   @Test
@@ -181,6 +181,64 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   @Test
   @DisplayName("preserva os centavos no total da reserva")
   void preservaCentavosNoTotalDaReserva() {
+    final var id = this.inserirReserva(new BigDecimal("1234.56"));
+
+    final var gravado = (BigDecimal) this.entityManager
+      .createNativeQuery("select total_price from booking where id = :id")
+      .setParameter("id", id.toString())
+      .getSingleResult();
+
+    assertThat(gravado)
+      .as("o `DECIMAL(10,0)` herdado do MySQL devolvia 1235")
+      .isEqualByComparingTo("1234.56");
+  }
+
+  /**
+   * Prova a V007 nas três colunas de uma vez, e é o teste que o anterior não consegue ser:
+   * {@code 1234.56} atravessa {@code numeric(10, 2)} intacto, então ele ficaria verde mesmo
+   * que a migration não tivesse rodado.
+   *
+   * <p>É neste serviço que a escala de cálculo decide algo: {@code Booking.validateTotalPrice()}
+   * confronta o total que veio no evento com a soma dos itens que ele mesmo recompõe. Se o banco
+   * truncasse o preço do item na quarta casa e o total não, a soma deixaria de bater e a reserva
+   * seria recusada com {@code BOOKING_TOTAL_PRICE_INVALID} — a falha que a issue #1 descreve.</p>
+   */
+  @Test
+  @DisplayName("preserva a escala de cálculo do total e do item")
+  void preservaAEscalaDeCalculoDoTotalEDoItem() {
+    final var reserva = this.inserirReserva(new BigDecimal("1234.5678"));
+
+    this.entityManager
+      .createNativeQuery("""
+        insert into booking_room (id, room_id, booking_id, price, quantity)
+        values (:id, :quarto, :reserva, :preco, 2)
+        """)
+      .setParameter("id", UUID.randomUUID().toString())
+      .setParameter("quarto", QUARTO_TRIPLO_DELUXE)
+      .setParameter("reserva", reserva.toString())
+      .setParameter("preco", new BigDecimal("617.2839"))
+      .executeUpdate();
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    final var total = (BigDecimal) this.entityManager
+      .createNativeQuery("select total_price from booking where id = :id")
+      .setParameter("id", reserva.toString())
+      .getSingleResult();
+    final var precoDoItem = (BigDecimal) this.entityManager
+      .createNativeQuery("select price from booking_room where booking_id = :id")
+      .setParameter("id", reserva.toString())
+      .getSingleResult();
+
+    assertThat(total)
+      .as("`numeric(19, 4)`; com a escala 2 anterior o total voltaria 1234.57")
+      .isEqualByComparingTo("1234.5678");
+    assertThat(precoDoItem)
+      .as("o item precisa da mesma escala do total, sob pena de a soma deixar de bater")
+      .isEqualByComparingTo("617.2839");
+  }
+
+  private UUID inserirReserva(final BigDecimal total) {
     final var id = UUID.randomUUID();
 
     this.entityManager
@@ -191,19 +249,12 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .setParameter("id", id.toString())
       .setParameter("cliente", UUID.randomUUID().toString())
       .setParameter("pedido", UUID.randomUUID().toString())
-      .setParameter("total", new BigDecimal("1234.56"))
+      .setParameter("total", total)
       .executeUpdate();
     this.entityManager.flush();
     this.entityManager.clear();
 
-    final var gravado = (BigDecimal) this.entityManager
-      .createNativeQuery("select total_price from booking where id = :id")
-      .setParameter("id", id.toString())
-      .getSingleResult();
-
-    assertThat(gravado)
-      .as("`numeric(10, 2)`; o `DECIMAL(10,0)` herdado do MySQL devolvia 1235")
-      .isEqualByComparingTo("1234.56");
+    return id;
   }
 
 }

@@ -65,7 +65,7 @@ public class ReservationOrderEntity implements Serializable {
   private LocalDate checkOut;
 
   @NotNull
-  @Column(name = "total_price", nullable = false, precision = 10, scale = 2)
+  @Column(name = "total_price", nullable = false, precision = 19, scale = 4)
   private BigDecimal totalPrice;
 
   @NotNull

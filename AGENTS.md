@@ -66,8 +66,9 @@ Três testes carregam intenção que o nome não entrega, e o Javadoc de cada um
 
 | Teste | O que ele guarda |
 |---|---|
-| `FlywayMigrationIT#preservaCentavosNoPrecoDoQuarto` (hotel) | Nasceu cobrando `200` para quebrar na migração. Quebrou: `numeric(10, 2)` devolve `199.99` |
+| `FlywayMigrationIT#preservaCentavosNoPrecoDoQuarto` (hotel) | Nasceu cobrando `200` para quebrar na migração. Quebrou: a escala 2 devolve `199.99` |
 | `FlywayMigrationIT#preservaCentavosNoTotalDaReserva` (booking) | O mesmo, com `1235` → `1234.56` |
+| `FlywayMigrationIT#preservaAEscalaDeCalculo*` (hotel, booking, customer) | O par dos dois acima, e a razão de existirem separados: `199.99` atravessa `numeric(10, 2)` intacto, então aqueles ficariam verdes mesmo se a V012/V007/V008 não tivessem rodado. Só um valor que precise da quarta casa distingue as duas escalas |
 | `HotelJpaRepositoryIT#achaCidadeSemAcento` | Cobrava um comportamento que o MySQL dava de graça pela colação `utf8mb4_0900_ai_ci`. Continuou verde porque a migração o tornou explícito, não porque sobreviveu sozinho |
 
 A busca sem acento é o caso que mais ensina: `cuiaba` achava `Cuiabá` sem que nenhuma linha
@@ -246,6 +247,13 @@ Regras que o código segue e que devem ser mantidas:
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
+- **`Money` tem duas escalas, e escolher a errada não dá erro nenhum.** `getValue()` devolve
+  4 casas: é o que vai para as colunas `numeric(19, 4)` e para o contrato de eventos.
+  `getPresentationValue()` devolve 2 e serve **só** à resposta HTTP — há exatamente dois usos,
+  em `HotelUseCaseMapperImpl` e `CustomerUseCaseMapperImpl`, e nada que ainda vá ser somado ou
+  multiplicado pode passar por ele. Arredondar cada parcela antes de somar não dá o mesmo total
+  que somar e arredondar no fim, e a troca não produz exceção: sai um número plausível, errado
+  por centavos. Um caminho novo de saída ao usuário usa o segundo; qualquer outro, o primeiro.
 - Estilo: indentação de 2 espaços, `final` em parâmetros e campos, `this.` explícito em
   todo acesso a membro, `var` para locais.
 - **A explicação vai no Javadoc, não em comentário inline.** Se o que se quer dizer

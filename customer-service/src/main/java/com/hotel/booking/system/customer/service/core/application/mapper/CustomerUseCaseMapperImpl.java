@@ -70,7 +70,7 @@ public class CustomerUseCaseMapperImpl implements CustomerUseCaseMapper {
       .customerName(customer.getName())
       .reservationOrderId(reservationOrder.getId().toString())
       .hotelId(reservationOrder.getHotelId().toString())
-      .totalPrice(reservationOrder.getTotalPrice().getValue())
+      .totalPrice(reservationOrder.getTotalPrice().getPresentationValue())
       .checkIn(reservationOrder.getCheckIn())
       .checkOut(reservationOrder.getCheckOut())
       .status(reservationOrder.getCurrentStatus())
