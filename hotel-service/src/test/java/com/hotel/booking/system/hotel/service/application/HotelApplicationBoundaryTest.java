@@ -7,6 +7,7 @@ import com.hotel.booking.system.hotel.service.core.ports.api.usecase.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
@@ -18,6 +19,24 @@ class HotelApplicationBoundaryTest {
   private final SearchHotelAvailableUseCase search = mock(SearchHotelAvailableUseCase.class);
   private final BookingRoomRequestUseCase book = mock(BookingRoomRequestUseCase.class);
   private final HotelController controller = new HotelController(new HotelApplicationServiceImpl(this.register, this.search, this.book));
+
+  @Test
+  @DisplayName("declara transações na fronteira de cada operação")
+  void declaraTransacoesNaFronteiraDeCadaOperacao() throws NoSuchMethodException {
+    final var register = HotelApplicationServiceImpl.class
+      .getMethod("register", RegisterHotelInput.class)
+      .getAnnotation(Transactional.class);
+    final var search = HotelApplicationServiceImpl.class
+      .getMethod("searchHotelAvailableBy", SearchHotelAvailableInput.class)
+      .getAnnotation(Transactional.class);
+    final var booking = HotelApplicationServiceImpl.class
+      .getMethod("bookingRoomRequest", BookingRoomInput.class)
+      .getAnnotation(Transactional.class);
+
+    assertThat(register).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
+    assertThat(search).isNotNull().extracting(Transactional::readOnly).isEqualTo(true);
+    assertThat(booking).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
+  }
 
   @Test
   @DisplayName("retorna o hotel registrado dentro do envelope HTTP")

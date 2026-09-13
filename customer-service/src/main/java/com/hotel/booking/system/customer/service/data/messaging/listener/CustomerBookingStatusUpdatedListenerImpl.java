@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -19,6 +20,7 @@ public class CustomerBookingStatusUpdatedListenerImpl implements CustomerBooking
 
   @Override
   @RabbitListener(queues = "${app.rabbitmq.queue.customer-booking-update}")
+  @Transactional
   public void listen(final List<CustomerBookingStatusUpdatedEvent> events) {
     log.info("CustomerBookingStatusUpdatedEvent received: {}", events.size());
     try {
@@ -27,6 +29,7 @@ public class CustomerBookingStatusUpdatedListenerImpl implements CustomerBooking
       }
     } catch (final Exception e) {
       log.error("An error occurred while trying processing CustomerBookingStatusUpdatedEvent", e);
+      throw new IllegalStateException("Failed to process CustomerBookingStatusUpdatedEvent", e);
     }
   }
 
