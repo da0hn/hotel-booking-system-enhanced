@@ -11,12 +11,27 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @DisplayName("Adaptadores e configuração de mensageria das reservas")
 class BookingMessagingTest {
+  @Test
+  @DisplayName("declara transação nos listeners que alteram o banco")
+  void listenersDeclaramTransacaoNasOperacoesDeEscrita() throws NoSuchMethodException {
+    final var requested = BookingRoomRequestedRabbitMQListener.class
+      .getMethod("listen", BookingRoomRequestedEvent.class)
+      .getAnnotation(Transactional.class);
+    final var statusChanged = BookingRoomStatusChangedRabbitMQListener.class
+      .getMethod("listen", BookingRoomStatusUpdatedEvent.class)
+      .getAnnotation(Transactional.class);
+
+    assertThat(requested).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
+    assertThat(statusChanged).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
+  }
+
   @Test
   @DisplayName("encaminha eventos recebidos sem transformá-los")
   void listenersEncaminhamEventoSemTransformacao() {

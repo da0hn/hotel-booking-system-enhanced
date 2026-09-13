@@ -244,6 +244,11 @@ Regras que o código segue e que devem ser mantidas:
 - **`core/` não conhece Spring.** Use cases e handlers são POJOs instanciados à mão em
   `*BeanConfiguration` (`HotelBeanConfiguration`, `BookingBeanConfiguration`, …). Só as
   camadas `data/` e `application/` usam estereótipos (`@Component`, `@Configuration`).
+- **Fronteiras transacionais ficam nos adaptadores de entrada.** Use `@Transactional` nos
+  `*ApplicationServiceImpl` e nos listeners RabbitMQ que iniciam operações de escrita ou
+  coordenam leitura e escrita. Use `@Transactional(readOnly = true)` nas consultas. Não
+  anote use cases POJO nem adapters de repositório; o listener deve propagar a exceção para
+  permitir o rollback.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).

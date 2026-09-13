@@ -6,6 +6,7 @@ import com.hotel.booking.system.customer.service.core.application.dto.Reservatio
 import com.hotel.booking.system.customer.service.core.ports.api.usecase.GetCustomerReservationOrderDetail;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @AllArgsConstructor
@@ -14,6 +15,7 @@ public class CustomerApplicationServiceImpl implements CustomerApplicationServic
   private final GetCustomerReservationOrderDetail getCustomerReservationOrderDetail;
 
   @Override
+  @Transactional(readOnly = true)
   public ReservationOrderDetailOutput getCustomerReservationOrderDetail(final String customerId, final String reservationOrderId) {
     return this.getCustomerReservationOrderDetail.execute(new ReservationOrderDetailInput(customerId, reservationOrderId));
   }

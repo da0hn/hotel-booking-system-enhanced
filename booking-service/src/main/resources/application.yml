@@ -36,7 +36,6 @@ spring:
         # Sem isto o validador do `ddl-auto` procura a tabela sem qualificar o schema, e
         # `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo banco.
         default_schema: ${BOOKING_DB_SCHEMA:booking}
-        enable_lazy_load_no_trans: true
         format_sql: true
   docker:
     compose:

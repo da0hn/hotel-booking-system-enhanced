@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Component
@@ -17,6 +18,7 @@ public class BookingRoomStatusChangedRabbitMQListener implements BookingRoomStat
 
   @Override
   @RabbitListener(queues = "${app.rabbitmq.queue.booking-room-status-changed}")
+  @Transactional
   public void listen(final BookingRoomStatusUpdatedEvent event) {
     log.info("BookingRoomStatusUpdatedEvent received: {}, ", event);
     this.handler.handle(event);

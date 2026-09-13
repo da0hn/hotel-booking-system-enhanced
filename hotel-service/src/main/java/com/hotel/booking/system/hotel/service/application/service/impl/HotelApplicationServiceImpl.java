@@ -12,6 +12,7 @@ import com.hotel.booking.system.hotel.service.core.ports.api.usecase.RegisterHot
 import com.hotel.booking.system.hotel.service.core.ports.api.usecase.SearchHotelAvailableUseCase;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -24,16 +25,19 @@ public class HotelApplicationServiceImpl implements HotelApplicationService {
   private final BookingRoomRequestUseCase bookingRoomRequestUseCase;
 
   @Override
+  @Transactional
   public RegisterHotelOutput register(final RegisterHotelInput input) {
     return this.registerHotelUseCase.execute(input);
   }
 
   @Override
+  @Transactional(readOnly = true)
   public List<SearchHotelAvailableOutput> searchHotelAvailableBy(final SearchHotelAvailableInput input) {
     return this.searchHotelAvailableUseCase.execute(input);
   }
 
   @Override
+  @Transactional
   public BookingRoomOutput bookingRoomRequest(final BookingRoomInput input) {
     return this.bookingRoomRequestUseCase.execute(input);
   }

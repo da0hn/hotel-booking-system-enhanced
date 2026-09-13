@@ -14,6 +14,7 @@ import com.hotel.booking.system.customer.service.data.messaging.listener.Custome
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.List;
@@ -28,6 +29,20 @@ class CustomerFlowTest {
   private final CustomerId customerId = CustomerId.newInstance();
   private final ReservationOrderId orderId = ReservationOrderId.newInstance();
   private final HotelId hotelId = HotelId.newInstance();
+
+  @Test
+  @DisplayName("declara transação de leitura no acesso HTTP e de escrita no listener")
+  void declaraTransacaoDeLeituraNoAcessoHttpEDeEscritaNoListener() throws NoSuchMethodException {
+    final var detail = CustomerApplicationServiceImpl.class
+      .getMethod("getCustomerReservationOrderDetail", String.class, String.class)
+      .getAnnotation(Transactional.class);
+    final var listener = CustomerBookingStatusUpdatedListenerImpl.class
+      .getMethod("listen", List.class)
+      .getAnnotation(Transactional.class);
+
+    assertThat(detail).isNotNull().extracting(Transactional::readOnly).isEqualTo(true);
+    assertThat(listener).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
+  }
 
   @Test
   @DisplayName("constrói a projeção e formata dinheiro, CPF e linha do tempo")
@@ -92,13 +107,16 @@ class CustomerFlowTest {
   }
 
   @Test
-  @DisplayName("interrompe lote com falha do handler e aceita lote vazio")
-  void listenerInterrompeLoteEAceitaLoteVazioQuandoHandlerFalha() {
+  @DisplayName("propaga falha do handler e aceita lote vazio")
+  void listenerPropagaFalhaDoHandlerEAceitaLoteVazio() {
     final var handler = mock(com.hotel.booking.system.customer.service.core.ports.api.messaging.CustomerBookingStatusUpdatedHandler.class);
     final var event = this.initiated();
     doThrow(new IllegalStateException("falha de persistência")).when(handler).handle(event);
     final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler);
-    assertThatCode(() -> listener.listen(List.of(event, this.initiated()))).doesNotThrowAnyException();
+    assertThatThrownBy(() -> listener.listen(List.of(event, this.initiated())))
+      .isInstanceOf(IllegalStateException.class)
+      .hasMessage("Failed to process CustomerBookingStatusUpdatedEvent")
+      .hasCauseInstanceOf(IllegalStateException.class);
     listener.listen(List.of());
     verify(handler, times(1)).handle(event);
     verifyNoMoreInteractions(handler);
