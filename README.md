@@ -41,6 +41,7 @@ monetárias até a ausência de compensação na saga.
 * [3. Setup](#3-setup)
   * [3.1. Pré Requisitos](#31-pré-requisitos)
   * [3.2. Instalação](#32-instalação)
+* [4. Cobertura de testes](#4-cobertura-de-testes)
 
 ---
 
@@ -328,3 +329,32 @@ docker volume rm $(docker volume ls -q)
 ```
 
 * Para realizar os testes é possível utilizar o postman como cliente http e importar a collection localizada em `${projeto}/postman`.
+
+# 4. Cobertura de testes
+
+O JaCoCo está configurado no POM raiz e é herdado pelos cinco módulos. Para medir a
+cobertura dos testes unitários e de integração, com Docker disponível, execute:
+
+```sh
+mvn -B clean verify
+```
+
+Cada módulo com testes executados gera `target/site/jacoco/index.html` para navegação e `jacoco.xml` e
+`jacoco.csv` no mesmo diretório para processamento. No `hotel-service`, por exemplo,
+abra `hotel-service/target/site/jacoco/index.html`. Os relatórios são por módulo;
+a cobertura do projeto deve ser calculada somando contadores cobertos e totais,
+nunca pela média simples dos percentuais.
+
+Para medir apenas os testes unitários, sem Docker:
+
+```sh
+mvn -B clean test jacoco:report
+```
+
+Para restringir a medição ao hotel e suas dependências, acrescente
+`-pl hotel-service -am`. Use `clean` para descartar medições anteriores: os processos
+do Surefire e do Failsafe acrescentam dados ao mesmo `target/jacoco.exec`.
+Uma execução apenas de unitários não representa a cobertura da suíte completa.
+Não há percentual mínimo obrigatório nem exclusões de classes configuradas.
+Módulos sem testes executados não geram dados nem relatório; essa ausência não
+significa cobertura de 100% e precisa ser considerada ao avaliar o projeto.
