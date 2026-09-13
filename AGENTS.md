@@ -13,6 +13,33 @@ técnica. Consulte-as antes de propor mudanças estruturais (`gh issue list`).
 O `README.md` documenta setup, portas, credenciais e a tabela de exchanges/filas. Não
 duplique esse conteúdo aqui.
 
+## Processo de desenvolvimento
+
+Para qualquer alteração relacionada a uma issue, siga este fluxo:
+
+1. Crie a branch a partir de `develop`, usando o número da issue sem inventar ou omitir
+   esse identificador:
+   - `feature/GH-${numero-da-issue}` para funcionalidades ou alterações de comportamento.
+   - `bugfix/GH-${numero-da-issue}` para correções de defeitos.
+   - Quando não houver issue associada, use `feature/{slug-da-mudança}` ou
+     `bugfix/{slug-da-correção}`, substituindo o trecho entre chaves por um slug curto,
+     descritivo e em kebab-case.
+2. Faça todos os commits da implementação nessa branch ou em um worktree que tenha essa
+   branch selecionada. Antes de cada commit, verifique esse vínculo e não commite na branch
+   base.
+3. Quando houver issue, inclua, após uma linha em branco, o rodapé
+   `Refs: GH-${numero-da-issue}` em cada commit da implementação. Quando não houver issue,
+   não inclua esse rodapé.
+4. Abra um PR dessa branch para `develop` ao concluir a implementação.
+
+Use worktrees principalmente quando vários subagentes implementarem alterações em paralelo.
+O worktree é apenas o diretório de trabalho; a branch da issue continua sendo obrigatória.
+
+O agente não deve criar commits manuais diretamente em `develop`, `master`, `release/*` ou
+`hotfix/*`. Faça uma exceção somente quando o usuário solicitar explicitamente esse commit.
+Commits e tags gerados automaticamente pelos workflows de release não são commits de
+implementação do agente e não devem ser reproduzidos manualmente.
+
 ## Comandos
 
 O projeto compila no **JDK 25**, que é para onde o `java` do host resolve (mise). Não é
@@ -108,11 +135,10 @@ O desenho completo do fluxo está em `docs/diagrams/06-gitflow-pipeline.jpg`.
 
 ### Gitflow
 
-Nenhum trabalho nasce na `master` nem na `develop`:
-
-- `feature/*` nasce da `develop` e volta para ela por PR.
-- `release/X.Y.Z` nasce da `develop`; `hotfix/X.Y.Z` nasce da `master`. Nas duas, **a
-  versão vem do nome da branch** e o pom é ajustado para segui-la — a pipeline commita
+- O fluxo normal de branches de trabalho e PRs está definido em `Processo de desenvolvimento`.
+- `release/X.Y.Z` nasce da `develop`; `hotfix/X.Y.Z` nasce da `master`. Essas branches são
+  exceções do fluxo normal e servem ao processo de release. Nas duas, **a versão vem do
+  nome da branch** e o pom é ajustado para segui-la — a pipeline commita
   `chore(release): bump da versão para X.Y.Z` na própria branch. O `<revision>` recebe
   apenas o semver; o `run_number` existe só na tag da imagem.
 - `release/*` e `hotfix/*` entram na `master` por PR, e a `master` volta para a `develop`
