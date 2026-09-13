@@ -167,6 +167,91 @@ O valor de `type` é o identificador semântico do evento; ele não é o nome do
 da fila ou da routing key. Pode espelhar a parte semântica da routing key, mas essa
 correspondência é uma convenção do projeto, não uma exigência do CloudEvents.
 
+### Origem do evento
+
+Preencha `source` com um identificador estável do contexto que produziu o evento. Ele é
+um `URI-reference` e um URI absoluto é preferível. `source` identifica o produtor ou o
+contexto de origem da ocorrência; não identifica o exchange, topic, fila, routing key,
+hostname, pod, thread ou versão do deploy. O valor deve permanecer estável enquanto o
+mesmo produtor lógico continuar responsável pelo evento.
+
+Quando a organização possuir um domínio próprio, prefira um URI HTTPS sob esse domínio:
+
+```text
+https://events.<dominio-organizacao>/sources/<sistema>/<servico>
+```
+
+Exemplo:
+
+```text
+https://events.hotel-booking.com/sources/hotel-booking-system/hotel-service
+```
+
+Quando não houver um domínio apropriado, use este formato URN:
+
+```text
+urn:<sistema>:service:<servico>
+```
+
+Exemplo:
+
+```text
+urn:hotel-booking-system:service:hotel
+```
+
+Se o mesmo produtor lógico puder gerar o mesmo `id` em ambientes isolados que trocam
+eventos entre si, inclua o ambiente como parte da origem:
+
+```text
+urn:<sistema>:environment:<ambiente>:service:<servico>
+```
+
+Use nomes minúsculos, estáveis e sem identificadores de instância. Em uma cadeia de
+eventos, o `source` muda para o serviço que produziu cada novo evento, enquanto
+`correlationid` permanece associado ao fluxo e `causationid` aponta para o evento
+imediatamente anterior.
+
+O par `source` + `id` deve ser único para cada evento distinto. Uma retransmissão do
+mesmo evento pode conservar o mesmo par; um novo evento derivado deve receber um novo
+`id`.
+
+## Metadados do envelope
+
+Separe os metadados do CloudEvents do conteúdo de negócio em `data`. Os atributos de
+contexto usam nomes minúsculos em ASCII; os opcionais devem ser omitidos quando não se
+aplicarem, em vez de receberem valores vazios, inventados ou `null`, salvo quando o
+schema do projeto exigir explicitamente `null`.
+
+| Campo | O que representa | Quando informar |
+| --- | --- | --- |
+| `specversion` | Versão da especificação CloudEvents usada para interpretar o envelope. | Sempre; use `1.0` para CloudEvents 1.x. |
+| `id` | Identificador da ocorrência/evento produzido. | Sempre; gere um valor único dentro de `source`. |
+| `source` | Contexto ou produtor lógico onde a ocorrência aconteceu. | Sempre; siga a convenção de origem desta skill. |
+| `type` | Tipo semântico da ocorrência, incluindo a versão major do contrato quando aplicável. | Sempre; use o identificador reverse-DNS definido para o evento. |
+| `time` | Momento em que a ocorrência aconteceu, em RFC 3339. | Informe quando conhecido; não use para representar o próximo horário de entrega. |
+| `subject` | Entidade específica afetada pela ocorrência dentro de `source`. | Informe quando houver um alvo identificável ou quando filtros genéricos precisarem dele. |
+| `datacontenttype` | Media type do conteúdo de `data`, como `application/json`. | Informe quando o formato não for implícito ou quando o evento atravessar protocolos. |
+| `dataschema` | URI do schema ao qual `data` obedece. | Informe quando o schema for publicado; altere a URI em mudanças incompatíveis. |
+| `data` | Dados específicos do domínio que descrevem a ocorrência. | O CloudEvents permite omiti-lo, mas eventos de negócio desta skill devem informá-lo. |
+| `traceparent` | Contexto de trace distribuído do W3C propagado entre produtores e consumidores. | Informe ao usar a extensão de tracing ou quando houver contexto de trace ativo. |
+| `tracestate` | Estado adicional específico dos vendors associado ao `traceparent`. | Informe somente quando recebido ou gerado pelo propagator e houver estado a preservar. |
+| `correlationid` | Identificador estável do fluxo de negócio que relaciona vários eventos. | Informe em sagas, workflows e transações distribuídas; mantenha-o igual em todo o fluxo. |
+| `causationid` | `id` do evento, comando ou mensagem que causou diretamente o evento atual. | Informe em eventos derivados de outra mensagem; omita no primeiro evento sem causa mensageada. |
+| `causationsource` | `source` correspondente ao `causationid`, evitando ambiguidade entre produtores. | Informe junto de `causationid` quando mais de um produtor puder gerar ids semelhantes. |
+| `retryattempt` | Contador da tentativa de processamento do evento, começando em `0`. | Informe quando retries precisarem ser portáveis ou auditáveis; incremente ao republicar, não em simples redelivery. |
+| `scheduledat` | Próximo instante planejado para disponibilizar ou processar a mensagem, em RFC 3339 UTC. | Informe em mensagens agendadas, timeouts ou retries com backoff; omita em entregas imediatas. |
+
+`traceparent` e `tracestate` pertencem à extensão de tracing do CloudEvents. Os campos
+`correlationid`, `causationid`, `causationsource`, `retryattempt` e `scheduledat` são
+extensões do projeto e devem ter seus tipos e semântica mantidos em um catálogo de
+extensões. Nenhum deles é atributo obrigatório do núcleo do CloudEvents.
+
+O `time` continua representando a ocorrência original mesmo quando a mensagem é
+agendada ou republicada. Use `scheduledat` para o próximo processamento e
+`retryattempt` para a tentativa operacional. Se esses dados forem específicos de um
+broker e não precisarem sobreviver à troca de transporte, eles podem ficar em headers ou
+metadados do broker em vez do envelope CloudEvents.
+
 ## Versionamento
 
 Inclua somente a versão major do contrato no fluxo quando ela for necessária para
