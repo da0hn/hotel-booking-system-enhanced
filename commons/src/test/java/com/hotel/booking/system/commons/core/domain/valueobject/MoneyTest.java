@@ -26,6 +26,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("Money")
 class MoneyTest {
 
+  @Test
+  @DisplayName("identifica valores negativos, zero e objetos de outro tipo")
+  void distingueSinalZeroEObjetosDeOutroTipo() {
+    final var positive = Money.of(1);
+    assertThat(positive.isNegative()).isFalse();
+    assertThat(positive.isZero()).isFalse();
+    assertThat(Money.of(-1).isNegative()).isTrue();
+    assertThat(Money.ZERO.isNegative()).isFalse();
+    assertThat(positive.equals(positive)).isTrue();
+    assertThat(positive.equals(null)).isFalse();
+    assertThat(positive.equals(BigDecimal.ONE)).isFalse();
+  }
+
+  @Test
+  @DisplayName("reconhece somente os status de falha da reserva")
+  void identificaSomenteOsDoisStatusDeFalha() {
+    for (final var status : CustomerReservationStatus.values()) {
+      assertThat(CustomerReservationStatus.isFailureStatus(status))
+        .isEqualTo(status == CustomerReservationStatus.PAYMENT_FAILED
+          || status == CustomerReservationStatus.RESERVATION_FAILED);
+    }
+    assertThat(CustomerReservationStatus.isFailureStatus(null)).isFalse();
+  }
+
   @Nested
   @DisplayName("preserva centavos")
   class PreservaCentavos {
