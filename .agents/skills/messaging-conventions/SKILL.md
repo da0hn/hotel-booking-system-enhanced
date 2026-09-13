@@ -1,5 +1,5 @@
 ---
-name: messaging-naming
+name: messaging-conventions
 description: Padroniza a nomenclatura de mensageria do projeto. Use sempre que a tarefa criar, renomear, documentar ou revisar exchanges, filas, routing keys, bindings, topics, subjects, eventos, mensagens, CloudEvents ou recursos equivalentes de um broker, mesmo quando o usuário não mencionar explicitamente esta skill.
 compatibility: Requer apenas acesso aos arquivos do repositório; consulte as documentações oficiais vinculadas quando precisar validar uma regra específica do transporte.
 ---
