@@ -1,28 +1,55 @@
 ---
 name: messaging-conventions
-description: Padroniza a nomenclatura de mensageria do projeto. Use sempre que a tarefa criar, renomear, documentar ou revisar exchanges, filas, routing keys, bindings, topics, subjects, eventos, mensagens, CloudEvents ou recursos equivalentes de um broker, mesmo quando o usuário não mencionar explicitamente esta skill.
+description: Padroniza a nomenclatura de mensageria para qualquer sistema de filas ou pub/sub. Use sempre que a tarefa criar, renomear, documentar ou revisar exchanges, filas, routing keys, bindings, topics, subjects, streams, subscriptions, consumer groups, eventos, mensagens, CloudEvents ou recursos equivalentes de qualquer broker, mesmo quando o usuário não mencionar explicitamente esta skill.
 compatibility: Requer apenas acesso aos arquivos do repositório; consulte as documentações oficiais vinculadas quando precisar validar uma regra específica do transporte.
 ---
 
-# Nomenclatura de mensageria
+# Convenções de mensageria
+
+Use esta skill em qualquer tecnologia de filas, publicação/assinatura ou streaming.
+Primeiro identifique os recursos que realmente existem no sistema escolhido; depois
+aplique a convenção base e as restrições específicas do transporte. Não force os nomes
+`exchange`, `queue` ou `routing key` em plataformas que não possuem esses conceitos.
 
 Use nomes técnicos estáveis, hierárquicos e orientados ao domínio. Separe sempre três
-responsabilidades:
+responsabilidades, adaptando os nomes aos conceitos equivalentes da plataforma:
 
 - o `exchange` ou `topic` organiza a publicação e o roteamento;
 - a `routing key`, o `subject` ou o `topic name` identifica o fluxo semântico do evento;
-- a `queue` ou assinatura identifica o consumidor que mantém aquela leitura.
+- a `queue`, `subscription`, `consumer group` ou consumidor durável identifica a leitura
+  mantida por um consumidor.
 
-Não trate o nome da fila como sinônimo do nome do evento. O mesmo evento pode ser
-consumido por vários serviços, cada um com sua própria fila.
+Não trate o nome da fila, assinatura ou grupo de consumidores como sinônimo do nome do
+evento. O mesmo evento pode ser consumido por vários serviços, cada um com sua própria
+leitura independente.
 
-## Convenção do projeto
+## Convenção base
 
 Use `.` como separador, letras minúsculas, dígitos e palavras curtas em ASCII. Não use
 espaços, acentos ou nomes dependentes de uma classe Java, hostname, partição ou detalhe
 interno do consumidor.
 
-### Exchange
+Quando a plataforma exigir outro separador ou possuir restrições próprias, preserve a
+mesma sequência semântica e adapte somente a representação. Por exemplo, use `/` para
+níveis de tópicos MQTT e `.` para subjects NATS ou routing keys de exchanges `topic`.
+
+## Mapeamento por plataforma
+
+Antes de nomear um recurso, classifique sua função:
+
+| Função | RabbitMQ/AMQP | Kafka | NATS | MQTT |
+| --- | --- | --- | --- | --- |
+| Espaço de publicação/roteamento | `exchange` | `topic` | não há exchange separado; use o `subject` | não há exchange separado; use o `topic name` |
+| Endereço semântico do fluxo | `routing key` | `topic`, chave ou `type` no evento | `subject` | `topic name` |
+| Leitura persistente do consumidor | `queue` | `consumer group` | `queue group` ou consumidor durável | `subscription`/sessão |
+| Regra de entrega | `binding` | assinatura do grupo | subscription/filter | `topic filter` |
+
+Essa tabela é um mapa conceitual, não uma equivalência operacional perfeita. Uma
+plataforma pode combinar publicação, retenção e assinatura em um único recurso. Nesses
+casos, nomeie o recurso pelo papel que ele desempenha no desenho e registre as diferenças
+de retenção, distribuição e reprocessamento separadamente.
+
+### Espaço de publicação
 
 Estruture como:
 
@@ -36,12 +63,16 @@ Exemplo:
 hotel.booking.events
 ```
 
-O exchange representa o espaço de publicação de um domínio e pode transportar vários
-eventos relacionados. Não inclua o evento nem o consumidor no nome do exchange. Evite
-prefixos redundantes como `exchange.` quando o campo de configuração já informa que o
-recurso é um exchange.
+O exchange, topic ou subject raiz representa o espaço de publicação de um domínio e pode
+transportar vários eventos relacionados. Não inclua o evento nem o consumidor nesse
+espaço quando a plataforma permitir separá-los. Evite prefixos redundantes como
+`exchange.` ou `topic.` quando o campo de configuração já informa o tipo do recurso.
 
-### Routing key, topic ou subject
+Quando a plataforma não possuir um espaço separado de publicação, aplique a estrutura
+diretamente ao endereço semântico do fluxo e não crie um nome artificial para um
+exchange inexistente.
+
+### Endereço do fluxo
 
 Estruture como:
 
@@ -75,7 +106,7 @@ tópico no nível do fluxo e use `type` ou headers para distinguir os eventos.
 Para NATS, use a mesma hierarquia como `subject`; publique sempre o subject completo e
 reserve wildcards para assinaturas.
 
-### Queue ou assinatura
+### Fila, assinatura ou grupo de consumidores
 
 Estruture como:
 
@@ -89,15 +120,17 @@ Exemplo:
 booking-service.booking.room.requested.v1
 ```
 
-Inclua o consumidor porque a fila representa a assinatura persistente daquele serviço.
-Outro consumidor deve possuir outra fila, mesmo que leia a mesma routing key:
+Inclua o consumidor porque a fila, assinatura ou grupo representa a leitura mantida por
+aquele serviço. Outro consumidor deve possuir outra leitura independente, mesmo que leia
+o mesmo fluxo:
 
 ```text
 customer-service.booking.room.requested.v1
 ```
 
-Não coloque o consumidor no exchange nem na routing key. Evite também incluir detalhes
-como número de partições, hostname, pod, grupo temporário ou versão de deploy.
+Não coloque o consumidor no espaço de publicação nem no endereço semântico do fluxo.
+Evite também incluir detalhes como número de partições, hostname, pod, grupo temporário
+ou versão de deploy.
 
 ### Dead-letter e filas auxiliares
 
@@ -179,9 +212,16 @@ padroniza o contexto e o payload da mensagem.
 ## Regras para alterações existentes
 
 Antes de renomear um recurso, localize todos os publishers, consumers, bindings,
-configurações, testes, dashboards e políticas que usam o nome. Em RabbitMQ, declare o
-novo exchange ou fila e o novo binding antes de remover o antigo. Atualize produtor e
-consumidor de forma coordenada e confirme como as mensagens já publicadas serão drenadas.
+configurações, testes, dashboards e políticas que usam o nome. Identifique também
+mensagens retidas, assinaturas, grupos de consumidores e políticas de segurança que
+dependem do endereço. Crie o recurso novo e a regra de entrega antes de remover o antigo,
+quando a plataforma permitir. Atualize produtores e consumidores de forma coordenada e
+confirme como as mensagens já publicadas serão drenadas ou migradas.
+
+Em RabbitMQ, declare o novo exchange ou fila e o novo binding antes de remover os
+antigos. Em Kafka, crie o novo topic e faça a migração dos registros, pois o topic não é
+renomeado diretamente. Em NATS ou MQTT, atualize publishers e subscriptions de forma
+coordenada, observando as garantias de retenção do sistema escolhido.
 
 Não faça uma alteração puramente textual quando ela muda o endereço efetivo do recurso.
 Considere-a uma migração de topologia e registre a compatibilidade entre os nomes antigo
@@ -198,4 +238,5 @@ e novo.
 - [CloudEvents Primer — Versioning](https://github.com/cloudevents/spec/blob/ce%40stable/cloudevents/primer.md): orienta a evolução de `type` e `dataschema`.
 
 Essas referências definem semântica, restrições e recomendações. A estrutura exata acima
-é a convenção interna do projeto e deve ser aplicada de maneira consistente.
+é a convenção base desta skill; aplique-a ao projeto quando a plataforma permitir e
+adapte apenas o que for necessário para respeitar o transporte escolhido.
