@@ -2,8 +2,8 @@ package com.hotel.booking.system.customer.service;
 
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
-import com.hotel.booking.system.customer.service.application.configuration.*;
-import com.hotel.booking.system.customer.service.application.configuration.properties.*;
+import com.hotel.booking.system.customer.service.infrastructure.configuration.*;
+import com.hotel.booking.system.customer.service.infrastructure.messaging.properties.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageProperties;

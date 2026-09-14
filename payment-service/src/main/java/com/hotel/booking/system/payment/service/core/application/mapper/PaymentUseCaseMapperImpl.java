@@ -1,5 +1,6 @@
 package com.hotel.booking.system.payment.service.core.application.mapper;
 
+import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.commons.core.domain.event.PaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentFailedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentRequestedEvent;
@@ -12,6 +13,7 @@ import com.hotel.booking.system.payment.service.core.application.dto.PayOrderOut
 import com.hotel.booking.system.payment.service.core.domain.Payment;
 import com.hotel.booking.system.payment.service.core.ports.api.mapper.PaymentUseCaseMapper;
 
+@Mapper
 public class PaymentUseCaseMapperImpl implements PaymentUseCaseMapper {
 
   @Override

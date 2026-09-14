@@ -1,5 +1,6 @@
 package com.hotel.booking.system.payment.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import com.hotel.booking.system.commons.core.domain.valueobject.PaymentStatus;
 import com.hotel.booking.system.payment.service.core.application.dto.PayOrderInput;
@@ -7,10 +8,12 @@ import com.hotel.booking.system.payment.service.core.application.dto.PayOrderOut
 import com.hotel.booking.system.payment.service.core.ports.api.mapper.PaymentUseCaseMapper;
 import com.hotel.booking.system.payment.service.core.ports.api.usecase.PayOrderUseCase;
 import lombok.SneakyThrows;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
+@UseCase
 public class PayOrderUseCaseMockImpl implements PayOrderUseCase {
 
   private final PaymentUseCaseMapper paymentUseCaseMapper;
@@ -19,7 +22,7 @@ public class PayOrderUseCaseMockImpl implements PayOrderUseCase {
 
   public PayOrderUseCaseMockImpl(
     final PaymentUseCaseMapper paymentUseCaseMapper,
-    final Integer failureChancePercentage
+    @Value("${app.payment.mock.failure-chance-percentage}") final Integer failureChancePercentage
   ) {
     this.paymentUseCaseMapper = paymentUseCaseMapper;
     this.failureChancePercentage = failureChancePercentage;

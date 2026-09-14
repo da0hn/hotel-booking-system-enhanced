@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableOutput;
 import com.hotel.booking.system.hotel.service.core.ports.api.mapper.HotelUseCaseMapper;
@@ -9,6 +10,7 @@ import com.hotel.booking.system.hotel.service.core.ports.spi.repository.HotelRep
 import java.util.List;
 import java.util.stream.Collectors;
 
+@UseCase
 public class SearchHotelAvailableUseCaseImpl implements SearchHotelAvailableUseCase {
 
   private final HotelRepository hotelRepository;

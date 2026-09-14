@@ -30,6 +30,7 @@
         <!-- O parent do Spring Boot deriva `maven.compiler.release` desta property,
              então ela sozinha governa source, target e release dos cinco módulos. -->
         <java.version>25</java.version>
+        <archunit.version>1.5.0</archunit.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -71,6 +72,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>

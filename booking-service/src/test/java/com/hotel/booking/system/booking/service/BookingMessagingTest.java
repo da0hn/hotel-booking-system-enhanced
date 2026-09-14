@@ -1,10 +1,10 @@
 package com.hotel.booking.system.booking.service;
 
-import com.hotel.booking.system.booking.service.application.configuration.*;
-import com.hotel.booking.system.booking.service.application.configuration.properties.*;
+import com.hotel.booking.system.booking.service.infrastructure.configuration.*;
 import com.hotel.booking.system.booking.service.core.ports.api.messaging.*;
-import com.hotel.booking.system.booking.service.data.messaging.listener.*;
-import com.hotel.booking.system.booking.service.data.messaging.publisher.BookingRoomResponsePublisherImpl;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.listener.*;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.*;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import org.junit.jupiter.api.DisplayName;

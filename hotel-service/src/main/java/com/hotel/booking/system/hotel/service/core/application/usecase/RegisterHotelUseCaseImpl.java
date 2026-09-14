@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelOutput;
@@ -10,6 +11,7 @@ import com.hotel.booking.system.hotel.service.core.ports.api.usecase.RegisterHot
 import com.hotel.booking.system.hotel.service.core.ports.spi.repository.HotelRepository;
 import com.hotel.booking.system.hotel.service.core.ports.spi.repository.LocalityRepository;
 
+@UseCase
 public class RegisterHotelUseCaseImpl implements RegisterHotelUseCase {
 
   private final HotelRepository hotelRepository;

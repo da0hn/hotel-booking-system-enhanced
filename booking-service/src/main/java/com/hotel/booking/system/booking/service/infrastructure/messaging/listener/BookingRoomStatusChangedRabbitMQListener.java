@@ -1,0 +1,26 @@
+package com.hotel.booking.system.booking.service.infrastructure.messaging.listener;
+
+import com.hotel.booking.system.booking.service.core.ports.api.messaging.BookingRoomStatusChangedHandler;
+import com.hotel.booking.system.booking.service.core.ports.spi.messaging.listener.BookingRoomStatusChangedListener;
+import com.hotel.booking.system.commons.core.application.annotation.Listener;
+import com.hotel.booking.system.commons.core.domain.event.BookingRoomStatusUpdatedEvent;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.transaction.annotation.Transactional;
+
+@Slf4j
+@Listener
+@AllArgsConstructor
+public class BookingRoomStatusChangedRabbitMQListener implements BookingRoomStatusChangedListener {
+
+  private final BookingRoomStatusChangedHandler handler;
+
+  @Override
+  @RabbitListener(queues = "${app.rabbitmq.queue.booking-room-status-changed}")
+  @Transactional
+  public void listen(final BookingRoomStatusUpdatedEvent event) {
+    log.info("BookingRoomStatusUpdatedEvent received: {}, ", event);
+    this.handler.handle(event);
+  }
+}

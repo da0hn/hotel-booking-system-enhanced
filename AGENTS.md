@@ -32,6 +32,11 @@ Para qualquer alteração relacionada a uma issue, siga este fluxo:
    não inclua esse rodapé.
 4. Abra um PR dessa branch para `develop` ao concluir a implementação.
 
+5. Ao implementar uma feature, siga TDD: escreva primeiro um teste que falhe e expresse
+   o comportamento esperado, implemente a menor mudança necessária para fazê-lo passar e
+   refatore mantendo a suíte verde. Não considere a feature concluída sem testes
+   automatizados que cubram o comportamento novo e suas regressões relevantes.
+
 Use worktrees principalmente quando vários subagentes implementarem alterações em paralelo.
 O worktree é apenas o diretório de trabalho; a branch da issue continua sendo obrigatória.
 
@@ -42,7 +47,8 @@ implementação do agente e não devem ser reproduzidos manualmente.
 
 ## Comandos
 
-O projeto compila no **JDK 25**, que é para onde o `java` do host resolve (mise). Não é
+O projeto fixa o `JDK 25.0.2` e o `Maven 3.9.11` em `mise.toml`. Execute `mise install`
+na raiz para instalar ou validar o toolchain e mantenha o `mise` ativo no shell; não é
 preciso forçar `JAVA_HOME`.
 
 Até a atualização para o Spring Boot 4.1.1 o build exigia o JDK 21, e a explicação que
@@ -256,25 +262,32 @@ Os dois desenhos estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.
 O padrão é hexagonal, repetido identicamente nos 4 serviços:
 
 ```
-core/domain/      entidades, value objects, exceções — sem Spring, sem JPA
+core/domain/      entidades, value objects, exceções — sem dependência da camada `infrastructure/`
 core/application/ use cases, handlers de mensagem, mappers, DTOs (records)
 core/ports/api/   portas de entrada  (use cases, handlers, mappers)
 core/ports/spi/   portas de saída    (repositories, listeners, publishers, queries)
-data/db/          entidades JPA, adapters de repositório, mappers de persistência
-data/messaging/   listeners e publishers RabbitMQ
-application/      Spring: controllers, @Configuration, properties, application service
+infrastructure/db/            entidades JPA, adapters de repositório, mappers de persistência
+infrastructure/messaging/     listeners e publishers RabbitMQ
+infrastructure/configuration/ configurações do Spring, properties e wiring da aplicação
+application/                  Spring: controllers e application service
 ```
 
 Regras que o código segue e que devem ser mantidas:
 
-- **`core/` não conhece Spring.** Use cases e handlers são POJOs instanciados à mão em
-  `*BeanConfiguration` (`HotelBeanConfiguration`, `BookingBeanConfiguration`, …). Só as
-  camadas `data/` e `application/` usam estereótipos (`@Component`, `@Configuration`).
+- **`core/` não depende das camadas `infrastructure/` nem da camada externa `application/`.** O
+  `core/domain` pode usar anotações declarativas do Spring quando isso for conveniente,
+  mas não deve importar classes da camada `infrastructure`. Implementações de casos de uso usam
+  `@UseCase`, mappers usam `@Mapper` e serviços de domínio usam `@DomainService`; todas são
+  anotações do `commons` meta-anotadas com `@Component` e recebem suas dependências por
+  construtor. Listeners e publishers de mensageria usam, respectivamente, `@Listener` e
+  `@Publisher`. Handlers e componentes de configuração sem estereótipo próprio continuam
+  registrados em `infrastructure/configuration/*BeanConfiguration`
+  (`HotelBeanConfiguration`, `BookingBeanConfiguration`, …).
 - **Fronteiras transacionais ficam nos adaptadores de entrada.** Use `@Transactional` nos
   `*ApplicationServiceImpl` e nos listeners RabbitMQ que iniciam operações de escrita ou
   coordenam leitura e escrita. Use `@Transactional(readOnly = true)` nas consultas. Não
-  anote use cases POJO nem adapters de repositório; o listener deve propagar a exceção para
-  permitir o rollback.
+  aplique `@Transactional` diretamente nos use cases nem nos adapters de repositório;
+  o listener deve propagar a exceção para permitir o rollback.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).

@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.application.mapper;
 
+import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelOutput;
@@ -17,6 +18,7 @@ import com.hotel.booking.system.hotel.service.core.ports.spi.queries.SearchHotel
 
 import java.util.stream.Collectors;
 
+@Mapper
 public class HotelUseCaseMapperImpl implements HotelUseCaseMapper {
 
   private static Room registerHotelRoomInputToRoom(final RegisterHotelRoomInput input) {
