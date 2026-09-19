@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomItemRepresentation;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingInitiatedEvent;
@@ -28,6 +29,7 @@ import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@UseCase
 public class BookingRoomRequestUseCaseImpl implements BookingRoomRequestUseCase {
 
   private static final BinaryOperator<Integer> BINARY_FUNCTION_IDENTITY = (currentValue, newValue) -> currentValue;

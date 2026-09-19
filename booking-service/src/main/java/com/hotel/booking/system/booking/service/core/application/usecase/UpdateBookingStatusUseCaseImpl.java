@@ -1,5 +1,6 @@
 package com.hotel.booking.system.booking.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.booking.service.core.application.dto.UpdateBookingStatusInput;
 import com.hotel.booking.system.booking.service.core.application.dto.UpdateBookingStatusOutput;
 import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
@@ -11,6 +12,7 @@ import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
+@UseCase
 public class UpdateBookingStatusUseCaseImpl implements UpdateBookingStatusUseCase {
 
   private final BookingRepository bookingRepository;

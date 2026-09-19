@@ -1,6 +1,6 @@
 package com.hotel.booking.system.booking.service;
 
-import com.hotel.booking.system.booking.service.application.configuration.*;
+import com.hotel.booking.system.booking.service.infrastructure.configuration.*;
 import com.hotel.booking.system.booking.service.core.application.dto.*;
 import com.hotel.booking.system.booking.service.core.application.mapper.BookingUseCaseMapperImpl;
 import com.hotel.booking.system.booking.service.core.application.messaging.*;
@@ -46,9 +46,13 @@ class BookingApplicationTest {
   @DisplayName("publica reserva pendente com identificadores, período e precisão")
   void reservaValidaPublicaPendenteComIdentificadoresPeriodoEPrecisao() {
     final var config = new BookingBeanConfiguration();
-    final var mapper = config.bookingRoomUseCaseMapper();
-    final var usecase = config.bookingRoomUseCase(this.repository, mapper, config.bookingInitializer(),
-      config.verifyRoomAvailability(this.repository, this.rooms));
+    final var mapper = new BookingUseCaseMapperImpl();
+    final var usecase = new BookingRoomUseCaseImpl(
+      this.repository,
+      mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms),
+      new BookingInitializer()
+    );
     config.bookingRoomRequestedHandler(usecase, mapper, this.publisher).handle(this.event(new BigDecimal("20.2468")));
     final var saved = ArgumentCaptor.forClass(Booking.class);
     verify(this.repository).save(saved.capture());
@@ -104,7 +108,7 @@ class BookingApplicationTest {
       ? BookingRoomPaymentCompleted.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CONFIRMED).build()
       : BookingRoomPaymentFailed.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CANCELED).failureMessages(List.of("declined")).build();
     final var config = new BookingBeanConfiguration();
-    config.bookingRoomStatusChangedHandler(this.mapper, config.updateBookingRoomStatusUseCase(this.repository), this.publisher).handle(event);
+    config.bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher).handle(event);
     assertThat(booking.getStatus()).isEqualTo(event.getStatus());
     verify(this.repository).save(booking);
     if (paid) {

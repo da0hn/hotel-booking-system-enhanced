@@ -1,5 +1,6 @@
 package com.hotel.booking.system.booking.service.core.application.mapper;
 
+import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.booking.service.core.application.dto.BookingRoomInput;
 import com.hotel.booking.system.booking.service.core.application.dto.BookingRoomItemInput;
 import com.hotel.booking.system.booking.service.core.application.dto.BookingRoomOutput;
@@ -20,6 +21,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 
 import java.util.stream.Collectors;
 
+@Mapper
 public class BookingUseCaseMapperImpl implements BookingUseCaseMapper {
 
   private BookingRoom bookingRoomItemInputToBookingRoom(

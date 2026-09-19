@@ -1,10 +1,12 @@
 package com.hotel.booking.system.customer.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
 import com.hotel.booking.system.customer.service.core.application.dto.UpdateCustomerBookingFailureStatusInput;
 import com.hotel.booking.system.customer.service.core.ports.api.usecase.UpdateCustomerBookingFailureStatusUseCase;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.ReservationOrderRepository;
 
+@UseCase
 public class UpdateCustomerBookingFailureStatusUseCaseImpl implements UpdateCustomerBookingFailureStatusUseCase {
 
   private final ReservationOrderRepository repository;

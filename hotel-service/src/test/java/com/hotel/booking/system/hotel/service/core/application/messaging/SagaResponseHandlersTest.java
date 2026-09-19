@@ -23,7 +23,7 @@ class SagaResponseHandlersTest {
   void reservaPendenteNotificaClienteAntesDeCobrarSemArredondar() {
     final var event = BookingRoomPendingEvent.builder().reservationOrderId("order").customerId("customer")
       .bookingRoomId("booking").totalPrice(new BigDecimal("199.9999")).build();
-    new com.hotel.booking.system.hotel.service.application.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(event);
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(event);
     final var updates = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
     final var payments = ArgumentCaptor.forClass(PaymentRequestedEvent.class);
     final var order = inOrder(this.customer, this.payment);
@@ -43,7 +43,7 @@ class SagaResponseHandlersTest {
   @Test
   @DisplayName("conclui a projeção quando a reserva é confirmada")
   void reservaConfirmadaConcluiProjecaoSemCobrarNovamente() {
-    new com.hotel.booking.system.hotel.service.application.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(
       BookingRoomConfirmedEvent.builder().reservationOrderId("order").customerId("customer").build());
     final var capture = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
     verify(this.customer).publish(capture.capture());
@@ -58,7 +58,7 @@ class SagaResponseHandlersTest {
   @DisplayName("preserva os motivos ao rejeitar uma reserva")
   void reservaRejeitadaPreservaMotivosSemPedirPagamento() {
     final var reasons = List.of("sem disponibilidade", "capacidade insuficiente");
-    new com.hotel.booking.system.hotel.service.application.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().bookingRoomResponseHandler(this.customer, this.payment).handle(
       BookingRoomFailedEvent.builder().reservationOrderId("order").customerId("customer").failureMessages(reasons).build());
     final var capture = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
     verify(this.customer).publish(capture.capture());
@@ -73,7 +73,7 @@ class SagaResponseHandlersTest {
   @Test
   @DisplayName("confirma a reserva depois de notificar pagamento concluído")
   void pagamentoConcluidoConfirmaReservaDepoisDeNotificarCliente() {
-    new com.hotel.booking.system.hotel.service.application.configuration.HotelBeanConfiguration().paymentResponseHandler(this.customer, this.booking).handle(
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().paymentResponseHandler(this.customer, this.booking).handle(
       PaymentCompletedEvent.builder().reservationOrderId("order").customerId("customer").build());
     final var customers = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
     final var bookings = ArgumentCaptor.forClass(BookingRoomStatusUpdatedEvent.class);
@@ -94,7 +94,7 @@ class SagaResponseHandlersTest {
   @DisplayName("cancela a reserva e preserva os motivos quando o pagamento falha")
   void pagamentoRecusadoCancelaReservaEPreservaMotivosNasDuasPontas() {
     final var reasons = List.of("saldo insuficiente", "pagamento recusado");
-    new com.hotel.booking.system.hotel.service.application.configuration.HotelBeanConfiguration().paymentResponseHandler(this.customer, this.booking).handle(
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().paymentResponseHandler(this.customer, this.booking).handle(
       PaymentFailedEvent.builder().reservationOrderId("order").customerId("customer").failureMessages(reasons).build());
     final var customers = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
     final var bookings = ArgumentCaptor.forClass(BookingRoomStatusUpdatedEvent.class);

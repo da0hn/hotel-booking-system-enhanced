@@ -1,5 +1,6 @@
 package com.hotel.booking.system.customer.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerId;
 import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
 import com.hotel.booking.system.customer.service.core.application.dto.ReservationOrderDetailInput;
@@ -9,6 +10,7 @@ import com.hotel.booking.system.customer.service.core.ports.api.usecase.GetCusto
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.CustomerRepository;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.ReservationOrderRepository;
 
+@UseCase
 public class GetCustomerReservationOrderDetailImpl implements GetCustomerReservationOrderDetail {
 
   private final CustomerRepository customerRepository;

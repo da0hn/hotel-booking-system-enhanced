@@ -2,15 +2,17 @@ package com.hotel.booking.system.customer.service;
 
 import com.hotel.booking.system.commons.core.domain.event.customer.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
-import com.hotel.booking.system.customer.service.application.configuration.*;
+import com.hotel.booking.system.customer.service.infrastructure.configuration.*;
 import com.hotel.booking.system.customer.service.application.service.impl.CustomerApplicationServiceImpl;
 import com.hotel.booking.system.customer.service.application.web.controller.CustomerController;
 import com.hotel.booking.system.customer.service.core.application.dto.*;
+import com.hotel.booking.system.customer.service.core.application.mapper.CustomerUseCaseMapperImpl;
+import com.hotel.booking.system.customer.service.core.application.usecase.*;
 import com.hotel.booking.system.customer.service.core.domain.entity.*;
 import com.hotel.booking.system.customer.service.core.domain.exception.*;
 import com.hotel.booking.system.customer.service.core.domain.valueobject.*;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.*;
-import com.hotel.booking.system.customer.service.data.messaging.listener.CustomerBookingStatusUpdatedListenerImpl;
+import com.hotel.booking.system.customer.service.infrastructure.messaging.listener.CustomerBookingStatusUpdatedListenerImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -48,11 +50,11 @@ class CustomerFlowTest {
   @DisplayName("constrói a projeção e formata dinheiro, CPF e linha do tempo")
   void eventosConstroemProjecaoEConsultaFormataDinheiroCpfETimeline() {
     when(this.customers.customerExistsBy(this.customerId)).thenReturn(true);
-    final var mapper = this.beans.customerUseCaseMapper();
+    final var mapper = new CustomerUseCaseMapperImpl();
     final var handler = this.beans.customerBookingStatusUpdatedHandler(
-      this.beans.initiateCustomerBookingUseCase(this.customers, this.orders, mapper),
-      this.beans.updateCustomerBookingStatusUseCase(this.orders),
-      this.beans.updateCustomerBookingFailureStatusUseCase(this.orders), mapper);
+      new InitializeCustomerBookingUseCaseImpl(this.customers, this.orders, mapper),
+      new UpdateCustomerBookingStatusUseCaseImpl(this.orders),
+      new UpdateCustomerBookingFailureStatusUseCaseImpl(this.orders), mapper);
     final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler);
     listener.listen(List.of(this.initiated()));
     final var captured = ArgumentCaptor.forClass(ReservationOrder.class);
@@ -75,7 +77,7 @@ class CustomerFlowTest {
     final var customer = Customer.builder().id(this.customerId).name("Ana").cpf(new Cpf("01234567890")).build();
     when(this.customers.findById(this.customerId)).thenReturn(customer);
     final var service = new CustomerApplicationServiceImpl(
-      this.beans.getCustomerReservationOrderDetail(this.customers, this.orders, mapper));
+      new GetCustomerReservationOrderDetailImpl(this.customers, this.orders, mapper));
     final var response = new CustomerController(service).getCustomerReservationOrderDetail(
       this.customerId.toString(), this.orderId.toString());
     assertThat(response.getStatusCode().value()).isEqualTo(200);
@@ -99,9 +101,9 @@ class CustomerFlowTest {
   @Test
   @DisplayName("impede a gravação quando o cliente não existe")
   void clienteAusenteImpedeGravacao() {
-    final var mapper = this.beans.customerUseCaseMapper();
+    final var mapper = new CustomerUseCaseMapperImpl();
     final var input = mapper.customerBookingInitiatedEventToInitializeCustomerBookingInput(this.initiated());
-    assertThatThrownBy(() -> this.beans.initiateCustomerBookingUseCase(this.customers, this.orders, mapper).execute(input))
+    assertThatThrownBy(() -> new InitializeCustomerBookingUseCaseImpl(this.customers, this.orders, mapper).execute(input))
       .isInstanceOf(CustomerNotFoundException.class);
     verifyNoInteractions(this.orders);
   }

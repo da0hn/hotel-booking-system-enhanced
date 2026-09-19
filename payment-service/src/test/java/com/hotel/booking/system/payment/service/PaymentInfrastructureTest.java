@@ -3,20 +3,20 @@ package com.hotel.booking.system.payment.service;
 import com.hotel.booking.system.commons.core.domain.event.PaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.PaymentStatus;
-import com.hotel.booking.system.payment.service.application.configuration.JsonMapperConfiguration;
-import com.hotel.booking.system.payment.service.application.configuration.PaymentBeanConfiguration;
-import com.hotel.booking.system.payment.service.application.configuration.RabbitMQConfiguration;
-import com.hotel.booking.system.payment.service.application.configuration.properties.ExchangeProperties;
-import com.hotel.booking.system.payment.service.application.configuration.properties.QueueProperties;
-import com.hotel.booking.system.payment.service.application.configuration.properties.RoutingKeyProperties;
+import com.hotel.booking.system.payment.service.infrastructure.configuration.JsonMapperConfiguration;
+import com.hotel.booking.system.payment.service.infrastructure.configuration.PaymentBeanConfiguration;
+import com.hotel.booking.system.payment.service.infrastructure.configuration.RabbitMQConfiguration;
 import com.hotel.booking.system.payment.service.core.application.mapper.PaymentUseCaseMapperImpl;
 import com.hotel.booking.system.payment.service.core.application.messaging.PaymentRequestedHandlerImpl;
 import com.hotel.booking.system.payment.service.core.application.usecase.PayOrderUseCaseMockImpl;
 import com.hotel.booking.system.payment.service.core.ports.api.messaging.PaymentRequestedHandler;
 import com.hotel.booking.system.payment.service.core.ports.api.usecase.PayOrderUseCase;
 import com.hotel.booking.system.payment.service.core.ports.spi.messaging.publisher.PaymentResponsePublisher;
-import com.hotel.booking.system.payment.service.data.messaging.listener.PaymentRequestedListenerImpl;
-import com.hotel.booking.system.payment.service.data.messaging.publisher.PaymentResponsePublisherImpl;
+import com.hotel.booking.system.payment.service.infrastructure.messaging.listener.PaymentRequestedListenerImpl;
+import com.hotel.booking.system.payment.service.infrastructure.messaging.publisher.PaymentResponsePublisherImpl;
+import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.ExchangeProperties;
+import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.QueueProperties;
+import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.RoutingKeyProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -64,11 +64,11 @@ class PaymentInfrastructureTest {
   }
 
   @Test
-  @DisplayName("cria os componentes do fluxo de pagamento pela configuração Spring")
-  void createsPaymentComponentsThroughSpringConfiguration() {
+  @DisplayName("cria os componentes do fluxo de pagamento por injeção construtora")
+  void createsPaymentComponentsThroughConstructorInjection() {
     final var configuration = new PaymentBeanConfiguration();
-    final var mapper = configuration.paymentUseCaseMapper();
-    final var useCase = configuration.payOrderUseCase(mapper, 0);
+    final var mapper = new PaymentUseCaseMapperImpl();
+    final var useCase = new PayOrderUseCaseMockImpl(mapper, 0);
     final var publisher = mock(PaymentResponsePublisher.class);
     final var handler = configuration.paymentRequestedHandler(useCase, mapper, publisher);
     assertThat(mapper).isInstanceOf(PaymentUseCaseMapperImpl.class);

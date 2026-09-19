@@ -4,6 +4,7 @@ import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingRoom;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.BookingRepository;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.RoomRepository;
+import com.hotel.booking.system.commons.core.application.annotation.DomainService;
 import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 @Slf4j
+@DomainService
 public class VerifyRoomAvailability {
 
 

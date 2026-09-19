@@ -1,5 +1,6 @@
 package com.hotel.booking.system.customer.service.core.application.mapper;
 
+import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingFailureStatusUpdateEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingInitiatedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingStatusUpdatedEvent;
@@ -20,6 +21,7 @@ import com.hotel.booking.system.customer.service.core.ports.api.mapper.CustomerU
 
 import java.time.ZoneId;
 
+@Mapper
 public class CustomerUseCaseMapperImpl implements CustomerUseCaseMapper {
   @Override
   public InitializeReservationOrderInput customerBookingInitiatedEventToInitializeCustomerBookingInput(final CustomerBookingInitiatedEvent event) {

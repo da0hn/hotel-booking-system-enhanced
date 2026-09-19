@@ -1,5 +1,6 @@
 package com.hotel.booking.system.customer.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.customer.service.core.application.dto.InitializeReservationOrderInput;
 import com.hotel.booking.system.customer.service.core.domain.entity.ReservationOrder;
 import com.hotel.booking.system.customer.service.core.domain.exception.CustomerNotFoundException;
@@ -8,6 +9,7 @@ import com.hotel.booking.system.customer.service.core.ports.api.usecase.Initiali
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.CustomerRepository;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.ReservationOrderRepository;
 
+@UseCase
 public class InitializeCustomerBookingUseCaseImpl implements InitializeCustomerBookingUseCase {
 
   private final CustomerRepository customerRepository;

@@ -42,6 +42,7 @@ monetárias até a ausência de compensação na saga.
   * [3.1. Pré Requisitos](#31-pré-requisitos)
   * [3.2. Instalação](#32-instalação)
 * [4. Cobertura de testes](#4-cobertura-de-testes)
+  * [4.1. Testes de arquitetura](#41-testes-de-arquitetura)
 
 ---
 
@@ -93,10 +94,14 @@ recorte, mas o padrão se repete nos quatro.
 
 ![Camadas e componentes do booking-service](docs/diagrams/03-hexagonal.jpg)
 
-O ponto central é que **o módulo `core/` não conhece Spring**. Não há `@Service`, `@Component` ou
-`@Autowired` dentro dele: os casos de uso são POJOs com construtor explícito, e a instanciação acontece
-em classes `*BeanConfiguration` que vivem no módulo `application/`. O preço é a fiação manual; o ganho é
-um domínio testável sem contexto de aplicação.
+O ponto central é que **o módulo `core/` não depende da camada `infrastructure/` nem da camada externa
+`application/`**. A camada `infrastructure/` concentra acesso ao banco, mensageria e configurações do
+Spring. O `core.domain` pode usar anotações declarativas do Spring quando isso for conveniente.
+As implementações de casos de uso, mappers e serviços de domínio usam, respectivamente,
+`@UseCase`, `@Mapper` e `@DomainService`. Listeners e publishers usam `@Listener` e `@Publisher`.
+Todas essas anotações vivem no módulo `commons`, são meta-anotadas com `@Component` e permitem a
+descoberta pelo component scan. Handlers e componentes de configuração sem estereótipo continuam
+registrados em classes `*BeanConfiguration` em `infrastructure/configuration/`.
 
 ## 1.4. Topologia de exchanges, routing keys e filas
 
@@ -188,7 +193,7 @@ código.
 | Tecnologia  | Versão                |
 |-------------|-----------------------|
 | Docker      | 24.0.5, build ced0996 |
-| Java        | OpenJDK 25            |
+| Java        | OpenJDK 25.0.2        |
 | Maven       | 3.9.11                |
 | Spring Boot | 4.1.1                 |
 | PostgreSQL  | 17-alpine             |
@@ -279,6 +284,8 @@ execução a da aplicação.
 * [Java](https://jdk.java.net/25/)
   * Para verificar se o java foi instalado corretamente execute o comando `java --version`
   * A instalação do `jdk` na `versão 25` só será necessária caso você deseje executar a aplicação localmente sem utilizar o `docker`
+* [Mise](https://mise.jdx.dev/)
+  * Execute `mise install` na raiz do projeto para instalar as versões de Java e Maven fixadas em `mise.toml`
 
 ## 3.2. Instalação
 
@@ -358,3 +365,19 @@ Uma execução apenas de unitários não representa a cobertura da suíte comple
 Não há percentual mínimo obrigatório nem exclusões de classes configuradas.
 Módulos sem testes executados não geram dados nem relatório; essa ausência não
 significa cobertura de 100% e precisa ser considerada ao avaliar o projeto.
+
+## 4.1. Testes de arquitetura
+
+Os cinco módulos executam testes ArchUnit no ciclo padrão. Eles verificam as fronteiras
+hexagonais, impedem dependências de `core` para `infrastructure` e para a camada externa
+`application`, e garantem que componentes de `core.application` e `infrastructure.messaging` usem
+seus estereótipos (`@UseCase`, `@Mapper`, `@DomainService`, `@Listener` e `@Publisher`)
+em vez de registro manual em `*BeanConfiguration`.
+
+O `core.domain` pode usar anotações declarativas do Spring quando isso simplificar o
+código, mas não pode importar classes da camada `infrastructure`. Para executar somente essa
+checagem, use:
+
+```sh
+mvn -B test -Dtest=*ArchitectureTest
+```
