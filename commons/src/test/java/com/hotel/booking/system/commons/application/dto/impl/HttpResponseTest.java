@@ -29,10 +29,11 @@ class HttpResponseTest {
   }
 
   @Test
-  @DisplayName("retorna 404 para coleção vazia e torna a coleção encontrada imutável")
-  void colecaoVaziaResponde404EColecaoPreenchidaNaoPermiteAlteracao() {
+  @DisplayName("responde 200 para coleção vazia e torna a coleção encontrada imutável")
+  void colecaoVaziaResponde200EColecaoPreenchidaNaoPermiteAlteracao() {
     final var empty = ResponseEntityAdapter.items(List.of());
-    assertThat(empty.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(empty.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(empty.getBody().getSuccess()).isTrue();
     assertThat(empty.getBody().getData()).isEmpty();
     final var found = ResponseEntityAdapter.items(List.of("hotel"));
     assertThat(found.getStatusCode()).isEqualTo(HttpStatus.OK);
