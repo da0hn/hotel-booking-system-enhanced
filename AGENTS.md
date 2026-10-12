@@ -37,6 +37,13 @@ Para qualquer alteração relacionada a uma issue, siga este fluxo:
    refatore mantendo a suíte verde. Não considere a feature concluída sem testes
    automatizados que cubram o comportamento novo e suas regressões relevantes.
 
+6. A issue é considerada concluída quando o PR é mesclado na `develop`, e não quando a
+   mudança chega à `master` numa release. O GitHub só fecha uma issue sozinho pelo `Closes`
+   de um PR para a branch padrão (`master`), então o fechamento aqui é manual: `gh issue
+   close` com um comentário que liste os commits e o PR. Uma issue guarda-chuva com itens
+   ainda sem entrega não fecha por ter tido um PR mesclado: o PR usa `Refs`, e o restante
+   vira issues novas antes de a original ser fechada.
+
 Use worktrees principalmente quando vários subagentes implementarem alterações em paralelo.
 O worktree é apenas o diretório de trabalho; a branch da issue continua sendo obrigatória.
 
