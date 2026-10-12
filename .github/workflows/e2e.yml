@@ -23,11 +23,13 @@ name: e2e
 
 on:
   pull_request:
-    types: [labeled]
+    types: [opened, reopened, synchronize, edited, labeled]
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 # Rotular de novo, ou disparar de novo, substitui a execução em andamento: o
 # que importa é o veredito do último pedido.
@@ -40,11 +42,75 @@ env:
 
 jobs:
 
+  e2e-gate:
+    name: Verificar se a issue pede E2E
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decision.outputs.run }}
+    steps:
+      - name: Detectar o rótulo e2e na PR ou em issue referenciada
+        id: decision
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('run', 'true');
+              return;
+            }
+
+            const pullRequest = context.payload.pull_request;
+            if (!pullRequest) {
+              core.setOutput('run', 'false');
+              return;
+            }
+
+            const directlyLabeled = context.payload.label?.name === 'e2e'
+              || pullRequest.labels?.some(label => label.name === 'e2e');
+            if (directlyLabeled) {
+              core.info('A PR recebeu o rótulo e2e.');
+              core.setOutput('run', 'true');
+              return;
+            }
+
+            const references = new Set();
+            const referenceText = [pullRequest.head.ref, pullRequest.title, pullRequest.body || ''].join('\n');
+            for (const match of referenceText.matchAll(/\bGH[-_](\d+)\b/gi)) {
+              references.add(Number(match[1]));
+            }
+            for (const match of (pullRequest.body || '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)\b/gi)) {
+              references.add(Number(match[1]));
+            }
+
+            for (const issueNumber of references) {
+              let issue;
+              try {
+                ({ data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber
+                }));
+              } catch (error) {
+                if (error.status === 404) {
+                  core.warning('Issue #' + issueNumber + ' referenciada pela PR não foi encontrada.');
+                  continue;
+                }
+                throw error;
+              }
+
+              if (issue.labels.some(label => label.name === 'e2e')) {
+                core.info('A issue #' + issueNumber + ' possui o rótulo e2e.');
+                core.setOutput('run', 'true');
+                return;
+              }
+            }
+
+            core.info('Nenhuma issue referenciada possui o rótulo e2e.');
+            core.setOutput('run', 'false');
+
   e2e:
     name: Testes ponta a ponta
-    # `labeled` dispara para QUALQUER label. Sem esta condição, rotular um PR
-    # com `bug` ou `documentation` gastaria os minutos deste job à toa.
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'e2e'
+    needs: e2e-gate
+    if: needs.e2e-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
