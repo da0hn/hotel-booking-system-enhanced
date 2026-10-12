@@ -1,11 +1,13 @@
 package com.hotel.booking.system.commons.application.dto.impl;
 
+import com.hotel.booking.system.commons.application.dto.ErrorResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -43,6 +45,28 @@ class HttpResponseTest {
     assertThat(ApiCollectionResponse.of(null).getData()).isEmpty();
     assertThat(new ApiCollectionResponse<>(List.of(), false).getSuccess()).isFalse();
     assertThat(new ApiResponse<>("erro", false).getSuccess()).isFalse();
+  }
+
+  @Test
+  @DisplayName("responde 200 com o recurso quando o acesso identificado o encontra")
+  void recursoEncontradoResponde200ComOsDados() {
+    final var found = ResponseEntityAdapter.orNotFound(Optional.of("hotel"), "hotel.not.found");
+    assertThat(found.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(found.getBody().getSuccess()).isTrue();
+    assertThat(found.getBody().getData()).isEqualTo("hotel");
+  }
+
+  @Test
+  @DisplayName("responde 404 com o envelope de erro quando o recurso identificado não existe")
+  void recursoAusenteResponde404ComEnvelopeDeErro() {
+    final var missing = ResponseEntityAdapter.orNotFound(Optional.<String>empty(), "hotel.not.found");
+    assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(missing.getBody().getSuccess()).isFalse();
+    assertThat(missing.getBody().getData()).isNull();
+    assertThat(missing.getBody()).isInstanceOfSatisfying(
+      ErrorResponse.class,
+      error -> assertThat(error.getMessage()).isEqualTo("hotel.not.found")
+    );
   }
 
   @Test
