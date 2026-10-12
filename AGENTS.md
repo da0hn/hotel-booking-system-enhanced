@@ -52,6 +52,15 @@ O agente não deve criar commits manuais diretamente em `develop`, `master`, `re
 Commits e tags gerados automaticamente pelos workflows de release não são commits de
 implementação do agente e não devem ser reproduzidos manualmente.
 
+### Criar issues
+
+Crie issues com a skill `create-issue`, nunca com `gh issue create` direto, e invoque-a
+mesmo quando a issue nascer no meio de outra tarefa. Não copie o formato de uma issue
+existente: as mais antigas (como a #3, a #7, a #33 e a #35) seguem um formato legado, com
+três seções, tabela de arquivos a modificar, passos de implementação e "Cenários de Teste".
+O padrão atual tem exatamente duas seções, `Critérios de Aceite` e `Nota Técnica`, e a #39
+o segue. Copiar uma issue antiga reproduz o formato que a skill existe para substituir.
+
 ## Comandos
 
 O projeto fixa o `JDK 25.0.2` e o `Maven 3.9.11` em `mise.toml`. Execute `mise install`
