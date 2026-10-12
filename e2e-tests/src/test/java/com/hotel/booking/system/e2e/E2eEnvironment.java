@@ -1,4 +1,4 @@
-package com.hotel.booking.system.saga;
+package com.hotel.booking.system.e2e;
 
 import org.testcontainers.lifecycle.Startables;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -18,7 +18,9 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * O ambiente completo da saga: um PostgreSQL, um RabbitMQ e os quatro serviços como processos.
+ * O ambiente completo dos testes ponta a ponta: um PostgreSQL, um RabbitMQ e os quatro
+ * serviços como processos. É a base de qualquer teste desse tipo — o {@code SagaIT} é o
+ * primeiro, e outros reaproveitam a mesma subida em vez de repeti-la.
  *
  * <p>As imagens são as do {@code docker/common.yml}, e o PostgreSQL recebe o mesmo
  * {@code 01-create-service-roles.sql} que o compose monta. Cada serviço conecta com o
@@ -36,14 +38,14 @@ import java.util.stream.Stream;
  * {@code 0}, para recusar sempre {@code 100} — os dois extremos que não dependem de sorte.
  * Reiniciar não perde mensagens: as filas são duráveis e ficam no broker.</p>
  */
-final class SagaEnvironment implements AutoCloseable {
+final class E2eEnvironment implements AutoCloseable {
 
   private static final String DATABASE_NAME = "hotel_booking_system";
 
   private static final Path ROLES =
     Path.of("..", "docker", "scripts", "01-create-service-roles.sql").toAbsolutePath().normalize();
 
-  private static final Path LOGS = Path.of("target", "saga-logs").toAbsolutePath();
+  private static final Path LOGS = Path.of("target", "e2e-logs").toAbsolutePath();
 
   private static final Duration STARTUP_TIMEOUT = Duration.ofMinutes(3);
 
@@ -68,8 +70,8 @@ final class SagaEnvironment implements AutoCloseable {
 
   private int paymentFailureChance = -1;
 
-  static SagaEnvironment start() {
-    final var environment = new SagaEnvironment();
+  static E2eEnvironment start() {
+    final var environment = new E2eEnvironment();
     try {
       environment.startAll();
     }

@@ -75,7 +75,7 @@ de o erro voltar exatamente com essa cara.
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
-| Só a saga ponta a ponta (profile `saga`) | `mvn -B verify -Psaga -pl saga-tests -am -Dtest=NoSuchTest -Dit.test=SagaIT -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
+| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
@@ -118,47 +118,58 @@ casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` qu
 tipo de retorno ao Hibernate, e o `public` no fim do `currentSchema` da URL. Tirar qualquer
 uma quebra a busca; sem o contributor, o serviço nem sobe.
 
-### Saga ponta a ponta (`saga-tests`)
+### Testes ponta a ponta (`e2e-tests`)
 
-O `SagaIT`, escrito em Spock, é o único teste que prova que as quatro pontas se entendem. Ele sobe PostgreSQL e
-RabbitMQ pelo Testcontainers, sobe `hotel`, `booking`, `customer` e `payment` **como
-processos filhos** e dispara `POST /hotel/booking` no `hotel-service`, lendo o desfecho no
-`customer-service` e nos bancos. Os três cenários são pagamento aprovado (`RESERVED`),
-último quarto já ocupado (`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado
-(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
-fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
-fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
+O módulo `e2e-tests` reúne os testes que sobem o sistema inteiro: PostgreSQL e RabbitMQ pelo
+Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos filhos**. O
+`E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
+`Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
+
+Hoje há um, o `SagaIT`, o único teste que prova que as quatro pontas se entendem. Ele
+dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
+bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
+(`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
+`CANCELED`). É a rede de quem mexe no contrato de eventos, na fronteira transacional ou na
+regra de disponibilidade: um evento movido de pacote, um pacote fora do
+`TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
-**O `mvn verify` comum não roda o `SagaIT`.** O módulo só entra no reactor com o profile
-`saga`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5 min no
-reactor e ~1,5 min no `SagaIT`, bem mais na máquina local). Quem mexe no que a saga protege
-roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
-workflow `.github/workflows/saga.yml`: a **label `saga`** num pull request, que roda a
+**O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
+profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
+min no reactor e ~1,5 min no `SagaIT`, bem mais na máquina local). Quem mexe no que a saga
+protege roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
+workflow `.github/workflows/e2e.yml`: a **label `e2e`** num pull request, que roda a
 partir do branch do PR, e o **`workflow_dispatch`**, cujo botão só aparece depois de o
-arquivo estar na `master`. Falhou, o artefato `saga-logs` traz o log inteiro de cada serviço.
+arquivo estar na `master`. Falhou, o artefato `e2e-logs` traz o log inteiro de cada serviço.
+
+**Para acrescentar um teste ponta a ponta**, crie outra `Specification` com sufixo `IT` no
+pacote `com.hotel.booking.system.e2e` e suba o ambiente com `E2eEnvironment.start()` em
+`setupSpec()`. O filtro do comando da tabela e do workflow
+(`-Dit.test='com.hotel.booking.system.e2e.**'`) o pega sem mudança. Cada `Specification` sobe
+o próprio ambiente, então agrupe cenários na mesma classe quando o custo do arranque dos
+quatro serviços pesar.
 
 O que não se deduz do código:
 
 - **Processos filhos, e não contextos Spring numa JVM só.** Os quatro `application.yml` têm o
   mesmo nome e colidem no classpath. `ServiceProcess` executa `java -jar` do jar que o
   `package` de cada serviço gerou e espera o `/actuator/health`; o log de cada um vai para
-  `saga-tests/target/saga-logs/` e a cauda dos quatro é anexada à mensagem quando um cenário
+  `e2e-tests/target/e2e-logs/` e a cauda dos quatro é anexada à mensagem quando um cenário
   estoura o tempo.
 - **Dependências `pom` com `<exclusion>*:*</exclusion>`.** Os jars dos serviços não são
   biblioteca para o teste: a dependência existe só para criar a aresta no grafo do reactor.
-  Sem ela, `-Psaga -pl saga-tests -am` não traria os quatro serviços e uma build paralela
+  Sem ela, `-Pe2e -pl e2e-tests -am` não traria os quatro serviços e uma build paralela
   (`-T`) poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess`
-  falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Psaga`, o Maven
-  responde que não encontra o projeto `saga-tests`.
+  falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Pe2e`, o Maven
+  responde que não encontra o projeto `e2e-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
   `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
   `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos dois
   primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
   quarto, e se o primeiro falhar os outros dois ainda dizem se o resto da saga funciona. O
   custo é que uma saga quebrada leva ~6 min para falhar (3 cenários × 90 s de espera).
-- **Spock em Groovy; os helpers em Java.** O `SagaIT` é uma `Specification` em
-  `src/test/groovy`; `SagaEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
+- **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
+  `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
   `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
   Spring Boot gerencia o Groovy (5.0.8) mas não o Spock, cuja versão está em `spock.version`
   no `pom.xml` do módulo. O Spock 2.5 foi compilado contra o JUnit Platform 1.14 e roda aqui
@@ -281,9 +292,9 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
 - `payment-service` (8003) — pagamento **fake**; sem banco; falha por sorteio
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
-- `saga-tests` — só testes: o `SagaIT` (Spock), que sobe os quatro serviços e prova a saga de
-  ponta a ponta. Não é serviço, não vira imagem e nada depende dele. Só existe no reactor com o
-  profile `saga` (ver "Saga ponta a ponta").
+- `e2e-tests` — só testes de ponta a ponta, em Spock: sobem os quatro serviços e exercitam o
+  sistema inteiro. Hoje só o `SagaIT`, que prova a saga. Não é serviço, não vira imagem e nada
+  depende dele. Só existe no reactor com o profile `e2e` (ver "Testes ponta a ponta").
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.

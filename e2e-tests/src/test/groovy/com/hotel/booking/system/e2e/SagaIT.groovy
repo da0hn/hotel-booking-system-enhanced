@@ -1,4 +1,4 @@
-package com.hotel.booking.system.saga
+package com.hotel.booking.system.e2e
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
@@ -57,10 +57,10 @@ class SagaIT extends Specification {
   static final HttpClient HTTP = HttpClient.newHttpClient()
 
   @Shared
-  SagaEnvironment environment
+  E2eEnvironment environment
 
   def setupSpec() {
-    environment = SagaEnvironment.start()
+    environment = E2eEnvironment.start()
   }
 
   def cleanupSpec() {
@@ -225,7 +225,7 @@ class SagaIT extends Specification {
   }
 
   /**
-   * Conexão como dono do container (ver {@code SagaEnvironment.openConnection}), fechada ao fim.
+   * Conexão como dono do container (ver {@code E2eEnvironment.openConnection}), fechada ao fim.
    * O {@code Sql} criado sobre uma {@code Connection} não a fecha sozinho.
    */
   private <T> T withSql(Closure<T> work) {

@@ -1,4 +1,4 @@
-package com.hotel.booking.system.saga;
+package com.hotel.booking.system.e2e;
 
 import java.io.IOException;
 import java.net.URI;
@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * Um serviço da saga rodando como processo filho, a partir do jar executável que o
+ * Um serviço rodando como processo filho, a partir do jar executável que o
  * {@code package} deixou em {@code <modulo>/target}.
  *
  * <p>Processo filho, e não os quatro contextos Spring na mesma JVM, porque os quatro
@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  * deles seriam ignorados em silêncio. É também o que mais se parece com a produção, onde
  * cada serviço é um processo com a própria configuração, passada por variável de ambiente.</p>
  *
- * <p>A saída padrão e a de erro vão para {@code target/saga-logs/<nome>.log}. É o único rastro
+ * <p>A saída padrão e a de erro vão para {@code target/e2e-logs/<nome>.log}. É o único rastro
  * de um serviço que não subiu ou que engoliu uma mensagem, e o teste o anexa à falha.</p>
  */
 final class ServiceProcess {
@@ -70,7 +70,7 @@ final class ServiceProcess {
         .filter(file -> file.getFileName().toString().endsWith(".jar"))
         .findFirst()
         .orElseThrow(() -> new IllegalStateException(
-          "Não achei o jar executável de %s em %s. O teste da saga sobe os serviços pelo jar, então o `package` deles precisa ter rodado antes: use `mvn -B verify`, ou `mvn -B verify -pl saga-tests -am`."
+          "Não achei o jar executável de %s em %s. Os testes ponta a ponta sobem os serviços pelo jar, então o `package` deles precisa ter rodado antes: use `mvn -B verify -Pe2e`, ou `mvn -B verify -Pe2e -pl e2e-tests -am`."
             .formatted(module, targetDirectory)
         ));
     }

@@ -1,15 +1,16 @@
-# A saga de reserva ponta a ponta, fora do caminho crítico do `build.yml`.
+# Os testes ponta a ponta, fora do caminho crítico do `build.yml`.
 #
-# O `SagaIT` sobe PostgreSQL, RabbitMQ e os quatro serviços como processos. Por
-# decisão do mantenedor, o módulo dele só entra no Maven com o profile `saga`,
-# então o `mvn verify` do `build.yml` não o enxerga. Este workflow é o outro
-# caminho: roda quando alguém pede. No CI ele levou ~1,5 min (out/2026).
+# Eles sobem PostgreSQL, RabbitMQ e os quatro serviços como processos. Por
+# decisão do mantenedor, o módulo deles (`e2e-tests`) só entra no Maven com o
+# profile `e2e`, então o `mvn verify` do `build.yml` não o enxerga. Este workflow
+# é o outro caminho: roda quando alguém pede. No CI o `SagaIT`, o primeiro deles,
+# levou ~1,5 min (out/2026).
 #
 # Dois gatilhos, e cada um cobre o que o outro não alcança:
 #
-#   label `saga` num PR   ->  roda a partir do branch do PR. É o gatilho que
+#   label `e2e` num PR    ->  roda a partir do branch do PR. É o gatilho que
 #                             funciona antes de este arquivo chegar à `master`.
-#   workflow_dispatch     ->  botão "Run workflow" e `gh workflow run saga.yml`.
+#   workflow_dispatch     ->  botão "Run workflow" e `gh workflow run e2e.yml`.
 #                             O GitHub só lista o botão para workflows que já
 #                             estão na branch padrão, ou seja, depois da
 #                             primeira release que o contenha.
@@ -18,7 +19,7 @@
 # disponibilidade deve pedir esta prova antes de mesclar na `develop`: um
 # evento movido de pacote deixa os quatro serviços saudáveis e a saga parada,
 # e nenhum outro teste enxerga isso.
-name: saga
+name: e2e
 
 on:
   pull_request:
@@ -31,7 +32,7 @@ permissions:
 # Rotular de novo, ou disparar de novo, substitui a execução em andamento: o
 # que importa é o veredito do último pedido.
 concurrency:
-  group: saga-${{ github.ref }}
+  group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -39,11 +40,11 @@ env:
 
 jobs:
 
-  saga:
-    name: Saga ponta a ponta
+  e2e:
+    name: Testes ponta a ponta
     # `labeled` dispara para QUALQUER label. Sem esta condição, rotular um PR
     # com `bug` ou `documentation` gastaria os minutos deste job à toa.
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'saga'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'e2e'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -55,17 +56,24 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      # `-am` constrói os quatro serviços e o `commons` antes do teste, porque o
-      # `SagaIT` executa os jars empacotados. `-Dtest=NoSuchTest` e `-Dit.test`
+      # `-am` constrói os quatro serviços e o `commons` antes do teste, porque os
+      # testes executam os jars empacotados. `-Dtest=NoSuchTest` e `-Dit.test`
       # deixam de fora os testes dos outros módulos: o `provas` do `build.yml`
       # já os rodou, e repeti-los aqui só gastaria o tempo que este workflow
-      # existe para poupar.
-      - name: Rodar a saga ponta a ponta
+      # existe para poupar. O `-Dit.test` casa o pacote do módulo, então um
+      # teste novo em `e2e-tests` entra sem mexer neste arquivo.
+      - name: Rodar os testes ponta a ponta
         run: >
-          mvn -B verify -Psaga -pl saga-tests -am
-          -Dtest=NoSuchTest -Dit.test=SagaIT
+          mvn -B verify -Pe2e -pl e2e-tests -am
+          -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**'
           -Dsurefire.failIfNoSpecifiedTests=false
           -Dfailsafe.failIfNoSpecifiedTests=false
+
+      # O `failIfNoSpecifiedTests=false` é necessário nos outros módulos, onde o
+      # filtro não casa com nada, mas também deixaria passar um filtro que não
+      # casa com nada no próprio `e2e-tests`: verde sem ter rodado teste algum.
+      - name: Conferir que os testes ponta a ponta rodaram
+        run: test -n "$(ls e2e-tests/target/failsafe-reports/TEST-*.xml 2>/dev/null)"
 
       # Os serviços são processos filhos, então o que explica uma falha está no
       # log de cada um, e não no relatório do failsafe. A mensagem do teste traz
@@ -74,9 +82,9 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: saga-logs
+          name: e2e-logs
           path: |
-            saga-tests/target/saga-logs/
-            saga-tests/target/failsafe-reports/
+            e2e-tests/target/e2e-logs/
+            e2e-tests/target/failsafe-reports/
           if-no-files-found: ignore
           retention-days: 7
