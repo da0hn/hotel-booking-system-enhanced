@@ -7,10 +7,14 @@ import org.springframework.amqp.rabbit.retry.MessageRecoverer;
 import org.springframework.amqp.rabbit.retry.RepublishMessageRecoverer;
 import org.springframework.amqp.support.converter.MessageConversionException;
 import org.springframework.boot.amqp.autoconfigure.RabbitListenerRetrySettingsCustomizer;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.expression.common.LiteralExpression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
+
+import java.time.Duration;
 
 /**
  * O que acontece com uma mensagem cujo listener falhou: quantas vezes ela é tentada, o que
@@ -23,6 +27,15 @@ import org.springframework.expression.spel.standard.SpelExpressionParser;
  */
 @Configuration(proxyBeanMethods = false)
 public class DeadLetterRetryConfiguration {
+
+  /**
+   * A chave do jitter. O Boot 4.1 aceita {@code spring.rabbitmq.listener.simple.retry.*} para
+   * tentativas, intervalo, multiplicador e teto, mas não tem chave para o jitter, embora o
+   * {@code RetryPolicySettings} o suporte. Uma chave desconhecida sob o prefixo do Boot seria
+   * ignorada em silêncio e confundiria quem lê, então o jitter mora no namespace
+   * {@code app.rabbitmq}, que é nosso, e é aplicado pelo customizer.
+   */
+  public static final String JITTER_PROPERTY = "app.rabbitmq.retry.jitter";
 
   private static final SpelExpressionParser PARSER = new SpelExpressionParser();
 
@@ -48,9 +61,22 @@ public class DeadLetterRetryConfiguration {
     return recoverer;
   }
 
+  /**
+   * Acrescenta às configurações lidas pelo Boot o classificador de falhas e o jitter.
+   * <p>
+   * O jitter sorteia cada espera entre {@code intervalo - jitter} e {@code intervalo + jitter},
+   * sem passar de baixo do intervalo inicial nem de cima do teto, e o multiplicador também age
+   * sobre ele. Serve para que consumidores que falham juntos, como as várias instâncias de um
+   * serviço diante do mesmo banco fora do ar, não voltem todos no mesmo instante. Sem a chave
+   * a espera é exata, como era antes.
+   */
   @Bean
-  public RabbitListenerRetrySettingsCustomizer deadLetterRetrySettingsCustomizer() {
-    return settings -> settings.setExceptionPredicate(DeadLetterRetryConfiguration::isRetryable);
+  public RabbitListenerRetrySettingsCustomizer deadLetterRetrySettingsCustomizer(final Environment environment) {
+    final var jitter = Binder.get(environment).bind(JITTER_PROPERTY, Duration.class).orElse(Duration.ZERO);
+    return settings -> {
+      settings.setExceptionPredicate(DeadLetterRetryConfiguration::isRetryable);
+      settings.setJitter(jitter);
+    };
   }
 
   /**

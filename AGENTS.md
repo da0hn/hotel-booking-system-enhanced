@@ -500,7 +500,14 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real e prova que o
   binding pegou. Cada tentativa roda numa transação própria (o interceptor envolve o
   listener por fora), e a thread do consumidor fica bloqueada durante o backoff: uma
-  mensagem venenosa segura a fila por ~3s.
+  mensagem venenosa segura a fila por 2 a 4,5s.
+- **O jitter tem chave própria, `app.rabbitmq.retry.jitter`.** O Boot 4.1 não expõe jitter
+  em `spring.rabbitmq.listener.simple.retry.*`, embora o `RetryPolicySettings` o suporte, e
+  uma chave desconhecida sob esse prefixo seria ignorada em silêncio. Quem a lê é o
+  `deadLetterRetrySettingsCustomizer` (`DeadLetterRetryConfiguration.JITTER_PROPERTY`). Cada
+  espera sai sorteada entre `intervalo - jitter` e `intervalo + jitter`, sem ficar abaixo do
+  intervalo inicial nem acima do teto, e o multiplicador age sobre o jitter também: com
+  500ms, a primeira espera fica em 1–1,5s e a segunda em 1–3s. Sem a chave não há jitter.
 - **Esgotadas as tentativas**, o `RepublishMessageRecoverer` publica a mensagem no DLX com a
   routing key `<fila>.dlq`, preservando o corpo e acrescentando `x-exception-message`,
   `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Os argumentos

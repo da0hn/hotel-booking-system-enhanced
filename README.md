@@ -114,8 +114,12 @@ O diagrama mostra só o caminho feliz das seis filas. Cada uma delas também tem
 devolve mais a mensagem ao início da fila:
 
 * **Retry com backoff exponencial.** O consumidor tenta no máximo **3 vezes** (a primeira e mais duas
-  retentativas), esperando 1s e depois 2s, com teto de 10s entre tentativas
+  retentativas), esperando cerca de 1s e depois cerca de 2s, com teto de 10s entre tentativas
   (`spring.rabbitmq.listener.simple.retry.*` no `application.yml` de cada serviço).
+* **Jitter nas esperas.** Cada espera é sorteada com até 500ms de variação, e a variação cresce junto com o
+  multiplicador, então a primeira espera fica entre 1s e 1,5s e a segunda entre 1s e 3s. Isso impede que
+  várias instâncias, falhando pelo mesmo motivo, voltem todas no mesmo instante. A chave é
+  `app.rabbitmq.retry.jitter`, porque o Spring Boot 4.1 não tem uma para isso; sem ela a espera é exata.
 * **Erro determinístico vai direto à DLQ.** JSON malformado, classe de evento inexistente, pacote fora do
   `TrustedEventPackages` e subtipo de evento que o `switch` do handler não conhece não têm como dar certo
   na segunda tentativa, então não são retentados.
@@ -124,7 +128,7 @@ devolve mais a mensagem ao início da fila:
   inspecionar, abra a fila `<fila>.dlq` no painel do RabbitMQ (<http://localhost:15672>, `root`/`root`).
 
 Durante o backoff a thread do consumidor fica ocupada: uma mensagem que falha por erro transitório segura a
-fila por cerca de 3 segundos antes de ir para a DLQ. Não há reprocessamento automático a partir da DLQ — quem
+fila por 2 a 4,5 segundos (a soma das duas esperas, com o jitter) antes de ir para a DLQ. Não há reprocessamento automático a partir da DLQ — quem
 decide se a mensagem volta para a fila de origem é uma pessoa.
 
 O contrato de serialização também merece atenção: o tipo concreto do evento viaja no header `__TypeId__`

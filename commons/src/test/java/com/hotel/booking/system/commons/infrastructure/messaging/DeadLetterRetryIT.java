@@ -31,6 +31,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -87,6 +88,7 @@ class DeadLetterRetryIT {
     registry.add("spring.rabbitmq.listener.simple.retry.initial-interval", () -> "50ms");
     registry.add("spring.rabbitmq.listener.simple.retry.multiplier", () -> "2.0");
     registry.add("spring.rabbitmq.listener.simple.retry.max-interval", () -> "200ms");
+    registry.add(DeadLetterRetryConfiguration.JITTER_PROPERTY, () -> "200ms");
   }
 
   @Autowired
@@ -244,6 +246,32 @@ class DeadLetterRetryIT {
     assertThat(morta.getMessageProperties().getHeaders()).containsKey("x-exception-message");
   }
 
+  /**
+   * Com 50 ms de intervalo inicial, 200 ms de jitter e teto de 200 ms, a primeira espera é
+   * sorteada entre 50 e 200 ms. Sem jitter ela seria sempre 50 ms mais o ruído do agendador, e
+   * é esse piso que o teste usa para notar o sorteio: dezesseis mensagens, e basta uma esperar
+   * mais de 100 ms. A chance de nenhuma passar disso com o jitter ligado é de cerca de
+   * {@code (1/3)^16}.
+   */
+  @Test
+  @DisplayName("espalha a espera entre as tentativas quando há jitter configurado")
+  void espalhaAEsperaEntreAsTentativas() {
+    final var primeirasEsperasEmMs = new ArrayList<Long>();
+
+    for (var i = 0; i < 16; i++) {
+      this.sonda.reinicia();
+      this.sonda.comportamento = evento -> {
+        throw new IllegalStateException("falha permanente");
+      };
+      this.envia(pagamento("pedido-jitter-" + i));
+      this.aguardaNaDlq();
+      primeirasEsperasEmMs.add(this.sonda.esperaEntreTentativasEmMs(0));
+    }
+
+    assertThat(primeirasEsperasEmMs).allSatisfy(espera -> assertThat(espera).isGreaterThanOrEqualTo(50L));
+    assertThat(primeirasEsperasEmMs).anyMatch(espera -> espera > 100L);
+  }
+
   private void envia(final PaymentResponseEvent evento) {
     this.rabbitTemplate.convertAndSend(EXCHANGE, ROUTING_KEY, evento);
   }
@@ -338,18 +366,27 @@ class DeadLetterRetryIT {
 
     private final List<PaymentResponseEvent> processados = new CopyOnWriteArrayList<>();
 
+    private final List<Long> instantesEmNanos = new CopyOnWriteArrayList<>();
+
     private volatile Consumer<PaymentResponseEvent> comportamento = evento -> {
     };
 
     void reinicia() {
       this.tentativas.set(0);
       this.processados.clear();
+      this.instantesEmNanos.clear();
       this.comportamento = evento -> {
       };
     }
 
+    /** O intervalo, em ms, entre a tentativa {@code indice} e a seguinte. */
+    long esperaEntreTentativasEmMs(final int indice) {
+      return Duration.ofNanos(this.instantesEmNanos.get(indice + 1) - this.instantesEmNanos.get(indice)).toMillis();
+    }
+
     @RabbitListener(queues = QUEUE)
     public void escuta(final PaymentResponseEvent evento) {
+      this.instantesEmNanos.add(System.nanoTime());
       this.tentativas.incrementAndGet();
       this.comportamento.accept(evento);
       this.processados.add(evento);

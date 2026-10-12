@@ -69,6 +69,10 @@ management:
 
 app:
   rabbitmq:
+    # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
+    # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.
+    retry:
+      jitter: 500ms
     exchange:
       customer-booking: exchange.customer-booking
     routing-key:

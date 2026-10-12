@@ -3,6 +3,7 @@ package com.hotel.booking.system.booking.service.infrastructure.configuration;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.QueueProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
+import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterRetryConfiguration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterTopology;
 import com.hotel.booking.system.commons.infrastructure.messaging.EventMessageConverter;
 import org.junit.jupiter.api.DisplayName;
@@ -96,17 +97,31 @@ class DeadLetterConfigurationTest {
     assertThat(listener.getRetry().getMaxInterval()).isEqualTo(Duration.ofSeconds(10));
   }
 
+  @Test
+  @DisplayName("espalha a espera do retry com 500 ms de jitter")
+  void configuraJitterNoRetry() throws IOException {
+    final var jitter = Binder.get(ambienteDoApplicationYml())
+      .bind(DeadLetterRetryConfiguration.JITTER_PROPERTY, Duration.class);
+
+    assertThat(jitter.isBound()).isTrue();
+    assertThat(jitter.get()).isEqualTo(Duration.ofMillis(500));
+  }
+
   /**
    * Lê o {@code application.yml} de verdade, e não valores montados no teste: o Boot ignora
    * em silêncio uma chave que não existe, então uma propriedade com o nome errado (como o
    * {@code max-attempts} do Boot 3) deixaria o retry no valor padrão sem nenhum aviso.
    */
   private static RabbitProperties propriedadesDoApplicationYml() throws IOException {
+    return Binder.get(ambienteDoApplicationYml()).bind("spring.rabbitmq", RabbitProperties.class).get();
+  }
+
+  private static StandardEnvironment ambienteDoApplicationYml() throws IOException {
     final var ambiente = new StandardEnvironment();
     new YamlPropertySourceLoader()
       .load("application", new ClassPathResource("application.yml"))
       .forEach(ambiente.getPropertySources()::addLast);
-    return Binder.get(ambiente).bind("spring.rabbitmq", RabbitProperties.class).get();
+    return ambiente;
   }
 
 }

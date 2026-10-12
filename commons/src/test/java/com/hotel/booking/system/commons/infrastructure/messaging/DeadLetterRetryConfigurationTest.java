@@ -11,8 +11,13 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.listener.ListenerExecutionFailedException;
 import org.springframework.amqp.support.converter.MessageConversionException;
+import org.springframework.boot.amqp.autoconfigure.RabbitListenerRetrySettingsCustomizer;
 import org.springframework.boot.retry.RetryPolicySettings;
+import org.springframework.mock.env.MockEnvironment;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -81,11 +86,81 @@ class DeadLetterRetryConfigurationTest {
   void aplicaOClassificadorAsConfiguracoesDeRetry() {
     final var settings = new RetryPolicySettings();
 
-    new DeadLetterRetryConfiguration().deadLetterRetrySettingsCustomizer().customize(settings);
+    customizer(new MockEnvironment()).customize(settings);
 
     assertThat(settings.getExceptionPredicate())
       .accepts(new RuntimeException("transitória"))
       .rejects(new MessageConversionException("JSON inválido"));
+  }
+
+  @Test
+  @DisplayName("aplica o jitter configurado às configurações de retry do listener")
+  void aplicaOJitterConfigurado() {
+    final var settings = configuracaoDosServicos();
+
+    customizer(new MockEnvironment().withProperty(DeadLetterRetryConfiguration.JITTER_PROPERTY, "500ms"))
+      .customize(settings);
+
+    assertThat(settings.getJitter()).isEqualTo(Duration.ofMillis(500));
+  }
+
+  @Test
+  @DisplayName("sem jitter configurado a espera continua exata")
+  void semJitterAEsperaEExata() {
+    final var settings = configuracaoDosServicos();
+
+    customizer(new MockEnvironment()).customize(settings);
+
+    assertThat(settings.getJitter()).isEqualTo(Duration.ZERO);
+    assertThat(primeirasEsperas(settings, 50)).containsOnly(1000L);
+  }
+
+  @Test
+  @DisplayName("sorteia cada espera dentro da faixa do jitter e não repete sempre o mesmo valor")
+  void sorteiaAEsperaDentroDaFaixaDoJitter() {
+    final var settings = configuracaoDosServicos();
+    customizer(new MockEnvironment().withProperty(DeadLetterRetryConfiguration.JITTER_PROPERTY, "500ms"))
+      .customize(settings);
+
+    final var primeiras = primeirasEsperas(settings, 300);
+    final var segundas = segundasEsperas(settings, 300);
+
+    assertThat(primeiras).allSatisfy(espera -> assertThat(espera).isBetween(1000L, 1500L));
+    assertThat(primeiras.stream().distinct().count()).isGreaterThan(1);
+    assertThat(segundas).allSatisfy(espera -> assertThat(espera).isBetween(1000L, 3000L));
+    assertThat(segundas.stream().distinct().count()).isGreaterThan(1);
+  }
+
+  private static RabbitListenerRetrySettingsCustomizer customizer(final MockEnvironment ambiente) {
+    return new DeadLetterRetryConfiguration().deadLetterRetrySettingsCustomizer(ambiente);
+  }
+
+  /** Os mesmos valores que o Boot lê do {@code application.yml} dos serviços antes de chamar o customizer. */
+  private static RetryPolicySettings configuracaoDosServicos() {
+    final var settings = new RetryPolicySettings();
+    settings.setMaxRetries(2L);
+    settings.setDelay(Duration.ofSeconds(1));
+    settings.setMultiplier(2.0);
+    settings.setMaxDelay(Duration.ofSeconds(10));
+    return settings;
+  }
+
+  private static List<Long> primeirasEsperas(final RetryPolicySettings settings, final int amostras) {
+    final var politica = settings.createRetryPolicy();
+    return IntStream.range(0, amostras)
+      .mapToObj(i -> politica.getBackOff().start().nextBackOff())
+      .toList();
+  }
+
+  private static List<Long> segundasEsperas(final RetryPolicySettings settings, final int amostras) {
+    final var politica = settings.createRetryPolicy();
+    return IntStream.range(0, amostras)
+      .mapToObj(i -> {
+        final var execucao = politica.getBackOff().start();
+        execucao.nextBackOff();
+        return execucao.nextBackOff();
+      })
+      .toList();
   }
 
 }
