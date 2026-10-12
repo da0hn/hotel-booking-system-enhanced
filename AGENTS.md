@@ -509,10 +509,3 @@ handler correspondente no `hotel-service`.
   exposição a `health` preserva esse contrato. Mover o Actuator para outra porta
   (`management.server.port`) ficou de fora da issue #12 de propósito: é uma decisão de
   deploy, e o e2e e qualquer healthcheck teriam de apontar para a outra porta.
-
-## Skills do projeto
-
-- **`registrar-ideia`** (`.claude/skills/registrar-ideia/SKILL.md`) — registra um achado do
-  código de 2023 como ideia de post na base `Posts — Refatoração TCC` do Notion. Dispara
-  quando o Gabriel diz que algo "daria um post" / "vale um post" / "é um achado", ou quando
-  pede para listar e atualizar as ideias já registradas. Requer o MCP do Notion.
