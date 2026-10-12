@@ -61,7 +61,41 @@
               ]
             }
           },
-          "response": []
+          "response": [
+            {
+              "name": "Busca sem resultado (200 com data vazio)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hotel_service}}/hotel?city=CidadeInexistente",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel"
+                  ],
+                  "query": [
+                    {
+                      "key": "city",
+                      "value": "CidadeInexistente"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [],\n  \"success\": true\n}"
+            }
+          ]
         },
         {
           "name": "Book Room",
