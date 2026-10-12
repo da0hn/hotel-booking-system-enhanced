@@ -425,13 +425,16 @@ handler correspondente no `hotel-service`.
   evento no `commons` quebra a comunicação entre serviços em versões diferentes** —
   mensagens já na fila deixam de ser desserializáveis.
 - O FQCN que chega no `__TypeId__` só é instanciado se o **pacote** dele estiver em
-  `TrustedEventPackages` (no `commons`), que os quatro `RabbitMQConfiguration` passam ao
-  converter. O `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote
-  por padrão; o sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
+  `TrustedEventPackages` (no `commons`), que o `EventMessageConverter` (também no
+  `commons`) aplica e que os quatro `RabbitMQConfiguration` instanciam. O
+  `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote por padrão; o
+  sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
   `IllegalArgumentException` **no listener**. A falha não aparece no arranque: os quatro
   serviços sobem saudáveis, o `POST /hotel/booking` responde 200, e a saga simplesmente
   não avança. O casamento é por igualdade de pacote, não por prefixo — **um subpacote novo
-  de evento precisa entrar naquela lista**.
+  de evento precisa entrar naquela lista**. `UnsupportedEventTypeException` mora em
+  `core/domain/exception/` de propósito: dentro do pacote de eventos ela seria varrida pelo
+  `EventContractTest` e teria de constar em `TrustedEventPackages`.
 - O Jackson só constrói uma classe se enxergar **um** creator. Com um construtor público
   único ele o usa sozinho, sem configuração nenhuma; com dois candidatos ele não desempata
   e recusa a mensagem. O `@SuperBuilder` cria exatamente esse segundo candidato — o
@@ -443,7 +446,7 @@ handler correspondente no `hotel-service`.
   A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
   o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
   `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
-- `ContratoDeEventosTest`, no `commons`, varre o pacote e prova que cada classe concreta de
+- `EventContractTest`, no `commons`, varre o pacote e prova que cada classe concreta de
   evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
   ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
   saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
@@ -451,6 +454,48 @@ handler correspondente no `hotel-service`.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+### Falha no consumidor: retry e DLQ
+
+Uma exceção no listener não devolve mais a mensagem ao início da fila. O desenho vive em
+`commons/infrastructure/messaging/` e cada `RabbitMQConfiguration` o importa
+(`DeadLetterRetryConfiguration`):
+
+- **Toda fila de negócio nasce por `DeadLetterTopology.queue(...)`**, nunca por
+  `new Queue(...)`. Ela declara `x-dead-letter-exchange` e `x-dead-letter-routing-key`, e o
+  `Declarables` do serviço cria o DLX global `exchange.dead-letter` e a `<fila>.dlq`. Cada
+  serviço redeclara as filas que não consome (para publicar nelas), então os argumentos
+  precisam sair do **mesmo helper**: dois serviços declarando a mesma fila com argumentos
+  diferentes dão `PRECONDITION_FAILED` no segundo a subir.
+- **Os argumentos de uma fila existente não mudam.** O broker recusa a redeclaração de uma
+  fila com `x-dead-letter-*` diferente dos que ela já tem (`PRECONDITION_FAILED`); o remédio
+  é apagar a fila antes, e as mensagens em voo se perdem. Por isso o README documenta a
+  remoção das seis filas no deploy que introduziu as DLQs.
+- **Retry sem estado, com backoff exponencial**: `max-retries: 2` (três tentativas ao todo),
+  1s → 2s, teto de 10s, em `spring.rabbitmq.listener.simple.retry.*`. O Boot 4 **não tem
+  `max-attempts`** e ignora em silêncio chave que não conhece — o
+  `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real e prova que o
+  binding pegou. Cada tentativa roda numa transação própria (o interceptor envolve o
+  listener por fora), e a thread do consumidor fica bloqueada durante o backoff: uma
+  mensagem venenosa segura a fila por ~3s.
+- **Esgotadas as tentativas**, o `RepublishMessageRecoverer` publica a mensagem no DLX com a
+  routing key `<fila>.dlq`, preservando o corpo e acrescentando `x-exception-message`,
+  `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Os argumentos
+  de DLX na fila são a rede de segurança para uma rejeição que não passe pelo recoverer —
+  daí o `default-requeue-rejected: false`.
+- **Erro determinístico não é retentado.** O `exceptionPredicate` percorre a cadeia de
+  causas e trata como definitiva a que contenha `MessageConversionException` (JSON
+  malformado, classe inexistente, **pacote fora do `TrustedEventPackages`**) ou
+  `UnsupportedEventTypeException` (subtipo de evento sem ramo no `switch`). A primeira é
+  fabricada pelo `EventMessageConverter`, que traduz o `IllegalArgumentException` cru do
+  Jackson; sem ele, tipo não confiável seria retentado três vezes sem chance de dar certo.
+- O `default ->` dos handlers do `hotel-service` é **inalcançável hoje**: as hierarquias são
+  `sealed` e os `case` as esgotam. Nenhum teste o exercita (o Mockito não mocka classe
+  sealed). Ele existe para o dia em que um subtipo novo entrar na hierarquia e ninguém
+  lembrar do `switch`.
+- O que depende do broker é provado pelo `DeadLetterRetryIT` (`commons`), que sobe um
+  RabbitMQ real por Testcontainers: o que se quer saber é se a mensagem chega à DLQ com os
+  headers certos, e um broker simulado não responde isso.
 
 ## Skills do projeto
 
