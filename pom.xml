@@ -168,8 +168,9 @@
     </build>
 
     <profiles>
-        <!-- O `saga-tests` fica fora do reactor padrão de propósito: ele sobe quatro JVMs,
-             PostgreSQL e RabbitMQ, e custa ~2,5 min dos ~9 que o `mvn verify` leva sem ele.
+        <!-- O `saga-tests` fica fora do reactor padrão por decisão do mantenedor: ele sobe
+             quatro JVMs, PostgreSQL e RabbitMQ. No CI isso custou ~1,5 min sobre o reactor
+             de ~1,5 min (medido em out/2026); na máquina local o par é bem mais lento.
              Quem o quer pede o profile (`-Psaga`); o workflow `saga.yml` faz isso por
              disparo manual ou pela label `saga` num Pull Request.
 

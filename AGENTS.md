@@ -131,8 +131,9 @@ fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os qua
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
 **O `mvn verify` comum não roda o `SagaIT`.** O módulo só entra no reactor com o profile
-`saga`, porque ele custa ~2,5 min num build que leva ~9 sem ele. Quem mexe no que a saga
-protege roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
+`saga`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5 min no
+reactor e ~1,5 min no `SagaIT`, bem mais na máquina local). Quem mexe no que a saga protege
+roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
 workflow `.github/workflows/saga.yml`: a **label `saga`** num pull request, que roda a
 partir do branch do PR, e o **`workflow_dispatch`**, cujo botão só aparece depois de o
 arquivo estar na `master`. Falhou, o artefato `saga-logs` traz o log inteiro de cada serviço.

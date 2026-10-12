@@ -1,9 +1,9 @@
 # A saga de reserva ponta a ponta, fora do caminho crítico do `build.yml`.
 #
-# O `SagaIT` sobe PostgreSQL, RabbitMQ e os quatro serviços como processos, e
-# por isso custa ~2,5 min num reactor que sem ele leva ~9. O módulo dele só
-# entra no Maven com o profile `saga`, então o `mvn verify` do `build.yml` não
-# o enxerga. Este workflow é o outro caminho: roda quando alguém pede.
+# O `SagaIT` sobe PostgreSQL, RabbitMQ e os quatro serviços como processos. Por
+# decisão do mantenedor, o módulo dele só entra no Maven com o profile `saga`,
+# então o `mvn verify` do `build.yml` não o enxerga. Este workflow é o outro
+# caminho: roda quando alguém pede. No CI ele levou ~1,5 min (out/2026).
 #
 # Dois gatilhos, e cada um cobre o que o outro não alcança:
 #
