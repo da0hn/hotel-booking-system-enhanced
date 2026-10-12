@@ -53,11 +53,19 @@ spring:
     compose:
       file: '.\docker\common.yml'
       enabled: ${ENABLE_BUILTIN_DOCKER_COMPOSE:false}
+# Só `health` e `info` saem pela web. O `include: "*"` anterior entregava `/actuator/env`
+# (variáveis de ambiente, com as senhas do banco e do RabbitMQ), `configprops`, `beans` e
+# `mappings` a quem alcançasse a porta, e não há Spring Security para barrar. Liberar outro
+# endpoint é uma decisão: o `ActuatorExposureConfigTest` falha até ser atualizado junto.
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info
+  endpoint:
+    health:
+      # `never` já é o default; fica explícito para a intenção não depender da versão do Boot.
+      show-details: never
 
 app:
   rabbitmq:

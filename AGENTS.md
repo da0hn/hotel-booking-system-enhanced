@@ -125,7 +125,7 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 `E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
 `Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
 
-Hoje há um, o `SagaIT`, o único teste que prova que as quatro pontas se entendem. Ele
+Hoje há dois. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
 dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
 bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
 (`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
@@ -133,6 +133,10 @@ bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto 
 regra de disponibilidade: um evento movido de pacote, um pacote fora do
 `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
+
+O outro, o `ActuatorExposureIT`, não toca na saga: bate nos quatro serviços e confere o que o
+Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). Por ser uma
+`Specification` à parte, ele paga um segundo arranque do ambiente inteiro.
 
 **O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
 profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
@@ -200,12 +204,12 @@ O workflow `.github/workflows/build.yml` roda `mvn verify` no reactor inteiro e 
 no GHCR só o que mudou, com labels OCI de proveniência. `commons` não vira imagem: é
 gatilho de reconstrução dos quatro. O que sai do build depende de onde o commit caiu:
 
-| Gatilho | Roda | Publica |
-|---|---|---|
-| `pull_request` (qualquer origem) | `mvn verify` | — |
-| push em `develop` | `mvn verify` | — |
+| Gatilho                                   | Roda                                | Publica                                     |
+|-------------------------------------------|-------------------------------------|---------------------------------------------|
+| `pull_request` (qualquer origem)          | `mvn verify`                        | —                                           |
+| push em `develop`                         | `mvn verify`                        | —                                           |
 | push em `release/X.Y.Z` ou `hotfix/X.Y.Z` | bump do `<revision>` + `mvn verify` | `X.Y.Z-RC.<run_number>` e `X.Y.Z-RC-latest` |
-| push em `master` | `mvn verify` + `git tag X.Y.Z` | `X.Y.Z-<run_number>` e `X.Y.Z-latest` |
+| push em `master`                          | `mvn verify` + `git tag X.Y.Z`      | `X.Y.Z-<run_number>` e `X.Y.Z-latest`       |
 
 A tag imutável (`-<run_number>`) é a que se cita num diagnóstico: ela responde qual
 imagem está rodando no homelab. A móvel (`-latest`) existe só para quem não quer
@@ -398,7 +402,11 @@ Os outros três serviços só reagem ao que chega na sua fila.
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
    capacidade contra o banco do hotel, gera um `reservationOrderId` e publica
    `BookingRoomRequestedEvent` (para o booking) + `CustomerBookingInitiatedEvent` (para o
-   customer). Responde 200 imediatamente com o `reservationOrderId` — o resto é assíncrono.
+   customer). Responde 200 com o `reservationOrderId` assim que o broker confirma as duas
+   publicações — o resto é assíncrono. Se uma publicação falha, o `HotelExceptionHandler`
+   responde 503 com `hotel.booking.temporarily.unavailable`. As duas publicações **não são
+   atômicas**: se a segunda falha, o booking já recebeu a primeira. Só o Outbox (#35) fecha
+   essa janela.
 2. `booking-service` consome, valida disponibilidade no período (`VerifyRoomAvailability`),
    grava a reserva como `PENDING` e responde `BookingRoomPendingEvent` ou
    `BookingRoomFailedEvent`.
@@ -451,6 +459,21 @@ handler correspondente no `hotel-service`.
   ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
   saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
   cobertura sozinho; não há lista para manter.
+- **Publisher falha alto; nunca engole a exceção.** Todo publisher estende
+  `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que envia com
+  `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que nenhuma fila
+  recebeu — como falha, lançando `MessagePublishException`. Um `catch` que só loga recria o
+  defeito da #3: a saga trava sem sinal e o `POST` responde 200 com o broker fora. A regra
+  `publishersExtendAbstractRabbitPublisher` do ArchUnit de cada serviço recusa publisher que
+  não estenda a base.
+- A garantia de entrega depende de **três chaves no `application.yml` de quem publica**:
+  `publisher-confirm-type: correlated`, `publisher-returns: true` e `template.mandatory: true`.
+  Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
+  a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
+  que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
+- A exceção sobe pelo listener e desfaz a transação, mas a mensagem volta à fila. Até a #6
+  (DLQ e retry com backoff) isso pode virar um loop de reentrega, e até a #7 (idempotência) uma
+  reentrega repete o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
@@ -496,6 +519,32 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
 - O que depende do broker é provado pelo `DeadLetterRetryIT` (`commons`), que sobe um
   RabbitMQ real por Testcontainers: o que se quer saber é se a mensagem chega à DLQ com os
   headers certos, e um broker simulado não responde isso.
+
+### Actuator
+
+- Cada serviço expõe pela web só `health` e `info`, e o `health` não mostra detalhes
+  (`management.endpoint.health.show-details: never`, explícito). O `include: "*"` anterior
+  entregava `/actuator/env` (variáveis de ambiente, com as senhas do banco e do RabbitMQ),
+  `configprops`, `beans`, `mappings`, `threaddump`, `metrics` e `loggers` a quem alcançasse as
+  portas 8001–8004, e não há Spring Security para barrar (issue #12).
+- **O `heapdump` não vazava nesta versão.** A issue o cita, mas no Spring Boot 4.1.1 ele é
+  `@WebEndpoint(defaultAccess = Access.NONE)`: nem o `*` o expõe, e ele só aparece se alguém
+  ligar `management.endpoint.heapdump.access`. O `ActuatorExposureIT` o mantém na lista de
+  negados como guarda, mas ele já respondia 404 antes da correção.
+- O corpo do `/actuator/health` não é `{"status":"UP"}` puro: o Boot 4 acrescenta
+  `"groups":["liveness","readiness"]`, que só nomeia grupos. O que não pode aparecer é
+  `components`/`details`, e é isso que o e2e confere.
+- **Liberar outro endpoint é uma decisão, não um ajuste.** `metrics` e `prometheus` só entram
+  junto com uma coleta que os justifique — hoje não há registry do Micrometer. Quem liberar
+  um endpoint muda o `ActuatorExposureConfigTest` de cada serviço no mesmo commit; sem isso o
+  `mvn verify` falha. O `ActuatorExposureIT` (e2e) confere o resultado visto de fora.
+- O Actuator vem do `pom.xml` raiz e vale para todos os módulos, então o que decide o que
+  aparece é só a exposição: é por isso que o 404 de `/actuator/env` prova a configuração, e
+  não a ausência do endpoint.
+- O `ServiceProcess` do e2e espera `/actuator/health` com 200 e `"UP"`; restringir a
+  exposição a `health` preserva esse contrato. Mover o Actuator para outra porta
+  (`management.server.port`) ficou de fora da issue #12 de propósito: é uma decisão de
+  deploy, e o e2e e qualquer healthcheck teriam de apontar para a outra porta.
 
 ## Skills do projeto
 

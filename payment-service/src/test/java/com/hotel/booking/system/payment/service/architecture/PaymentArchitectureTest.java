@@ -5,6 +5,7 @@ import com.hotel.booking.system.commons.core.application.annotation.Listener;
 import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.commons.core.application.annotation.Publisher;
 import com.hotel.booking.system.commons.core.application.annotation.UseCase;
+import com.hotel.booking.system.commons.infrastructure.messaging.AbstractRabbitPublisher;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ImportOption.DoNotIncludeTests;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -82,6 +83,13 @@ class PaymentArchitectureTest {
   static final ArchRule publishersAreAnnotated = classes()
     .that().resideInAnyPackage(ROOT + ".infrastructure.messaging.publisher..")
     .should().beAnnotatedWith(Publisher.class)
+    .allowEmptyShould(true);
+
+  @ArchTest
+  static final ArchRule publishersExtendAbstractRabbitPublisher = classes()
+    .that().resideInAnyPackage(ROOT + ".infrastructure.messaging.publisher..")
+    .should().beAssignableTo(AbstractRabbitPublisher.class)
+    .because("só a base confirma a entrega e propaga a falha; um publisher próprio volta a engolir a exceção")
     .allowEmptyShould(true);
 
   @ArchTest
