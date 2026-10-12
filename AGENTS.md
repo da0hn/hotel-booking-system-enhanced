@@ -127,11 +127,12 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 
 Hoje há dois. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
 dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
-bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
-(`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
-`CANCELED`). É a rede de quem mexe no contrato de eventos, na fronteira transacional ou na
-regra de disponibilidade: um evento movido de pacote, um pacote fora do
-`TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
+bancos. Os quatro cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
+(`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio
+da transação (a saga retoma ao reiniciar, com uma única reserva) e pagamento recusado
+(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
+fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
+fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
 O outro, o `ActuatorExposureIT`, não toca na saga: bate nos quatro serviços e confere o que o
@@ -168,10 +169,17 @@ O que não se deduz do código:
   responde que não encontra o projeto `e2e-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
   `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
-  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos dois
+  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos três
   primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
-  quarto, e se o primeiro falhar os outros dois ainda dizem se o resto da saga funciona. O
-  custo é que uma saga quebrada leva ~6 min para falhar (3 cenários × 90 s de espera).
+  quarto, e se o primeiro falhar os outros ainda dizem se o resto da saga funciona. O
+  custo é que uma saga quebrada leva ~6 min para falhar (4 cenários × 90 s de espera).
+- **A morte do consumidor se provoca com um lock, não com cronometragem.** O cenário do
+  `booking-service` morto trava `booking.booking` com `lock table ... access exclusive` numa
+  conexão do dono do container e espera, em `pg_stat_activity`, o serviço parar num `Lock`:
+  só então a mensagem está recebida, sem ack e dentro da transação, e o `kill` é seguro. O
+  `ServiceProcess.kill()` encerra sem aviso (`destroyForcibly`); o `stop()` pede o
+  encerramento e espera. A janela entre o commit e o ack, que repetiria o efeito, não tem
+  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` e depende da #7.
 - **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
   `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
   `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
@@ -471,9 +479,8 @@ handler correspondente no `hotel-service`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
-- A exceção sobe pelo listener e desfaz a transação, mas a mensagem volta à fila. Até a #6
-  (DLQ e retry com backoff) isso pode virar um loop de reentrega, e até a #7 (idempotência) uma
-  reentrega repete o efeito já gravado.
+- A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
+  loop de reentrega, mas até a #7 (idempotência) uma reentrega repete o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
@@ -526,6 +533,21 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
 - O que depende do broker é provado pelo `DeadLetterRetryIT` (`commons`), que sobe um
   RabbitMQ real por Testcontainers: o que se quer saber é se a mensagem chega à DLQ com os
   headers certos, e um broker simulado não responde isso.
+- **Morte do processo no meio do consumo não passa pelo retry nem pela DLQ.** O ack é
+  automático (nenhum `application.yml` configura `acknowledge-mode`): só sai depois que o
+  listener retorna. Sem ack, o broker devolve a mensagem à fila marcada como reentrega, e o
+  contador de tentativas, que vive na memória do processo, recomeça do zero. O lado seguro está
+  provado em dois níveis: o `DeadLetterRetryIT` mata um consumidor sem ack e confere a
+  reentrega fora da DLQ, e o `SagaIT` derruba o `booking-service` com `kill` dentro da
+  transação e confere que a saga retoma com uma única reserva. O lado inseguro — morrer depois
+  do commit e antes do ack — repete o efeito, e o `DeadLetterRetryIT` o fixa de propósito:
+  deduplicar é papel do consumidor (#7), e um dia que a deduplicação morar no `commons` esse
+  teste deve ser invertido.
+- **Desligamento gracioso (SIGTERM) não está configurado nem provado (#41).** Nenhum
+  `application.yml` define o prazo de desligamento; vale o padrão do container (5 s), que o
+  Boot 4.1 não expõe. Lido no código do Spring AMQP, sem teste: passado o prazo, o container
+  interrompe a thread, e a interrupção na espera do retry vira "retry esgotado" — o
+  recoverer manda a mensagem para a DLQ e o container a confirma, em vez de devolvê-la à fila.
 
 ### Actuator
 

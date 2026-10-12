@@ -4,6 +4,7 @@ import com.hotel.booking.system.commons.core.domain.event.PaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentResponseEvent;
 import com.hotel.booking.system.commons.core.domain.exception.UnsupportedEventTypeException;
 import com.hotel.booking.system.commons.core.domain.valueobject.PaymentStatus;
+import com.rabbitmq.client.ConnectionFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,8 +16,11 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
+import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
@@ -24,16 +28,22 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -68,6 +78,8 @@ class DeadLetterRetryIT {
 
   private static final String DEAD_LETTER_QUEUE = DeadLetterTopology.deadLetterQueueName(QUEUE);
 
+  private static final String LISTENER_ID = "it.sonda";
+
   private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
   private static final RabbitMQContainer BROKER = new RabbitMQContainer("rabbitmq:3-management");
@@ -96,6 +108,12 @@ class DeadLetterRetryIT {
 
   @Autowired
   private RabbitAdmin rabbitAdmin;
+
+  @Autowired
+  private CachingConnectionFactory connectionFactory;
+
+  @Autowired
+  private RabbitListenerEndpointRegistry registry;
 
   @Autowired
   private Sonda sonda;
@@ -272,6 +290,70 @@ class DeadLetterRetryIT {
     assertThat(primeirasEsperasEmMs).anyMatch(espera -> espera > 100L);
   }
 
+  /**
+   * Um consumidor que recebe a mensagem e morre antes do ack — o processo derrubado no meio do
+   * consumo, visto do broker — não a perde nem a leva à DLQ: ela volta à fila e o consumidor
+   * seguinte a recebe marcada como reentrega, com as três tentativas inteiras.
+   * <p>
+   * O consumidor que morre é um cliente AMQP cru, e o listener da aplicação fica parado
+   * enquanto isso: se os dois disputassem a fila, a mensagem poderia ir para o listener e o
+   * teste não provaria nada. A conexão é cortada com {@code abort}, sem o fechamento ordenado.
+   */
+  @Test
+  @DisplayName("devolve à fila, sem ir para a DLQ, a mensagem de um consumidor que morreu sem confirmar")
+  void reentregaAMensagemDoConsumidorQueMorreuSemConfirmar() throws Exception {
+    final var listener = this.registry.getListenerContainer(LISTENER_ID);
+    listener.stop();
+    try {
+      this.envia(pagamento("pedido-consumidor-morto"));
+      this.recebeSemConfirmarEMorre();
+    }
+    finally {
+      listener.start();
+    }
+
+    await().atMost(TIMEOUT).untilAsserted(() -> assertThat(this.sonda.processados).hasSize(1));
+    assertThat(this.sonda.reentregas).containsExactly(true);
+    assertThat(this.sonda.tentativas).hasValue(1);
+    assertThat(this.rabbitTemplate.receive(DEAD_LETTER_QUEUE)).isNull();
+    assertThat(this.rabbitAdmin.getQueueInfo(QUEUE).getMessageCount()).isZero();
+  }
+
+  /**
+   * Fixa a garantia que o broker dá — entrega ao menos uma vez — e a que ele não dá: o efeito
+   * gravado antes do ack se repete quando o consumidor morre antes de confirmar. O {@code commons}
+   * não deduplica; quem consome é que precisa tratar a reentrega (issue #7). Se a deduplicação
+   * um dia morar aqui, este teste passa a afirmar o contrário e deve ser invertido.
+   * <p>
+   * A conexão é derrubada com o listener no meio do método, depois de o efeito ser contado. A
+   * thread antiga só é liberada depois, porque o container não reinicia o consumidor enquanto
+   * ela não devolver o controle — o que, num processo que morreu de verdade, nunca acontece.
+   */
+  @Test
+  @DisplayName("repete o efeito já aplicado quando a conexão cai antes do ack: a deduplicação é do consumidor")
+  void reentregaRepeteOEfeitoAplicadoAntesDoAck() throws Exception {
+    final var efeitos = new AtomicInteger();
+    final var primeiraEntrega = new AtomicBoolean(true);
+    final var efeitoAplicado = new CountDownLatch(1);
+    final var conexaoCaiu = new CountDownLatch(1);
+    this.sonda.comportamento = evento -> {
+      efeitos.incrementAndGet();
+      if (primeiraEntrega.getAndSet(false)) {
+        efeitoAplicado.countDown();
+        aguarda(conexaoCaiu);
+      }
+    };
+
+    this.envia(pagamento("pedido-efeito-repetido"));
+    assertThat(efeitoAplicado.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS)).as("efeito aplicado").isTrue();
+    this.connectionFactory.resetConnection();
+    conexaoCaiu.countDown();
+
+    await().atMost(TIMEOUT).untilAsserted(() -> assertThat(efeitos).hasValue(2));
+    assertThat(this.sonda.reentregas).containsExactly(false, true);
+    assertThat(this.rabbitTemplate.receive(DEAD_LETTER_QUEUE)).isNull();
+  }
+
   private void envia(final PaymentResponseEvent evento) {
     this.rabbitTemplate.convertAndSend(EXCHANGE, ROUTING_KEY, evento);
   }
@@ -282,6 +364,33 @@ class DeadLetterRetryIT {
       .setHeader("__TypeId__", tipo)
       .build();
     this.rabbitTemplate.send(EXCHANGE, ROUTING_KEY, mensagem);
+  }
+
+  private void recebeSemConfirmarEMorre() throws IOException, TimeoutException, InterruptedException {
+    final var fabrica = new ConnectionFactory();
+    fabrica.setHost(BROKER.getHost());
+    fabrica.setPort(BROKER.getAmqpPort());
+    fabrica.setUsername(BROKER.getAdminUsername());
+    fabrica.setPassword(BROKER.getAdminPassword());
+    final var conexao = fabrica.newConnection("consumidor-que-morre");
+    try {
+      final var recebida = new CountDownLatch(1);
+      conexao.createChannel().basicConsume(QUEUE, false, (tag, entrega) -> recebida.countDown(), tag -> {
+      });
+      assertThat(recebida.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS)).as("entrega ao consumidor cru").isTrue();
+    }
+    finally {
+      conexao.abort();
+    }
+  }
+
+  private static void aguarda(final CountDownLatch trava) {
+    try {
+      trava.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+    }
+    catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   private Message aguardaNaDlq() {
@@ -368,6 +477,8 @@ class DeadLetterRetryIT {
 
     private final List<Long> instantesEmNanos = new CopyOnWriteArrayList<>();
 
+    private final List<Boolean> reentregas = new CopyOnWriteArrayList<>();
+
     private volatile Consumer<PaymentResponseEvent> comportamento = evento -> {
     };
 
@@ -375,6 +486,7 @@ class DeadLetterRetryIT {
       this.tentativas.set(0);
       this.processados.clear();
       this.instantesEmNanos.clear();
+      this.reentregas.clear();
       this.comportamento = evento -> {
       };
     }
@@ -384,9 +496,13 @@ class DeadLetterRetryIT {
       return Duration.ofNanos(this.instantesEmNanos.get(indice + 1) - this.instantesEmNanos.get(indice)).toMillis();
     }
 
-    @RabbitListener(queues = QUEUE)
-    public void escuta(final PaymentResponseEvent evento) {
+    @RabbitListener(id = LISTENER_ID, queues = QUEUE)
+    public void escuta(
+      final PaymentResponseEvent evento,
+      @Header(name = AmqpHeaders.REDELIVERED, required = false) final Boolean reentregue
+    ) {
       this.instantesEmNanos.add(System.nanoTime());
+      this.reentregas.add(Boolean.TRUE.equals(reentregue));
       this.tentativas.incrementAndGet();
       this.comportamento.accept(evento);
       this.processados.add(evento);

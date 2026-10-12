@@ -161,6 +161,30 @@ final class ServiceProcess {
     this.process = null;
   }
 
+  /**
+   * Encerra o processo sem aviso, como uma queda de máquina ou um {@code kill -9}: o serviço não
+   * roda hook de desligamento, não confirma a mensagem em andamento e não fecha a transação. É o
+   * oposto do {@link #stop()}, que pede o encerramento e espera.
+   */
+  void kill() {
+    if (this.process == null) {
+      return;
+    }
+    this.process.descendants().forEach(ProcessHandle::destroyForcibly);
+    this.process.destroyForcibly();
+    try {
+      this.process.waitFor(15, TimeUnit.SECONDS);
+    }
+    catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    this.process = null;
+  }
+
+  boolean isRunning() {
+    return this.process != null && this.process.isAlive();
+  }
+
   String baseUrl() {
     return "http://localhost:" + this.port + this.contextPath;
   }
