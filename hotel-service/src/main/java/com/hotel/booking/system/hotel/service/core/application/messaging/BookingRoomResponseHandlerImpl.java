@@ -9,6 +9,7 @@ import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBooki
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingPaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingRejectedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingStatusUpdatedEvent;
+import com.hotel.booking.system.commons.core.domain.exception.UnsupportedEventTypeException;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import com.hotel.booking.system.hotel.service.core.ports.api.messaging.BookingRoomResponseHandler;
 import com.hotel.booking.system.hotel.service.core.ports.spi.messaging.publisher.CustomerBookingRoomStatusUpdatedPublisher;
@@ -58,9 +59,7 @@ public class BookingRoomResponseHandlerImpl implements BookingRoomResponseHandle
         this.customerBookingRoomUpdatedPublisher.publish(bookingRoomStatusUpdatedEvent);
         log.info("Customer service notified | reservationOrderId={}", e.getReservationOrderId());
       }
-      default -> throw new IllegalStateException(
-        "Failed on handling sub-type of BookingRoomResponseEvent: Unknown event"
-      );
+      default -> throw new UnsupportedEventTypeException(BookingRoomResponseEvent.class, event);
     }
   }
 

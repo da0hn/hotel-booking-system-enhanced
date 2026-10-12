@@ -12,6 +12,18 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:root}
     password: ${RABBITMQ_PASSWORD:root}
+    listener:
+      simple:
+        # Sem isto uma rejeição devolve a mensagem ao início da fila em vez de levá-la à DLQ.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          # Retentativas depois da primeira: 2 são 3 tentativas ao todo. O Boot 4 não tem mais
+          # `max-attempts` e ignora em silêncio uma chave que não conhece.
+          max-retries: 2
+          initial-interval: 1000ms
+          multiplier: 2.0
+          max-interval: 10000ms
     # O `AbstractRabbitPublisher` espera o confirm de cada envio e trata o return como falha.
     # Sem estas chaves o broker descarta em silêncio o evento que não encontra fila.
     publisher-confirm-type: correlated
@@ -41,6 +53,10 @@ app:
     mock:
       failure-chance-percentage: ${FAILURE_CHANCE_PERCENTAGE:90}
   rabbitmq:
+    # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
+    # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.
+    retry:
+      jitter: 500ms
     exchange:
       payment: exchange.payment
     routing-key:

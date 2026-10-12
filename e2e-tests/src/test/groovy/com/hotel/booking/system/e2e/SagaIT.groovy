@@ -12,6 +12,7 @@ import spock.util.concurrent.PollingConditions
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.sql.Connection
 import java.time.Duration
 
 /**
@@ -27,15 +28,16 @@ import java.time.Duration
  * aparece.</p>
  *
  * <p>Os cenários rodam na ordem em que estão declarados — o Spock faz isso por padrão — porque o
- * {@code payment-service} sorteia o resultado no arranque: os dois primeiros usam {@code 0}
+ * {@code payment-service} sorteia o resultado no arranque: os três primeiros usam {@code 0}
  * (sempre aprova) e o último {@code 100} (sempre recusa), o que custa um único reinício. Não há
  * {@code @Stepwise} de propósito: cada cenário usa um quarto próprio, então nenhum depende do
  * estado deixado pelo anterior, e se o primeiro falhar os outros dois ainda dizem se o resto da
  * saga funciona.</p>
  *
- * <p>Os dados vêm das migrations de seed. A exceção é o quarto de uma unidade só do cenário de
- * indisponibilidade, que o teste cria, porque nenhum quarto semeado permite esgotar o estoque
- * com uma reserva.</p>
+ * <p>Os dados vêm das migrations de seed. A exceção é o quarto de uma unidade só dos cenários de
+ * indisponibilidade e de morte do consumidor, que o teste cria, porque nenhum quarto semeado
+ * permite esgotar o estoque com uma reserva e o segundo precisa de uma reserva que ninguém mais
+ * toque.</p>
  */
 @Title("Saga de reserva ponta a ponta")
 class SagaIT extends Specification {
@@ -100,6 +102,45 @@ class SagaIT extends Specification {
     failureReasons(order).first().contains("is no longer available for period ${CHECK_IN} - ${CHECK_OUT}")
     scalar('select count(*) from booking.booking where reservation_order_id = ?', second) == '0'
     awaitScalar('select status from booking.booking where reservation_order_id = ?', first, 'CONFIRMED')
+  }
+
+  /**
+   * A morte do consumidor no meio do processamento, de verdade: o processo recebe um kill sem
+   * aviso com a mensagem sem ack e a transação aberta. O {@code booking-service} é parado dentro
+   * do consumo travando a tabela {@code booking.booking} (o dono do container pega o lock e o
+   * segura), então a mensagem está em andamento por construção e não por sorte de cronometragem.
+   *
+   * <p>O que se prova é o lado seguro da reentrega: a transação que nunca recebeu o commit é
+   * desfeita pelo banco, a mensagem volta à fila e, com o serviço de pé de novo, a saga termina
+   * com uma única reserva. O lado inseguro — morrer depois do commit e antes do ack, o que
+   * repetiria o efeito — não se provoca daqui, porque a janela é de microssegundos e não tem
+   * gancho; ele é coberto no {@code DeadLetterRetryIT} e depende da idempotência da issue #7.</p>
+   */
+  def "serviço morto no meio da transação retoma a saga ao reiniciar, sem duplicar a reserva"() {
+    given:
+    environment.usePaymentFailureChance(0)
+    def singleUnitRoomId = seedSingleUnitRoom()
+    def bookingTableLock = lockBookingTable()
+
+    when:
+    def reservationOrderId = bookRoom(singleUnitRoomId)
+    awaitBookingServiceBlockedOnLock()
+    environment.killBookingService()
+    releaseLock(bookingTableLock)
+    awaitNoBookingConnections()
+    def reservationsWhileDown = scalar('select count(*) from booking.booking where reservation_order_id = ?', reservationOrderId)
+    environment.restartBookingService()
+    def order = awaitStatus(reservationOrderId, 'RESERVED')
+
+    then:
+    reservationsWhileDown == '0'
+    chronologicalStatuses(order) == ['AWAITING_RESERVATION', 'AWAITING_PAYMENT', 'PAYMENT_CONFIRMED', 'RESERVED']
+    awaitScalar('select status from booking.booking where reservation_order_id = ?', reservationOrderId, 'CONFIRMED')
+    scalar('select count(*) from booking.booking where reservation_order_id = ?', reservationOrderId) == '1'
+
+    cleanup:
+    releaseLock(bookingTableLock)
+    environment.restartBookingService()
   }
 
   def "pagamento recusado cancela a reserva e fecha a timeline em PAYMENT_FAILED"() {
@@ -186,6 +227,69 @@ class SagaIT extends Specification {
 
   private String scalar(String sql, String parameter) {
     withSql { Sql db -> db.firstRow(sql, [parameter])?.getAt(0)?.toString() }
+  }
+
+  private String scalar(String sql) {
+    withSql { Sql db -> db.firstRow(sql)?.getAt(0)?.toString() }
+  }
+
+  /**
+   * Segura um lock exclusivo na tabela de reservas do {@code booking-service}, numa conexão que
+   * fica aberta e sem commit. Qualquer consulta do serviço àquela tabela espera por ele, e é isso
+   * que o prende no meio da transação do listener. O dono do container pode travar a tabela de
+   * outro schema; o usuário do serviço, não.
+   */
+  private Connection lockBookingTable() {
+    def connection = environment.openConnection()
+    connection.autoCommit = false
+    new Sql(connection).execute('lock table booking.booking in access exclusive mode')
+    connection
+  }
+
+  private static void releaseLock(Connection lock) {
+    if (lock != null && !lock.closed) {
+      lock.rollback()
+      lock.close()
+    }
+  }
+
+  /**
+   * Espera o banco notar que o {@code booking-service} morreu: sem nenhuma conexão do usuário
+   * dele, a transação que ele deixou aberta já foi desfeita. É o que dá sentido à contagem de
+   * reservas "com o serviço morto" — um serviço ainda vivo, solto do lock, gravaria a reserva
+   * por conta própria, e o teste passaria sem que a mensagem tivesse sido reentregue.
+   */
+  private void awaitNoBookingConnections() {
+    try {
+      new PollingConditions(timeout: 30, delay: 0.25, initialDelay: 0).eventually {
+        assert scalar("select count(*) from pg_stat_activity where usename = 'user_booking_service'") == '0'
+      }
+    }
+    catch (SpockTimeoutError e) {
+      throw new AssertionError(
+        "O banco ainda vê conexões do booking-service 30 s depois do kill.\n${environment.diagnostics()}".toString(),
+        e
+      )
+    }
+  }
+
+  /**
+   * Espera o {@code booking-service} estar parado num lock do banco. Só então a mensagem está
+   * garantidamente em andamento: recebida, sem ack, dentro da transação do listener. Matar antes
+   * disso pegaria a mensagem ainda na fila e o cenário não provaria nada.
+   */
+  private void awaitBookingServiceBlockedOnLock() {
+    try {
+      new PollingConditions(timeout: 60, delay: 0.25, initialDelay: 0).eventually {
+        assert scalar("select count(*) from pg_stat_activity where usename = 'user_booking_service' and wait_event_type = 'Lock'") != '0'
+      }
+    }
+    catch (SpockTimeoutError e) {
+      throw new AssertionError(
+        "O booking-service não parou no lock da tabela de reservas em 60 s: a mensagem não chegou ao listener.\n${environment.diagnostics()}".toString(),
+        e
+      )
+    }
   }
 
   /**

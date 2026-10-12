@@ -7,6 +7,7 @@ import com.hotel.booking.system.commons.core.domain.event.PaymentFailedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentResponseEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingPaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingPaymentFailedEvent;
+import com.hotel.booking.system.commons.core.domain.exception.UnsupportedEventTypeException;
 import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import com.hotel.booking.system.hotel.service.core.ports.api.messaging.PaymentResponseHandler;
@@ -60,9 +61,7 @@ public class PaymentResponseHandlerImpl implements PaymentResponseHandler {
         this.bookingRoomStatusChangedPublisher.publish(bookingRoomPaymentFailedEvent);
         log.info("Booking service notified | reservationOrderId={}", e.getReservationOrderId());
       }
-      default -> throw new IllegalStateException(
-        "Failed on handling sub-type of PaymentResponseEvent: Unknown event"
-      );
+      default -> throw new UnsupportedEventTypeException(PaymentResponseEvent.class, event);
     }
   }
 

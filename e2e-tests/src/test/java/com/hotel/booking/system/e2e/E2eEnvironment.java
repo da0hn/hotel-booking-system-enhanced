@@ -38,6 +38,11 @@ import java.util.stream.Stream;
  * é lido uma vez, no arranque, de {@code FAILURE_CHANCE_PERCENTAGE}. Para aprovar sempre usa-se
  * {@code 0}, para recusar sempre {@code 100} — os dois extremos que não dependem de sorte.
  * Reiniciar não perde mensagens: as filas são duráveis e ficam no broker.</p>
+ *
+ * <p>O {@code booking-service} também pode ser derrubado e subido de novo, mas só pelo cenário que
+ * prova a reentrega de uma mensagem cujo consumidor morreu no meio do processamento. A queda é
+ * sem aviso ({@link ServiceProcess#kill()}), porque o que se quer observar é justamente o que um
+ * encerramento ordenado esconderia: a mensagem sem ack e a transação sem commit.</p>
  */
 final class E2eEnvironment implements AutoCloseable {
 
@@ -69,6 +74,8 @@ final class E2eEnvironment implements AutoCloseable {
 
   private ServiceProcess payment;
 
+  private Map<String, String> shared;
+
   private int paymentFailureChance = -1;
 
   static E2eEnvironment start() {
@@ -95,18 +102,18 @@ final class E2eEnvironment implements AutoCloseable {
   private void startAll() {
     Startables.deepStart(this.database, this.broker).join();
 
-    final var shared = new HashMap<String, String>();
-    shared.put("DB_HOST", this.database.getHost());
-    shared.put("DB_PORT", String.valueOf(this.database.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT)));
-    shared.put("DB_NAME", DATABASE_NAME);
-    shared.put("RABBITMQ_HOST", this.broker.getHost());
-    shared.put("RABBITMQ_PORT", String.valueOf(this.broker.getAmqpPort()));
-    shared.put("RABBITMQ_USERNAME", "root");
-    shared.put("RABBITMQ_PASSWORD", "root");
+    this.shared = new HashMap<>();
+    this.shared.put("DB_HOST", this.database.getHost());
+    this.shared.put("DB_PORT", String.valueOf(this.database.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT)));
+    this.shared.put("DB_NAME", DATABASE_NAME);
+    this.shared.put("RABBITMQ_HOST", this.broker.getHost());
+    this.shared.put("RABBITMQ_PORT", String.valueOf(this.broker.getAmqpPort()));
+    this.shared.put("RABBITMQ_USERNAME", "root");
+    this.shared.put("RABBITMQ_PASSWORD", "root");
 
-    this.hotel = this.service("hotel-service", "/hotel-service", "HOTEL_SERVER_PORT", shared, Map.of());
-    this.booking = this.service("booking-service", "/booking-service", "BOOKING_SERVER_PORT", shared, Map.of());
-    this.customer = this.service("customer-service", "/customer-service", "CUSTOMER_SERVER_PORT", shared, Map.of());
+    this.hotel = this.service("hotel-service", "/hotel-service", "HOTEL_SERVER_PORT", this.shared, Map.of());
+    this.booking = this.bookingService();
+    this.customer = this.service("customer-service", "/customer-service", "CUSTOMER_SERVER_PORT", this.shared, Map.of());
     this.paymentFailureChance = 0;
     this.payment = this.paymentService(0);
 
@@ -127,6 +134,10 @@ final class E2eEnvironment implements AutoCloseable {
     environment.put(portVariable, String.valueOf(port));
     environment.putAll(extra);
     return new ServiceProcess(name, contextPath, port, environment, LOGS);
+  }
+
+  private ServiceProcess bookingService() {
+    return this.service("booking-service", "/booking-service", "BOOKING_SERVER_PORT", this.shared, Map.of());
   }
 
   private ServiceProcess paymentService(final int failureChance) {
@@ -158,6 +169,28 @@ final class E2eEnvironment implements AutoCloseable {
     this.payment.start();
     this.payment.awaitHealthy(STARTUP_TIMEOUT);
     this.paymentFailureChance = failureChance;
+  }
+
+  /**
+   * Derruba o {@code booking-service} sem aviso, como uma queda do processo. Qualquer mensagem
+   * que ele tinha em andamento fica sem ack, e a transação aberta nunca recebe o commit.
+   */
+  void killBookingService() {
+    this.booking.kill();
+  }
+
+  /**
+   * Sobe o {@code booking-service} de novo, se ele não estiver no ar. É idempotente de propósito:
+   * o teste que o derruba a chama também no {@code cleanup}, para que uma falha no meio do cenário
+   * não deixe o serviço fora para os cenários seguintes.
+   */
+  void restartBookingService() {
+    if (this.booking.isRunning()) {
+      return;
+    }
+    this.booking = this.bookingService();
+    this.booking.start();
+    this.booking.awaitHealthy(STARTUP_TIMEOUT);
   }
 
   String hotelUrl() {

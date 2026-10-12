@@ -109,9 +109,27 @@ As três exchanges `direct`, as seis routing keys e as seis filas, com quem publ
 
 ![Topologia de filas do RabbitMQ](docs/diagrams/04-queues.jpg)
 
-As filas são declaradas apenas como `new Queue(nome, true)` — duráveis e nada além disso. **Sem
-dead-letter exchange, sem TTL, sem retry com backoff**: uma exceção dentro de um listener devolve a
-mensagem ao início da fila e ela é reentregue em laço, bloqueando as mensagens seguintes.
+O diagrama mostra só o caminho feliz das seis filas. Cada uma delas também tem uma **dead-letter queue**
+`<fila>.dlq`, ligada à exchange `exchange.dead-letter` (tabela da seção 2.3), e um listener que falha não
+devolve mais a mensagem ao início da fila:
+
+* **Retry com backoff exponencial.** O consumidor tenta no máximo **3 vezes** (a primeira e mais duas
+  retentativas), esperando cerca de 1s e depois cerca de 2s, com teto de 10s entre tentativas
+  (`spring.rabbitmq.listener.simple.retry.*` no `application.yml` de cada serviço).
+* **Jitter nas esperas.** Cada espera é sorteada com até 500ms de variação, e a variação cresce junto com o
+  multiplicador, então a primeira espera fica entre 1s e 1,5s e a segunda entre 1s e 3s. Isso impede que
+  várias instâncias, falhando pelo mesmo motivo, voltem todas no mesmo instante. A chave é
+  `app.rabbitmq.retry.jitter`, porque o Spring Boot 4.1 não tem uma para isso; sem ela a espera é exata.
+* **Erro determinístico vai direto à DLQ.** JSON malformado, classe de evento inexistente, pacote fora do
+  `TrustedEventPackages` e subtipo de evento que o `switch` do handler não conhece não têm como dar certo
+  na segunda tentativa, então não são retentados.
+* **A DLQ guarda o motivo.** A mensagem chega íntegra, com o corpo original, e com os headers
+  `x-exception-message`, `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Para
+  inspecionar, abra a fila `<fila>.dlq` no painel do RabbitMQ (<http://localhost:15672>, `root`/`root`).
+
+Durante o backoff a thread do consumidor fica ocupada: uma mensagem que falha por erro transitório segura a
+fila por 2 a 4,5 segundos (a soma das duas esperas, com o jitter) antes de ir para a DLQ. Não há reprocessamento automático a partir da DLQ — quem
+decide se a mensagem volta para a fila de origem é uma pessoa.
 
 O contrato de serialização também merece atenção: o tipo concreto do evento viaja no header `__TypeId__`
 com o **nome completo da classe Java**. É o que permite o `switch` por subtipo nos handlers — e também
@@ -235,6 +253,18 @@ do PostgreSQL — e `IsolacaoEntreSchemasIT`, no `hotel-service`, prova isso a c
 |     exchange.payment      |    routing-key.payment-confirmation     |    `payment-confirmation`     |
 | exchange.customer-booking |   routing-key.customer-booking-update   |   `customer-booking-update`   |
 
+Cada fila de negócio acima tem a sua dead-letter queue, todas na mesma exchange `direct`
+`exchange.dead-letter`, com a routing key igual ao nome da DLQ:
+
+|       Exchange       |            Routing Key            |                DLQ                |
+|:--------------------:|:---------------------------------:|:---------------------------------:|
+| exchange.dead-letter |    `booking-room-requested.dlq`   |    `booking-room-requested.dlq`   |
+| exchange.dead-letter |  `booking-room-confirmation.dlq`  |  `booking-room-confirmation.dlq`  |
+| exchange.dead-letter | `booking-room-status-changed.dlq` | `booking-room-status-changed.dlq` |
+| exchange.dead-letter |       `payment-request.dlq`       |       `payment-request.dlq`       |
+| exchange.dead-letter |     `payment-confirmation.dlq`    |     `payment-confirmation.dlq`    |
+| exchange.dead-letter |   `customer-booking-update.dlq`   |   `customer-booking-update.dlq`   |
+
 ## 2.4. Microsserviços
 
 |  Microsserviço   | Porta Padrão |            API URL            |
@@ -322,6 +352,24 @@ docker volume create --name=hotel-booking-system-db-volume --driver local --opt 
 ```sh
 docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d
 ```
+
+* **Ao atualizar um ambiente que já tinha as filas antigas**, apague as seis filas de negócio antes de subir
+  os serviços novos. As filas passaram a ser declaradas com `x-dead-letter-exchange` e
+  `x-dead-letter-routing-key`, e o RabbitMQ recusa (`PRECONDITION_FAILED`) a redeclaração de uma fila existente
+  com argumentos diferentes. Isso é feito uma única vez e **descarta as mensagens que estiverem em voo**, então
+  vale esperar a saga esvaziar. O contêiner do RabbitMQ do compose não tem volume: recriá-lo
+  (`docker-compose -p hotel-booking-system down` e `up -d`) já zera as filas. Em um broker que você não pode
+  recriar, apague uma a uma:
+
+  ```sh
+  for fila in booking-room-requested booking-room-confirmation booking-room-status-changed \
+              payment-request payment-confirmation customer-booking-update; do
+    docker exec hotel-booking-system-queue rabbitmqctl delete_queue "$fila"
+  done
+  ```
+
+  Num ambiente novo, ou depois de recriar o broker, não há nada a fazer: os serviços declaram filas e DLQs
+  sozinhos no arranque.
 
 * Para derrubar os contêineres execute o comando abaixo:
 

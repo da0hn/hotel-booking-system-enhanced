@@ -18,6 +18,18 @@ spring:
     publisher-returns: true
     template:
       mandatory: true
+    listener:
+      simple:
+        # Sem isto uma rejeição devolve a mensagem ao início da fila em vez de levá-la à DLQ.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          # Retentativas depois da primeira: 2 são 3 tentativas ao todo. O Boot 4 não tem mais
+          # `max-attempts` e ignora em silêncio uma chave que não conhece.
+          max-retries: 2
+          initial-interval: 1000ms
+          multiplier: 2.0
+          max-interval: 10000ms
   datasource:
     driver-class-name: org.postgresql.Driver
     # O `currentSchema` existe porque nem tudo passa pelo `default_schema` do Hibernate: uma
@@ -63,6 +75,10 @@ management:
 
 app:
   rabbitmq:
+    # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
+    # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.
+    retry:
+      jitter: 500ms
     exchange:
       booking-room: exchange.booking-room
     routing-key:

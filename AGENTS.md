@@ -127,11 +127,12 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 
 Hoje há dois. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
 dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
-bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
-(`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
-`CANCELED`). É a rede de quem mexe no contrato de eventos, na fronteira transacional ou na
-regra de disponibilidade: um evento movido de pacote, um pacote fora do
-`TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
+bancos. Os quatro cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
+(`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio
+da transação (a saga retoma ao reiniciar, com uma única reserva) e pagamento recusado
+(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
+fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
+fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
 O outro, o `ActuatorExposureIT`, não toca na saga: bate nos quatro serviços e confere o que o
@@ -168,10 +169,17 @@ O que não se deduz do código:
   responde que não encontra o projeto `e2e-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
   `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
-  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos dois
+  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos três
   primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
-  quarto, e se o primeiro falhar os outros dois ainda dizem se o resto da saga funciona. O
-  custo é que uma saga quebrada leva ~6 min para falhar (3 cenários × 90 s de espera).
+  quarto, e se o primeiro falhar os outros ainda dizem se o resto da saga funciona. O
+  custo é que uma saga quebrada leva ~6 min para falhar (4 cenários × 90 s de espera).
+- **A morte do consumidor se provoca com um lock, não com cronometragem.** O cenário do
+  `booking-service` morto trava `booking.booking` com `lock table ... access exclusive` numa
+  conexão do dono do container e espera, em `pg_stat_activity`, o serviço parar num `Lock`:
+  só então a mensagem está recebida, sem ack e dentro da transação, e o `kill` é seguro. O
+  `ServiceProcess.kill()` encerra sem aviso (`destroyForcibly`); o `stop()` pede o
+  encerramento e espera. A janela entre o commit e o ack, que repetiria o efeito, não tem
+  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` e depende da #7.
 - **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
   `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
   `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
@@ -204,12 +212,12 @@ O workflow `.github/workflows/build.yml` roda `mvn verify` no reactor inteiro e 
 no GHCR só o que mudou, com labels OCI de proveniência. `commons` não vira imagem: é
 gatilho de reconstrução dos quatro. O que sai do build depende de onde o commit caiu:
 
-| Gatilho | Roda | Publica |
-|---|---|---|
-| `pull_request` (qualquer origem) | `mvn verify` | — |
-| push em `develop` | `mvn verify` | — |
+| Gatilho                                   | Roda                                | Publica                                     |
+|-------------------------------------------|-------------------------------------|---------------------------------------------|
+| `pull_request` (qualquer origem)          | `mvn verify`                        | —                                           |
+| push em `develop`                         | `mvn verify`                        | —                                           |
 | push em `release/X.Y.Z` ou `hotfix/X.Y.Z` | bump do `<revision>` + `mvn verify` | `X.Y.Z-RC.<run_number>` e `X.Y.Z-RC-latest` |
-| push em `master` | `mvn verify` + `git tag X.Y.Z` | `X.Y.Z-<run_number>` e `X.Y.Z-latest` |
+| push em `master`                          | `mvn verify` + `git tag X.Y.Z`      | `X.Y.Z-<run_number>` e `X.Y.Z-latest`       |
 
 A tag imutável (`-<run_number>`) é a que se cita num diagnóstico: ela responde qual
 imagem está rodando no homelab. A móvel (`-latest`) existe só para quem não quer
@@ -284,6 +292,12 @@ primeira é **deliberada**: ela registra o desenho de três bancos separados que
 desfez. Não a regenere, não a "atualize" e não a apague — o que ela documenta é justamente
 o estado que não existe mais. Quando uma mudança estrutural merecer o mesmo tratamento, o
 par segue esse nome; nos outros casos o diagrama é editado no lugar.
+
+O `07-mensagem-venenosa-antes-depois.gif` é a outra exceção: não tem `.excalidraw`, é a
+gravação do simulador do artefato "Mensagem Venenosa" (um listener que falha, antes e depois
+da #6, em três cenários) e o próprio `.gif` é o que se versiona. As esperas aparecem exatas
+(1 s e 2 s, sem o jitter) e a DLQ usa os nomes atuais das filas. Ele envelhece sem acusar
+quando o desenho do retry ou o nome das filas mudar: regrave-o ou apague-o na mesma mudança.
 
 ## Arquitetura
 
@@ -433,13 +447,16 @@ handler correspondente no `hotel-service`.
   evento no `commons` quebra a comunicação entre serviços em versões diferentes** —
   mensagens já na fila deixam de ser desserializáveis.
 - O FQCN que chega no `__TypeId__` só é instanciado se o **pacote** dele estiver em
-  `TrustedEventPackages` (no `commons`), que os quatro `RabbitMQConfiguration` passam ao
-  converter. O `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote
-  por padrão; o sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
+  `TrustedEventPackages` (no `commons`), que o `EventMessageConverter` (também no
+  `commons`) aplica e que os quatro `RabbitMQConfiguration` instanciam. O
+  `Jackson2JsonMessageConverter` que veio antes confiava em qualquer pacote por padrão; o
+  sucessor confia apenas em `java.util` e `java.lang`, e recusa o resto com
   `IllegalArgumentException` **no listener**. A falha não aparece no arranque: os quatro
   serviços sobem saudáveis, o `POST /hotel/booking` responde 200, e a saga simplesmente
   não avança. O casamento é por igualdade de pacote, não por prefixo — **um subpacote novo
-  de evento precisa entrar naquela lista**.
+  de evento precisa entrar naquela lista**. `UnsupportedEventTypeException` mora em
+  `core/domain/exception/` de propósito: dentro do pacote de eventos ela seria varrida pelo
+  `EventContractTest` e teria de constar em `TrustedEventPackages`.
 - O Jackson só constrói uma classe se enxergar **um** creator. Com um construtor público
   único ele o usa sozinho, sem configuração nenhuma; com dois candidatos ele não desempata
   e recusa a mensagem. O `@SuperBuilder` cria exatamente esse segundo candidato — o
@@ -451,7 +468,7 @@ handler correspondente no `hotel-service`.
   A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
   o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
   `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
-- `ContratoDeEventosTest`, no `commons`, varre o pacote e prova que cada classe concreta de
+- `EventContractTest`, no `commons`, varre o pacote e prova que cada classe concreta de
   evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
   ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
   saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
@@ -468,12 +485,75 @@ handler correspondente no `hotel-service`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
-- A exceção sobe pelo listener e desfaz a transação, mas a mensagem volta à fila. Até a #6
-  (DLQ e retry com backoff) isso pode virar um loop de reentrega, e até a #7 (idempotência) uma
-  reentrega repete o efeito já gravado.
+- A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
+  loop de reentrega, mas até a #7 (idempotência) uma reentrega repete o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+### Falha no consumidor: retry e DLQ
+
+Uma exceção no listener não devolve mais a mensagem ao início da fila. O desenho vive em
+`commons/infrastructure/messaging/` e cada `RabbitMQConfiguration` o importa
+(`DeadLetterRetryConfiguration`):
+
+- **Toda fila de negócio nasce por `DeadLetterTopology.queue(...)`**, nunca por
+  `new Queue(...)`. Ela declara `x-dead-letter-exchange` e `x-dead-letter-routing-key`, e o
+  `Declarables` do serviço cria o DLX global `exchange.dead-letter` e a `<fila>.dlq`. Cada
+  serviço redeclara as filas que não consome (para publicar nelas), então os argumentos
+  precisam sair do **mesmo helper**: dois serviços declarando a mesma fila com argumentos
+  diferentes dão `PRECONDITION_FAILED` no segundo a subir.
+- **Os argumentos de uma fila existente não mudam.** O broker recusa a redeclaração de uma
+  fila com `x-dead-letter-*` diferente dos que ela já tem (`PRECONDITION_FAILED`); o remédio
+  é apagar a fila antes, e as mensagens em voo se perdem. Por isso o README documenta a
+  remoção das seis filas no deploy que introduziu as DLQs.
+- **Retry sem estado, com backoff exponencial**: `max-retries: 2` (três tentativas ao todo),
+  1s → 2s, teto de 10s, em `spring.rabbitmq.listener.simple.retry.*`. O Boot 4 **não tem
+  `max-attempts`** e ignora em silêncio chave que não conhece — o
+  `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real e prova que o
+  binding pegou. Cada tentativa roda numa transação própria (o interceptor envolve o
+  listener por fora), e a thread do consumidor fica bloqueada durante o backoff: uma
+  mensagem venenosa segura a fila por 2 a 4,5s.
+- **O jitter tem chave própria, `app.rabbitmq.retry.jitter`.** O Boot 4.1 não expõe jitter
+  em `spring.rabbitmq.listener.simple.retry.*`, embora o `RetryPolicySettings` o suporte, e
+  uma chave desconhecida sob esse prefixo seria ignorada em silêncio. Quem a lê é o
+  `deadLetterRetrySettingsCustomizer` (`DeadLetterRetryConfiguration.JITTER_PROPERTY`). Cada
+  espera sai sorteada entre `intervalo - jitter` e `intervalo + jitter`, sem ficar abaixo do
+  intervalo inicial nem acima do teto, e o multiplicador age sobre o jitter também: com
+  500ms, a primeira espera fica em 1–1,5s e a segunda em 1–3s. Sem a chave não há jitter.
+- **Esgotadas as tentativas**, o `RepublishMessageRecoverer` publica a mensagem no DLX com a
+  routing key `<fila>.dlq`, preservando o corpo e acrescentando `x-exception-message`,
+  `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Os argumentos
+  de DLX na fila são a rede de segurança para uma rejeição que não passe pelo recoverer —
+  daí o `default-requeue-rejected: false`.
+- **Erro determinístico não é retentado.** O `exceptionPredicate` percorre a cadeia de
+  causas e trata como definitiva a que contenha `MessageConversionException` (JSON
+  malformado, classe inexistente, **pacote fora do `TrustedEventPackages`**) ou
+  `UnsupportedEventTypeException` (subtipo de evento sem ramo no `switch`). A primeira é
+  fabricada pelo `EventMessageConverter`, que traduz o `IllegalArgumentException` cru do
+  Jackson; sem ele, tipo não confiável seria retentado três vezes sem chance de dar certo.
+- O `default ->` dos handlers do `hotel-service` é **inalcançável hoje**: as hierarquias são
+  `sealed` e os `case` as esgotam. Nenhum teste o exercita (o Mockito não mocka classe
+  sealed). Ele existe para o dia em que um subtipo novo entrar na hierarquia e ninguém
+  lembrar do `switch`.
+- O que depende do broker é provado pelo `DeadLetterRetryIT` (`commons`), que sobe um
+  RabbitMQ real por Testcontainers: o que se quer saber é se a mensagem chega à DLQ com os
+  headers certos, e um broker simulado não responde isso.
+- **Morte do processo no meio do consumo não passa pelo retry nem pela DLQ.** O ack é
+  automático (nenhum `application.yml` configura `acknowledge-mode`): só sai depois que o
+  listener retorna. Sem ack, o broker devolve a mensagem à fila marcada como reentrega, e o
+  contador de tentativas, que vive na memória do processo, recomeça do zero. O lado seguro está
+  provado em dois níveis: o `DeadLetterRetryIT` mata um consumidor sem ack e confere a
+  reentrega fora da DLQ, e o `SagaIT` derruba o `booking-service` com `kill` dentro da
+  transação e confere que a saga retoma com uma única reserva. O lado inseguro — morrer depois
+  do commit e antes do ack — repete o efeito, e o `DeadLetterRetryIT` o fixa de propósito:
+  deduplicar é papel do consumidor (#7), e um dia que a deduplicação morar no `commons` esse
+  teste deve ser invertido.
+- **Desligamento gracioso (SIGTERM) não está configurado nem provado (#41).** Nenhum
+  `application.yml` define o prazo de desligamento; vale o padrão do container (5 s), que o
+  Boot 4.1 não expõe. Lido no código do Spring AMQP, sem teste: passado o prazo, o container
+  interrompe a thread, e a interrupção na espera do retry vira "retry esgotado" — o
+  recoverer manda a mensagem para a DLQ e o container a confirma, em vez de devolvê-la à fila.
 
 ### Actuator
 
