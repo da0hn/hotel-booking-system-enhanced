@@ -167,4 +167,22 @@
         </plugins>
     </build>
 
+    <profiles>
+        <!-- O `e2e-tests` fica fora do reactor padrão por decisão do mantenedor: ele sobe
+             quatro JVMs, PostgreSQL e RabbitMQ. No CI o `SagaIT`, o primeiro teste do módulo,
+             custou ~1,5 min sobre o reactor de ~1,5 min (medido em out/2026); na máquina
+             local o par é bem mais lento. Quem o quer pede o profile (`-Pe2e`); o workflow
+             `e2e.yml` faz isso por disparo manual ou pela label `e2e` num Pull Request.
+
+             O preço é que o `mvn verify` comum deixa de provar a saga. Por isso o comando
+             completo está no AGENTS.md, e quem mexe no contrato de eventos, na fronteira
+             transacional ou na regra de disponibilidade deve rodá-lo antes de abrir o PR. -->
+        <profile>
+            <id>e2e</id>
+            <modules>
+                <module>e2e-tests</module>
+            </modules>
+        </profile>
+    </profiles>
+
 </project>

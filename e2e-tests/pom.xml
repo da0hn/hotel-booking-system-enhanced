@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.hotel.booking.system</groupId>
+        <artifactId>hotel-booking-system</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>e2e-tests</artifactId>
+    <name>e2e-tests</name>
+    <description>Testes de integração ponta a ponta: sobem os quatro serviços e exercitam o sistema como um todo</description>
+
+    <properties>
+        <!-- O Spock 2.5 foi compilado contra o JUnit Platform 1.14 e roda aqui sobre o 6.0.3 que o
+             BOM do Spring Boot impõe; a combinação foi provada com o Groovy 5.0.8 no JDK 25. -->
+        <spock.version>2.5-groovy-5.0</spock.version>
+    </properties>
+
+    <dependencies>
+        <!-- Estas quatro dependências não trazem classe nenhuma: o tipo `pom` e a exclusão de
+             tudo o que vem por transitividade existem só para o reator saber que este módulo
+             vem depois dos serviços. O teste não os usa como biblioteca — ele sobe cada um
+             pelo jar executável que o `package` deixou em `<servico>/target`, e isso exige
+             que o `package` deles já tenha rodado. Só a ordem em `<modules>` não bastaria:
+             ela não vale com `-T`, nem com `-pl e2e-tests -am`. -->
+        <dependency>
+            <groupId>com.hotel.booking.system</groupId>
+            <artifactId>hotel-service</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.hotel.booking.system</groupId>
+            <artifactId>booking-service</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.hotel.booking.system</groupId>
+            <artifactId>payment-service</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.hotel.booking.system</groupId>
+            <artifactId>customer-service</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Os testes são `Specification`s do Spock. O Groovy (5.0.8) vem do BOM do Spring Boot,
+             que sobrescreve o 5.0.6 que o Spock declara; o Spock em si o BOM não gerencia. O
+             `groovy-json` e o `groovy-sql` são módulos à parte desde o Groovy 4 e substituem o
+             Jackson e o JDBC à mão que o teste em Java usava. -->
+        <dependency>
+            <groupId>org.spockframework</groupId>
+            <artifactId>spock-core</artifactId>
+            <version>${spock.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-json</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-sql</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Compila `src/test/groovy` depois do `testCompile` do Java, então o Groovy enxerga o
+                 `E2eEnvironment` e o `ServiceProcess`, que continuam em `src/test/java`. O failsafe
+                 seleciona pelo nome da classe compilada, então `SagaIT` segue casando com `*IT`. -->
+            <plugin>
+                <groupId>org.codehaus.gmavenplus</groupId>
+                <artifactId>gmavenplus-plugin</artifactId>
+                <version>5.1.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compileTests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- O módulo só tem testes: sem isto o `package` gera um jar vazio e avisa. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <skipIfEmpty>true</skipIfEmpty>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

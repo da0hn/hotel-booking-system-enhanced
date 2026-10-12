@@ -37,6 +37,13 @@ Para qualquer alteração relacionada a uma issue, siga este fluxo:
    refatore mantendo a suíte verde. Não considere a feature concluída sem testes
    automatizados que cubram o comportamento novo e suas regressões relevantes.
 
+6. A issue é considerada concluída quando o PR é mesclado na `develop`, e não quando a
+   mudança chega à `master` numa release. O GitHub só fecha uma issue sozinho pelo `Closes`
+   de um PR para a branch padrão (`master`), então o fechamento aqui é manual: `gh issue
+   close` com um comentário que liste os commits e o PR. Uma issue guarda-chuva com itens
+   ainda sem entrega não fecha por ter tido um PR mesclado: o PR usa `Refs`, e o restante
+   vira issues novas antes de a original ser fechada.
+
 Use worktrees principalmente quando vários subagentes implementarem alterações em paralelo.
 O worktree é apenas o diretório de trabalho; a branch da issue continua sendo obrigatória.
 
@@ -68,6 +75,7 @@ de o erro voltar exatamente com essa cara.
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
+| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
@@ -109,6 +117,76 @@ de código pedisse isso. No PostgreSQL ela depende de três peças que precisam 
 casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` que declara o
 tipo de retorno ao Hibernate, e o `public` no fim do `currentSchema` da URL. Tirar qualquer
 uma quebra a busca; sem o contributor, o serviço nem sobe.
+
+### Testes ponta a ponta (`e2e-tests`)
+
+O módulo `e2e-tests` reúne os testes que sobem o sistema inteiro: PostgreSQL e RabbitMQ pelo
+Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos filhos**. O
+`E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
+`Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
+
+Hoje há um, o `SagaIT`, o único teste que prova que as quatro pontas se entendem. Ele
+dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
+bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
+(`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
+`CANCELED`). É a rede de quem mexe no contrato de eventos, na fronteira transacional ou na
+regra de disponibilidade: um evento movido de pacote, um pacote fora do
+`TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
+saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
+
+**O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
+profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
+min no reactor e ~1,5 min no `SagaIT`, bem mais na máquina local). Quem mexe no que a saga
+protege roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
+workflow `.github/workflows/e2e.yml`: a **label `e2e`** num pull request, que roda a
+partir do branch do PR, e o **`workflow_dispatch`**, cujo botão só aparece depois de o
+arquivo estar na `master`. Falhou, o artefato `e2e-logs` traz o log inteiro de cada serviço.
+
+**Para acrescentar um teste ponta a ponta**, crie outra `Specification` com sufixo `IT` no
+pacote `com.hotel.booking.system.e2e` e suba o ambiente com `E2eEnvironment.start()` em
+`setupSpec()`. O filtro do comando da tabela e do workflow
+(`-Dit.test='com.hotel.booking.system.e2e.**'`) o pega sem mudança. Cada `Specification` sobe
+o próprio ambiente, então agrupe cenários na mesma classe quando o custo do arranque dos
+quatro serviços pesar.
+
+O que não se deduz do código:
+
+- **Processos filhos, e não contextos Spring numa JVM só.** Os quatro `application.yml` têm o
+  mesmo nome e colidem no classpath. `ServiceProcess` executa `java -jar` do jar que o
+  `package` de cada serviço gerou e espera o `/actuator/health`; o log de cada um vai para
+  `e2e-tests/target/e2e-logs/` e a cauda dos quatro é anexada à mensagem quando um cenário
+  estoura o tempo.
+- **Dependências `pom` com `<exclusion>*:*</exclusion>`.** Os jars dos serviços não são
+  biblioteca para o teste: a dependência existe só para criar a aresta no grafo do reactor.
+  Sem ela, `-Pe2e -pl e2e-tests -am` não traria os quatro serviços e uma build paralela
+  (`-T`) poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess`
+  falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Pe2e`, o Maven
+  responde que não encontra o projeto `e2e-tests`.
+- **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
+  `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
+  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos dois
+  primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
+  quarto, e se o primeiro falhar os outros dois ainda dizem se o resto da saga funciona. O
+  custo é que uma saga quebrada leva ~6 min para falhar (3 cenários × 90 s de espera).
+- **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
+  `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
+  `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
+  Spring Boot gerencia o Groovy (5.0.8) mas não o Spock, cuja versão está em `spock.version`
+  no `pom.xml` do módulo. O Spock 2.5 foi compilado contra o JUnit Platform 1.14 e roda aqui
+  sobre o 6.0.3 do BOM, no JDK 25. Dentro de `PollingConditions.eventually { }` o Spock trata
+  **cada comando como condição**, até em método auxiliar: uma atribuição solta quebra a
+  compilação ("Expected a condition, but found an assignment"). Por isso `awaitStatus` guarda
+  o último estado visto numa atribuição dentro do `assert`.
+- **O quarto do cenário 2 é semeado pelo teste.** Nenhum quarto das migrations de seed
+  permite esgotar o estoque com uma reserva. Hotel e booking guardam réplicas separadas do
+  quarto (issue #4), então a semente grava nos dois bancos.
+
+`VerifyRoomAvailabilityTest` (booking) segue outra política: quatro métodos estão `@Disabled`
+porque descrevem comportamento **correto** que o código de hoje não tem (issue #5: o `==` no
+lugar de `>=`, a contagem de linhas no lugar de `quantity` e o pedido que ignora a
+quantidade). O CI roda `mvn verify` em todo pull request e não pode ficar vermelho, mas o
+teste não pode ser apagado: ao corrigir a issue #5, remova o `@Disabled` — eles são a
+especificação da correção.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
@@ -214,6 +292,9 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
 - `payment-service` (8003) — pagamento **fake**; sem banco; falha por sorteio
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
+- `e2e-tests` — só testes de ponta a ponta, em Spock: sobem os quatro serviços e exercitam o
+  sistema inteiro. Hoje só o `SagaIT`, que prova a saga. Não é serviço, não vira imagem e nada
+  depende dele. Só existe no reactor com o profile `e2e` (ver "Testes ponta a ponta").
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
