@@ -293,6 +293,12 @@ desfez. Não a regenere, não a "atualize" e não a apague — o que ela documen
 o estado que não existe mais. Quando uma mudança estrutural merecer o mesmo tratamento, o
 par segue esse nome; nos outros casos o diagrama é editado no lugar.
 
+O `07-mensagem-venenosa-antes-depois.gif` é a outra exceção: não tem `.excalidraw`, é a
+gravação do simulador do artefato "Mensagem Venenosa" (um listener que falha, antes e depois
+da #6, em três cenários) e o próprio `.gif` é o que se versiona. As esperas aparecem exatas
+(1 s e 2 s, sem o jitter) e a DLQ usa os nomes atuais das filas. Ele envelhece sem acusar
+quando o desenho do retry ou o nome das filas mudar: regrave-o ou apague-o na mesma mudança.
+
 ## Arquitetura
 
 ### Módulos
