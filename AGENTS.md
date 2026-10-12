@@ -398,7 +398,11 @@ Os outros três serviços só reagem ao que chega na sua fila.
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
    capacidade contra o banco do hotel, gera um `reservationOrderId` e publica
    `BookingRoomRequestedEvent` (para o booking) + `CustomerBookingInitiatedEvent` (para o
-   customer). Responde 200 imediatamente com o `reservationOrderId` — o resto é assíncrono.
+   customer). Responde 200 com o `reservationOrderId` assim que o broker confirma as duas
+   publicações — o resto é assíncrono. Se uma publicação falha, o `HotelExceptionHandler`
+   responde 503 com `hotel.booking.temporarily.unavailable`. As duas publicações **não são
+   atômicas**: se a segunda falha, o booking já recebeu a primeira. Só o Outbox (#35) fecha
+   essa janela.
 2. `booking-service` consome, valida disponibilidade no período (`VerifyRoomAvailability`),
    grava a reserva como `PENDING` e responde `BookingRoomPendingEvent` ou
    `BookingRoomFailedEvent`.
@@ -448,6 +452,21 @@ handler correspondente no `hotel-service`.
   ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
   saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
   cobertura sozinho; não há lista para manter.
+- **Publisher falha alto; nunca engole a exceção.** Todo publisher estende
+  `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que envia com
+  `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que nenhuma fila
+  recebeu — como falha, lançando `MessagePublishException`. Um `catch` que só loga recria o
+  defeito da #3: a saga trava sem sinal e o `POST` responde 200 com o broker fora. A regra
+  `publishersExtendAbstractRabbitPublisher` do ArchUnit de cada serviço recusa publisher que
+  não estenda a base.
+- A garantia de entrega depende de **três chaves no `application.yml` de quem publica**:
+  `publisher-confirm-type: correlated`, `publisher-returns: true` e `template.mandatory: true`.
+  Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
+  a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
+  que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
+- A exceção sobe pelo listener e desfaz a transação, mas a mensagem volta à fila. Até a #6
+  (DLQ e retry com backoff) isso pode virar um loop de reentrega, e até a #7 (idempotência) uma
+  reentrega repete o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.

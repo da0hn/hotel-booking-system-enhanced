@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingInitiatedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
@@ -496,6 +497,85 @@ class BookingRoomRequestUseCaseTest {
         event -> Assertions.assertThat(event.getRooms()).hasSize(TOTAL_CAPACITY_ROOMS),
         event -> Assertions.assertThat(event.getReservationOrderId()).isNotNull()
       );
+  }
+
+  /**
+   * Se o pedido ao booking não saiu, nada mais sai e o chamador recebe o erro: não sobra
+   * reserva órfã em nenhum dos dois lados.
+   */
+  @Test
+  @DisplayName("Should abort without notifying the customer when BookingRoomRequestedEvent publish fails")
+  void test9() {
+    this.stubAvailableRooms();
+    final var failure = new MessagePublishException("broker unavailable");
+    Mockito.doThrow(failure)
+      .when(this.bookingRoomRequestedPublisher)
+      .publish(Mockito.any(BookingRoomRequestedEvent.class));
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(this.validInput()))
+      .isSameAs(failure);
+
+    Mockito.verify(this.customerBookingRoomUpdatePublisher, Mockito.never())
+      .publish(Mockito.any(CustomerBookingInitiatedEvent.class));
+  }
+
+  /**
+   * Documenta a janela que só o Outbox fecha: os dois publishes não são atômicos. Quando o
+   * segundo falha, o pedido ao booking já saiu e a saga segue sem o registro inicial no
+   * customer. O chamador, ao menos, recebe o erro em vez de um 200 enganoso.
+   */
+  @Test
+  @DisplayName("Should propagate the failure when CustomerBookingInitiatedEvent publish fails after the request was sent")
+  void test10() {
+    this.stubAvailableRooms();
+    final var failure = new MessagePublishException("broker unavailable");
+    Mockito.doThrow(failure)
+      .when(this.customerBookingRoomUpdatePublisher)
+      .publish(Mockito.any(CustomerBookingInitiatedEvent.class));
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(this.validInput()))
+      .isSameAs(failure);
+
+    Mockito.verify(this.bookingRoomRequestedPublisher, Mockito.times(1))
+      .publish(Mockito.any(BookingRoomRequestedEvent.class));
+  }
+
+  private void stubAvailableRooms() {
+    Mockito.doReturn(Rooms.of(
+        Room.builder()
+          .id(RoomId.of(ROOM_ID_1))
+          .capacity(TOTAL_CAPACITY_ROOMS)
+          .quantity(TOTAL_QUANTITY_ROOMS)
+          .currentPrice(CURRENT_PRICE_250)
+          .build(),
+        Room.builder()
+          .id(RoomId.of(ROOM_ID_2))
+          .capacity(TOTAL_CAPACITY_ROOMS)
+          .quantity(TOTAL_QUANTITY_ROOMS)
+          .currentPrice(CURRENT_PRICE_500)
+          .build()
+      ))
+      .when(this.hotelRepository)
+      .findAllRoomsById(Mockito.any());
+  }
+
+  private BookingRoomInput validInput() {
+    return BookingRoomInput.builder()
+      .customerId(CUSTOMER_ID)
+      .checkIn(LocalDate.now().minusDays(10))
+      .checkOut(LocalDate.now().plusDays(5))
+      .guests(TOTAL_GUESTS)
+      .rooms(Set.of(
+        BookRoomItemInput.builder()
+          .roomId(ROOM_ID_1)
+          .roomQuantity(1)
+          .build(),
+        BookRoomItemInput.builder()
+          .roomId(ROOM_ID_2)
+          .roomQuantity(1)
+          .build()
+      ))
+      .build();
   }
 
 }

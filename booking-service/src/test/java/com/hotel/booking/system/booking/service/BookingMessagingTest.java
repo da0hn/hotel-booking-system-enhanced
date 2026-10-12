@@ -5,11 +5,13 @@ import com.hotel.booking.system.booking.service.core.ports.api.messaging.*;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.listener.*;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.*;
+import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
@@ -45,19 +47,28 @@ class BookingMessagingTest {
     verify(changeHandler).handle(change);
   }
 
-  /** O publisher atual absorve a falha de transporte; o teste registra essa lacuna. */
+  /**
+   * O publisher só retorna depois que o broker confirma a mensagem, e a falha de transporte
+   * sobe como {@link MessagePublishException}: dentro do listener ela provoca o rollback.
+   */
   @Test
-  @DisplayName("publica na rota configurada e absorve falha do broker")
-  void publisherUsaRotaConfiguradaEAbsorveFalhaDoBroker() {
+  @DisplayName("publica na rota configurada e propaga falha do broker")
+  void publisherUsaRotaConfiguradaEPropagaFalhaDoBroker() {
     final var template = mock(RabbitTemplate.class);
     final var publisher = new BookingRoomResponsePublisherImpl(template,
       new RoutingKeyProperties("request", "response", "change"), new ExchangeProperties("booking"));
     final var event = new BookingRoomConfirmedEvent(UUID.randomUUID().toString(), UUID.randomUUID().toString(), CustomerReservationStatus.RESERVED);
+    doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
+      .complete(new CorrelationData.Confirm(true, null)))
+      .when(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
     publisher.publish(event);
-    verify(template).convertAndSend("booking", "response", event);
-    doThrow(new IllegalStateException("broker offline")).when(template).convertAndSend("booking", "response", event);
-    assertThatCode(() -> publisher.publish(event)).doesNotThrowAnyException();
-    verify(template, times(2)).convertAndSend("booking", "response", event);
+    verify(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
+    final var failure = new IllegalStateException("broker offline");
+    doThrow(failure).when(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
+    assertThatThrownBy(() -> publisher.publish(event))
+      .isInstanceOf(MessagePublishException.class)
+      .hasCause(failure);
+    verify(template, times(2)).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
   }
 
   @Test

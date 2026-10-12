@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.infrastructure.messaging;
 
+import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.event.customer.*;
 import com.hotel.booking.system.hotel.service.core.ports.api.messaging.*;
@@ -9,6 +10,7 @@ import com.hotel.booking.system.hotel.service.infrastructure.messaging.publisher
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.*;
@@ -48,13 +50,22 @@ class MessagingAdaptersTest {
     this.verifyPublisher(event, new PaymentRequestedPublisherImpl(this.rabbit, this.routes, this.exchanges)::publish, "payment", "charge");
   }
 
-  /** Registra o contrato atual: a falha de transporte é absorvida, sem retry nem propagação. */
+  /**
+   * Registra o contrato: o evento só é dado como publicado depois que o broker confirma, e a
+   * falha de transporte sobe como {@link MessagePublishException} em vez de ser absorvida.
+   */
   private <T> void verifyPublisher(final T event, final Consumer<T> publisher, final String exchange, final String route) {
+    doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
+      .complete(new CorrelationData.Confirm(true, null)))
+      .when(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
     publisher.accept(event);
-    verify(this.rabbit).convertAndSend(exchange, route, event);
-    doThrow(new AmqpException("broker unavailable")).when(this.rabbit).convertAndSend(exchange, route, event);
-    assertThatCode(() -> publisher.accept(event)).doesNotThrowAnyException();
-    verify(this.rabbit, times(2)).convertAndSend(exchange, route, event);
+    verify(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
+    final var failure = new AmqpException("broker unavailable");
+    doThrow(failure).when(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
+    assertThatThrownBy(() -> publisher.accept(event))
+      .isInstanceOf(MessagePublishException.class)
+      .hasCause(failure);
+    verify(this.rabbit, times(2)).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
     verifyNoMoreInteractions(this.rabbit);
   }
 
