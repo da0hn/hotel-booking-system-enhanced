@@ -68,6 +68,7 @@ de o erro voltar exatamente com essa cara.
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
+| Só a saga ponta a ponta | `mvn -B verify -pl saga-tests -am -Dtest=NoSuchTest -Dit.test=SagaIT -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
@@ -109,6 +110,44 @@ de código pedisse isso. No PostgreSQL ela depende de três peças que precisam 
 casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` que declara o
 tipo de retorno ao Hibernate, e o `public` no fim do `currentSchema` da URL. Tirar qualquer
 uma quebra a busca; sem o contributor, o serviço nem sobe.
+
+### Saga ponta a ponta (`saga-tests`)
+
+O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele sobe PostgreSQL e
+RabbitMQ pelo Testcontainers, sobe `hotel`, `booking`, `customer` e `payment` **como
+processos filhos** e dispara `POST /hotel/booking` no `hotel-service`, lendo o desfecho no
+`customer-service` e nos bancos. Os três cenários são pagamento aprovado (`RESERVED`),
+último quarto já ocupado (`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado
+(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
+fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
+fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
+saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
+
+O que não se deduz do código:
+
+- **Processos filhos, e não contextos Spring numa JVM só.** Os quatro `application.yml` têm o
+  mesmo nome e colidem no classpath. `ServiceProcess` executa `java -jar` do jar que o
+  `package` de cada serviço gerou e espera o `/actuator/health`; o log de cada um vai para
+  `saga-tests/target/saga-logs/` e a cauda dos quatro é anexada à mensagem quando um cenário
+  estoura o tempo.
+- **Dependências `pom` com `<exclusion>*:*</exclusion>`.** Os jars dos serviços não são
+  biblioteca para o teste: a dependência existe só para criar a aresta no grafo do reactor.
+  Sem ela, `-pl saga-tests -am` não traria os quatro serviços e uma build paralela (`-T`)
+  poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess` falha
+  com "jar não encontrado" quando os `target/` estão vazios.
+- **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
+  `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam em ordem e `usePaymentFailureChance` só
+  reinicia o serviço quando o valor muda: `0` nos dois primeiros, `100` no último.
+- **O quarto do cenário 2 é semeado pelo teste.** Nenhum quarto das migrations de seed
+  permite esgotar o estoque com uma reserva. Hotel e booking guardam réplicas separadas do
+  quarto (issue #4), então a semente grava nos dois bancos.
+
+`VerifyRoomAvailabilityTest` (booking) segue outra política: quatro métodos estão `@Disabled`
+porque descrevem comportamento **correto** que o código de hoje não tem (issue #5: o `==` no
+lugar de `>=`, a contagem de linhas no lugar de `quantity` e o pedido que ignora a
+quantidade). O CI roda `mvn verify` em todo pull request e não pode ficar vermelho, mas o
+teste não pode ser apagado: ao corrigir a issue #5, remova o `@Disabled` — eles são a
+especificação da correção.
 
 **Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
 README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
@@ -214,6 +253,8 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
 - `payment-service` (8003) — pagamento **fake**; sem banco; falha por sorteio
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
+- `saga-tests` — só testes: o `SagaIT`, que sobe os quatro serviços e prova a saga de ponta
+  a ponta. Não é serviço, não vira imagem e nada depende dele.
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
