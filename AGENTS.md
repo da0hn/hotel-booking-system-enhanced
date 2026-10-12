@@ -125,7 +125,7 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 `E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
 `Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
 
-Hoje há um, o `SagaIT`, o único teste que prova que as quatro pontas se entendem. Ele
+Hoje há dois. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
 dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
 bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
 (`RESERVATION_FAILED`, sem gravar a reserva) e pagamento recusado (`PAYMENT_FAILED`, reserva
@@ -133,6 +133,10 @@ bancos. Os três cenários são pagamento aprovado (`RESERVED`), último quarto 
 regra de disponibilidade: um evento movido de pacote, um pacote fora do
 `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
+
+O outro, o `ActuatorExposureIT`, não toca na saga: bate nos quatro serviços e confere o que o
+Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). Por ser uma
+`Specification` à parte, ele paga um segundo arranque do ambiente inteiro.
 
 **O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
 profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
@@ -451,6 +455,32 @@ handler correspondente no `hotel-service`.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+### Actuator
+
+- Cada serviço expõe pela web só `health` e `info`, e o `health` não mostra detalhes
+  (`management.endpoint.health.show-details: never`, explícito). O `include: "*"` anterior
+  entregava `/actuator/env` (variáveis de ambiente, com as senhas do banco e do RabbitMQ),
+  `configprops`, `beans`, `mappings`, `threaddump`, `metrics` e `loggers` a quem alcançasse as
+  portas 8001–8004, e não há Spring Security para barrar (issue #12).
+- **O `heapdump` não vazava nesta versão.** A issue o cita, mas no Spring Boot 4.1.1 ele é
+  `@WebEndpoint(defaultAccess = Access.NONE)`: nem o `*` o expõe, e ele só aparece se alguém
+  ligar `management.endpoint.heapdump.access`. O `ActuatorExposureIT` o mantém na lista de
+  negados como guarda, mas ele já respondia 404 antes da correção.
+- O corpo do `/actuator/health` não é `{"status":"UP"}` puro: o Boot 4 acrescenta
+  `"groups":["liveness","readiness"]`, que só nomeia grupos. O que não pode aparecer é
+  `components`/`details`, e é isso que o e2e confere.
+- **Liberar outro endpoint é uma decisão, não um ajuste.** `metrics` e `prometheus` só entram
+  junto com uma coleta que os justifique — hoje não há registry do Micrometer. Quem liberar
+  um endpoint muda o `ActuatorExposureConfigTest` de cada serviço no mesmo commit; sem isso o
+  `mvn verify` falha. O `ActuatorExposureIT` (e2e) confere o resultado visto de fora.
+- O Actuator vem do `pom.xml` raiz e vale para todos os módulos, então o que decide o que
+  aparece é só a exposição: é por isso que o 404 de `/actuator/env` prova a configuração, e
+  não a ausência do endpoint.
+- O `ServiceProcess` do e2e espera `/actuator/health` com 200 e `"UP"`; restringir a
+  exposição a `health` preserva esse contrato. Mover o Actuator para outra porta
+  (`management.server.port`) ficou de fora da issue #12 de propósito: é uma decisão de
+  deploy, e o e2e e qualquer healthcheck teriam de apontar para a outra porta.
 
 ## Skills do projeto
 
