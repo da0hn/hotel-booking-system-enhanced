@@ -75,7 +75,7 @@ de o erro voltar exatamente com essa cara.
 | Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
 | Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
-| Só a saga ponta a ponta | `mvn -B verify -pl saga-tests -am -Dtest=NoSuchTest -Dit.test=SagaIT -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
+| Só a saga ponta a ponta (profile `saga`) | `mvn -B verify -Psaga -pl saga-tests -am -Dtest=NoSuchTest -Dit.test=SagaIT -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 | Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
@@ -130,6 +130,13 @@ fronteira transacional ou na regra de disponibilidade: um evento movido de pacot
 fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
+**O `mvn verify` comum não roda o `SagaIT`.** O módulo só entra no reactor com o profile
+`saga`, porque ele custa ~2,5 min num build que leva ~9 sem ele. Quem mexe no que a saga
+protege roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
+workflow `.github/workflows/saga.yml`: a **label `saga`** num pull request, que roda a
+partir do branch do PR, e o **`workflow_dispatch`**, cujo botão só aparece depois de o
+arquivo estar na `master`. Falhou, o artefato `saga-logs` traz o log inteiro de cada serviço.
+
 O que não se deduz do código:
 
 - **Processos filhos, e não contextos Spring numa JVM só.** Os quatro `application.yml` têm o
@@ -139,9 +146,10 @@ O que não se deduz do código:
   estoura o tempo.
 - **Dependências `pom` com `<exclusion>*:*</exclusion>`.** Os jars dos serviços não são
   biblioteca para o teste: a dependência existe só para criar a aresta no grafo do reactor.
-  Sem ela, `-pl saga-tests -am` não traria os quatro serviços e uma build paralela (`-T`)
-  poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess` falha
-  com "jar não encontrado" quando os `target/` estão vazios.
+  Sem ela, `-Psaga -pl saga-tests -am` não traria os quatro serviços e uma build paralela
+  (`-T`) poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess`
+  falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Psaga`, o Maven
+  responde que não encontra o projeto `saga-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
   `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam em ordem e `usePaymentFailureChance` só
   reinicia o serviço quando o valor muda: `0` nos dois primeiros, `100` no último.
@@ -261,7 +269,8 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
 - `saga-tests` — só testes: o `SagaIT`, que sobe os quatro serviços e prova a saga de ponta
-  a ponta. Não é serviço, não vira imagem e nada depende dele.
+  a ponta. Não é serviço, não vira imagem e nada depende dele. Só existe no reactor com o
+  profile `saga` (ver "Saga ponta a ponta").
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.

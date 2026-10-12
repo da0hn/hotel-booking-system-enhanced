@@ -1,0 +1,82 @@
+# A saga de reserva ponta a ponta, fora do caminho crítico do `build.yml`.
+#
+# O `SagaIT` sobe PostgreSQL, RabbitMQ e os quatro serviços como processos, e
+# por isso custa ~2,5 min num reactor que sem ele leva ~9. O módulo dele só
+# entra no Maven com o profile `saga`, então o `mvn verify` do `build.yml` não
+# o enxerga. Este workflow é o outro caminho: roda quando alguém pede.
+#
+# Dois gatilhos, e cada um cobre o que o outro não alcança:
+#
+#   label `saga` num PR   ->  roda a partir do branch do PR. É o gatilho que
+#                             funciona antes de este arquivo chegar à `master`.
+#   workflow_dispatch     ->  botão "Run workflow" e `gh workflow run saga.yml`.
+#                             O GitHub só lista o botão para workflows que já
+#                             estão na branch padrão, ou seja, depois da
+#                             primeira release que o contenha.
+#
+# Quem mexe no contrato de eventos, na fronteira transacional ou na regra de
+# disponibilidade deve pedir esta prova antes de mesclar na `develop`: um
+# evento movido de pacote deixa os quatro serviços saudáveis e a saga parada,
+# e nenhum outro teste enxerga isso.
+name: saga
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Rotular de novo, ou disparar de novo, substitui a execução em andamento: o
+# que importa é o veredito do último pedido.
+concurrency:
+  group: saga-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '25'
+
+jobs:
+
+  saga:
+    name: Saga ponta a ponta
+    # `labeled` dispara para QUALQUER label. Sem esta condição, rotular um PR
+    # com `bug` ou `documentation` gastaria os minutos deste job à toa.
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'saga'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      # `-am` constrói os quatro serviços e o `commons` antes do teste, porque o
+      # `SagaIT` executa os jars empacotados. `-Dtest=NoSuchTest` e `-Dit.test`
+      # deixam de fora os testes dos outros módulos: o `provas` do `build.yml`
+      # já os rodou, e repeti-los aqui só gastaria o tempo que este workflow
+      # existe para poupar.
+      - name: Rodar a saga ponta a ponta
+        run: >
+          mvn -B verify -Psaga -pl saga-tests -am
+          -Dtest=NoSuchTest -Dit.test=SagaIT
+          -Dsurefire.failIfNoSpecifiedTests=false
+          -Dfailsafe.failIfNoSpecifiedTests=false
+
+      # Os serviços são processos filhos, então o que explica uma falha está no
+      # log de cada um, e não no relatório do failsafe. A mensagem do teste traz
+      # só a cauda; o arquivo inteiro fica aqui.
+      - name: Anexar os logs dos serviços
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: saga-logs
+          path: |
+            saga-tests/target/saga-logs/
+            saga-tests/target/failsafe-reports/
+          if-no-files-found: ignore
+          retention-days: 7

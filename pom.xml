@@ -10,7 +10,6 @@
         <module>payment-service</module>
         <module>customer-service</module>
         <module>commons</module>
-        <module>saga-tests</module>
     </modules>
 
     <parent>
@@ -167,5 +166,22 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- O `saga-tests` fica fora do reactor padrão de propósito: ele sobe quatro JVMs,
+             PostgreSQL e RabbitMQ, e custa ~2,5 min dos ~9 que o `mvn verify` leva sem ele.
+             Quem o quer pede o profile (`-Psaga`); o workflow `saga.yml` faz isso por
+             disparo manual ou pela label `saga` num Pull Request.
+
+             O preço é que o `mvn verify` comum deixa de provar a saga. Por isso o comando
+             completo está no AGENTS.md, e quem mexe no contrato de eventos, na fronteira
+             transacional ou na regra de disponibilidade deve rodá-lo antes de abrir o PR. -->
+        <profile>
+            <id>saga</id>
+            <modules>
+                <module>saga-tests</module>
+            </modules>
+        </profile>
+    </profiles>
 
 </project>

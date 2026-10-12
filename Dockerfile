@@ -15,9 +15,8 @@ WORKDIR /build
 
 # As dependências entram numa camada própria: elas mudam muito menos que o
 # código, e o cache só é reaproveitado se o estável vier antes do volátil.
-# Os seis `pom.xml` entram porque o Maven precisa do reactor completo para
-# resolver o parent e o agregador — inclusive o do `saga-tests`, que não vira
-# imagem mas está em `<modules>`.
+# Os cinco `pom.xml` entram porque o Maven precisa do reactor completo para
+# resolver o parent e o agregador.
 COPY pom.xml .
 # O `lombok.config` entra aqui, e não com o código: ele decide quais anotações
 # o Lombok gera, então precisa estar no lugar antes da primeira compilação.
@@ -27,7 +26,6 @@ COPY hotel-service/pom.xml hotel-service/
 COPY booking-service/pom.xml booking-service/
 COPY payment-service/pom.xml payment-service/
 COPY customer-service/pom.xml customer-service/
-COPY saga-tests/pom.xml saga-tests/
 RUN mvn -B -q dependency:go-offline -DexcludeArtifactIds=commons
 
 # O `commons` vem antes e sozinho. Nenhum serviço depende de outro serviço,
