@@ -1,5 +1,6 @@
 package com.hotel.booking.system.payment.service;
 
+import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.PaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.PaymentStatus;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.SpringApplication;
 import tools.jackson.databind.DeserializationFeature;
@@ -88,12 +90,19 @@ class PaymentInfrastructureTest {
     final var response = PaymentCompletedEvent.builder().reservationOrderId("order").build();
     final var publisher = new PaymentResponsePublisherImpl(template,
       new RoutingKeyProperties("request", "confirmation"), new ExchangeProperties("exchange"));
+    doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
+      .complete(new CorrelationData.Confirm(true, null)))
+      .when(template).convertAndSend(eq("exchange"), eq("confirmation"), eq(response), any(CorrelationData.class));
     publisher.publish(response);
-    verify(template).convertAndSend("exchange", "confirmation", response);
-    doThrow(new IllegalStateException("broker indisponível")).when(template)
-      .convertAndSend("exchange", "confirmation", response);
-    assertThatCode(() -> publisher.publish(response)).doesNotThrowAnyException();
-    verify(template, times(2)).convertAndSend("exchange", "confirmation", response);
+    verify(template).convertAndSend(eq("exchange"), eq("confirmation"), eq(response), any(CorrelationData.class));
+    final var failure = new IllegalStateException("broker indisponível");
+    doThrow(failure).when(template)
+      .convertAndSend(eq("exchange"), eq("confirmation"), eq(response), any(CorrelationData.class));
+    assertThatThrownBy(() -> publisher.publish(response))
+      .isInstanceOf(MessagePublishException.class)
+      .hasCause(failure);
+    verify(template, times(2))
+      .convertAndSend(eq("exchange"), eq("confirmation"), eq(response), any(CorrelationData.class));
   }
 
   @Test

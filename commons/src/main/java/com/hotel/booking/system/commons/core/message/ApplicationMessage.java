@@ -25,6 +25,7 @@ public final class ApplicationMessage {
   public static final String HOTEL_ROOM_QUANTITY_INVALID = "hotel.room.quantity.must.not.be.zero-or-negative";
   public static final String HOTEL_ROOM_NOT_FOUND = "hotel.room.not.found";
   public static final String HOTEL_BOOKING_GUESTS_EXCEEDED = "hotel.booking.guests.exceeded";
+  public static final String HOTEL_BOOKING_TEMPORARILY_UNAVAILABLE = "hotel.booking.temporarily.unavailable";
   public static final String BOOKING_NOT_NULL = "booking.must.be.not.null";
   public static final String BOOKING_ROOM_NOT_NULL = "booking.room.must.not.be.null";
   public static final String BOOKING_RESERVATION_ORDER_INVALID = "booking.reservation.order.must.not.be.null";

@@ -12,6 +12,12 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:root}
     password: ${RABBITMQ_PASSWORD:root}
+    # O `AbstractRabbitPublisher` espera o confirm de cada envio e trata o return como falha.
+    # Sem estas chaves o broker descarta em silêncio o evento que não encontra fila.
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
   datasource:
     driver-class-name: org.postgresql.Driver
     # O `currentSchema` existe porque nem tudo passa pelo `default_schema` do Hibernate: uma
