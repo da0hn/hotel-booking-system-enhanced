@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -165,6 +166,15 @@ final class E2eEnvironment implements AutoCloseable {
 
   String customerUrl() {
     return this.customer.baseUrl();
+  }
+
+  /**
+   * URL base de cada serviço, indexada pelo nome do módulo. É montada a cada chamada, e não
+   * guardada: o {@code payment-service} troca de porta quando reinicia.
+   */
+  Map<String, String> serviceUrls() {
+    return Stream.of(this.hotel, this.booking, this.customer, this.payment)
+      .collect(Collectors.toMap(ServiceProcess::name, ServiceProcess::baseUrl));
   }
 
   /**
