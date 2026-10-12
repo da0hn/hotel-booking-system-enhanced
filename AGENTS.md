@@ -120,7 +120,7 @@ uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 ### Saga ponta a ponta (`saga-tests`)
 
-O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele sobe PostgreSQL e
+O `SagaIT`, escrito em Spock, é o único teste que prova que as quatro pontas se entendem. Ele sobe PostgreSQL e
 RabbitMQ pelo Testcontainers, sobe `hotel`, `booking`, `customer` e `payment` **como
 processos filhos** e dispara `POST /hotel/booking` no `hotel-service`, lendo o desfecho no
 `customer-service` e nos bancos. Os três cenários são pagamento aprovado (`RESERVED`),
@@ -152,8 +152,20 @@ O que não se deduz do código:
   falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Psaga`, o Maven
   responde que não encontra o projeto `saga-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
-  `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam em ordem e `usePaymentFailureChance` só
-  reinicia o serviço quando o valor muda: `0` nos dois primeiros, `100` no último.
+  `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
+  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos dois
+  primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
+  quarto, e se o primeiro falhar os outros dois ainda dizem se o resto da saga funciona. O
+  custo é que uma saga quebrada leva ~6 min para falhar (3 cenários × 90 s de espera).
+- **Spock em Groovy; os helpers em Java.** O `SagaIT` é uma `Specification` em
+  `src/test/groovy`; `SagaEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
+  `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
+  Spring Boot gerencia o Groovy (5.0.8) mas não o Spock, cuja versão está em `spock.version`
+  no `pom.xml` do módulo. O Spock 2.5 foi compilado contra o JUnit Platform 1.14 e roda aqui
+  sobre o 6.0.3 do BOM, no JDK 25. Dentro de `PollingConditions.eventually { }` o Spock trata
+  **cada comando como condição**, até em método auxiliar: uma atribuição solta quebra a
+  compilação ("Expected a condition, but found an assignment"). Por isso `awaitStatus` guarda
+  o último estado visto numa atribuição dentro do `assert`.
 - **O quarto do cenário 2 é semeado pelo teste.** Nenhum quarto das migrations de seed
   permite esgotar o estoque com uma reserva. Hotel e booking guardam réplicas separadas do
   quarto (issue #4), então a semente grava nos dois bancos.
@@ -269,8 +281,8 @@ par segue esse nome; nos outros casos o diagrama é editado no lugar.
 - `payment-service` (8003) — pagamento **fake**; sem banco; falha por sorteio
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
-- `saga-tests` — só testes: o `SagaIT`, que sobe os quatro serviços e prova a saga de ponta
-  a ponta. Não é serviço, não vira imagem e nada depende dele. Só existe no reactor com o
+- `saga-tests` — só testes: o `SagaIT` (Spock), que sobe os quatro serviços e prova a saga de
+  ponta a ponta. Não é serviço, não vira imagem e nada depende dele. Só existe no reactor com o
   profile `saga` (ver "Saga ponta a ponta").
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
