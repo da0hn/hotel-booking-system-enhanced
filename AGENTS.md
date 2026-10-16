@@ -609,9 +609,10 @@ O que não se deduz do código:
 - **Dois limites conhecidos.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
   declare `@NotEmpty` e `@Min`: as restrições existem e nunca são avaliadas na fronteira HTTP.
   O 400 com lista de campos é, por isso, preventivo, provado por uma
-  `MethodArgumentNotValidException` construída e não por um request real. Ligar o `@Valid` muda
-  o comportamento (um `rooms: []` hoje chega ao caso de uso, e com o `@Valid` seria 400), então
-  é uma decisão à parte. E um id malformado no path (`UUID.fromString` lança
+  `MethodArgumentNotValidException` construída e não por um request real, até a #10 ligar o
+  `@Valid`. Quem a implementar encontra o item do erro como `{field, message}`, em que
+  `message` é a chave declarada na restrição, e não o `{field, detail}` com texto livre do
+  exemplo daquela issue. E um id malformado no path (`UUID.fromString` lança
   `IllegalArgumentException`) continua respondendo 500.
 
 ### Actuator
