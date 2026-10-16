@@ -46,4 +46,10 @@ public class ApiErrorResponse<T> implements ErrorResponse<T> {
   }
 
   public record ApiErrorDetail(String detail) {}
+
+  /**
+   * Um campo da entrada que a validação recusou, no {@code data} do erro {@code 400}: {@code field}
+   * é o nome na requisição e {@code message} a chave de mensagem declarada na restrição.
+   */
+  public record FieldViolation(String field, String message) {}
 }
