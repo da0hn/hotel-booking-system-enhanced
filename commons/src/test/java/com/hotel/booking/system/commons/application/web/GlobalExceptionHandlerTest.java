@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.hotel.booking.system.commons.application.dto.ErrorResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,13 +12,18 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingPathVariableException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -152,8 +158,75 @@ class GlobalExceptionHandlerTest {
     assertThat(this.logs.list).noneMatch(event -> event.getLevel() == Level.ERROR);
   }
 
+  @Test
+  @DisplayName("devolve no corpo a mensagem da exceção de domínio, com o status que o advice escolheu")
+  void rejeicaoDeDominioUsaOStatusEscolhidoEAMensagemDaExcecao() throws Exception {
+    this.mockMvc.perform(get("/rule"))
+      .andExpect(status().isUnprocessableContent())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("test.rule.violated"))
+      .andExpect(jsonPath("$.data").doesNotExist())
+      .andExpect(jsonPath("$.time").isString());
+  }
+
+  @Test
+  @DisplayName("registra a rejeição de domínio em WARN, com o status e a chave, sem stacktrace")
+  void rejeicaoDeDominioVaiParaOLogEmWarnSemStacktrace() throws Exception {
+    this.mockMvc.perform(get("/rule"));
+
+    assertThat(this.logs.list)
+      .singleElement()
+      .satisfies(event -> {
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getFormattedMessage()).isEqualTo("Request rejected with status 422: test.rule.violated");
+        assertThat(event.getThrowableProxy()).isNull();
+      });
+  }
+
+  @Test
+  @DisplayName("responde 500 genérico, e não a mensagem do Spring, quando o framework falha do lado do servidor")
+  void falhaDoFrameworkDoLadoDoServidorResponde500ComEnvelope() throws Exception {
+    final var body = this.mockMvc.perform(get("/missing-path-variable"))
+      .andExpect(status().isInternalServerError())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("internal.server.error"))
+      .andExpect(jsonPath("$.data").doesNotExist())
+      .andReturn()
+      .getResponse()
+      .getContentAsString();
+
+    assertThat(body).doesNotContain("absent").doesNotContain("MissingPathVariableException");
+  }
+
+  @Test
+  @DisplayName("registra em ERROR, com o stacktrace, a falha do framework do lado do servidor")
+  void falhaDoFrameworkDoLadoDoServidorVaiParaOLogEmErrorComStacktrace() throws Exception {
+    this.mockMvc.perform(get("/missing-path-variable"));
+
+    assertThat(this.logs.list)
+      .singleElement()
+      .satisfies(event -> {
+        assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+        assertThat(event.getFormattedMessage()).isEqualTo("Request failed with status 500");
+        assertThat(event.getThrowableProxy()).isNotNull();
+        assertThat(event.getThrowableProxy().getClassName()).isEqualTo(MissingPathVariableException.class.getName());
+      });
+  }
+
   @RestControllerAdvice
   static class TestAdvice extends GlobalExceptionHandler {
+
+    @ExceptionHandler(RuleViolation.class)
+    ResponseEntity<ErrorResponse<Void>> handleRule(final RuleViolation exception) {
+      return this.reject(HttpStatus.UNPROCESSABLE_CONTENT, exception);
+    }
+  }
+
+  static class RuleViolation extends RuntimeException {
+
+    RuleViolation(final String message) {
+      super(message);
+    }
   }
 
   record Payload(String name) {
@@ -170,6 +243,16 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/payload")
     String payload(@RequestBody final Payload payload) {
       return payload.name();
+    }
+
+    @GetMapping("/rule")
+    String rule() {
+      throw new RuleViolation("test.rule.violated");
+    }
+
+    @GetMapping("/missing-path-variable")
+    String missingPathVariable(@PathVariable("absent") final String absent) {
+      return absent;
     }
 
     @GetMapping("/missing-resource")
