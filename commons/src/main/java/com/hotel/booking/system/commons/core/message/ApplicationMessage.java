@@ -42,6 +42,8 @@ public final class ApplicationMessage {
   public static final String CUSTOMER_RESERVATION_ORDER_NOT_FOUND = "customer.reservation-order.not.found";
   public static final String CUSTOMER_CPF_NOT_NULL = "customer.cpf.must.not.be.null";
   public static final String CUSTOMER_CPF_INVALID = "customer.cpf.invalid";
+  public static final String REQUEST_INVALID = "request.invalid";
+  public static final String INTERNAL_SERVER_ERROR = "internal.server.error";
 
 
   private ApplicationMessage() {

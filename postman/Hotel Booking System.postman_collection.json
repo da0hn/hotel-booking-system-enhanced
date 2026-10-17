@@ -27,7 +27,38 @@
               ]
             }
           },
-          "response": []
+          "response": [
+            {
+              "name": "Ordem de reserva inexistente (404)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{customer_service}}/customers/{{customer_id}}/reservation-order/00000000-0000-0000-0000-000000000000",
+                  "host": [
+                    "{{customer_service}}"
+                  ],
+                  "path": [
+                    "customers",
+                    "{{customer_id}}",
+                    "reservation-order",
+                    "00000000-0000-0000-0000-000000000000"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"customer.reservation-order.not.found\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            }
+          ]
         }
       ]
     },
@@ -122,7 +153,156 @@
               ]
             }
           },
-          "response": []
+          "response": [
+            {
+              "name": "Hóspedes acima da capacidade (422)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"customerId\": \"f1e28a47-8852-45e8-b8e1-e6701633dd56\",\r\n  \"hotelId\": \"04a84c00-d083-4b0e-b9f2-c039d26b1c43\",\r\n  \"guests\": 50,\r\n  \"checkIn\": \"23/10/2023\",\r\n  \"checkOut\": \"25/10/2023\",\r\n  \"rooms\": [\r\n    {\r\n      \"roomId\": \"844c933f-b881-46f9-9533-e591ed214bc3\",\r\n      \"roomQuantity\": 1\r\n    }\r\n  ]\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{hotel_service}}/hotel/booking",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel",
+                    "booking"
+                  ]
+                }
+              },
+              "status": "Unprocessable Content",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"hotel.booking.guests.exceeded\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            },
+            {
+              "name": "Quarto inexistente no corpo (422)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"customerId\": \"f1e28a47-8852-45e8-b8e1-e6701633dd56\",\r\n  \"hotelId\": \"04a84c00-d083-4b0e-b9f2-c039d26b1c43\",\r\n  \"guests\": 1,\r\n  \"checkIn\": \"23/10/2023\",\r\n  \"checkOut\": \"25/10/2023\",\r\n  \"rooms\": [\r\n    {\r\n      \"roomId\": \"00000000-0000-0000-0000-000000000000\",\r\n      \"roomQuantity\": 1\r\n    }\r\n  ]\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{hotel_service}}/hotel/booking",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel",
+                    "booking"
+                  ]
+                }
+              },
+              "status": "Unprocessable Content",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"hotel.room.not.found\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            },
+            {
+              "name": "Corpo da requisição ilegível (400)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{hotel_service}}/hotel/booking",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel",
+                    "booking"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"request.invalid\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            },
+            {
+              "name": "Falha inesperada, ex.: banco fora do ar (500)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"customerId\": \"f1e28a47-8852-45e8-b8e1-e6701633dd56\",\r\n  \"hotelId\": \"04a84c00-d083-4b0e-b9f2-c039d26b1c43\",\r\n  \"guests\": 1,\r\n  \"checkIn\": \"23/10/2023\",\r\n  \"checkOut\": \"25/10/2023\",\r\n  \"rooms\": [\r\n    {\r\n      \"roomId\": \"844c933f-b881-46f9-9533-e591ed214bc3\",\r\n      \"roomQuantity\": 1\r\n    }\r\n  ]\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{hotel_service}}/hotel/booking",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel",
+                    "booking"
+                  ]
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"internal.server.error\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            }
+          ]
         }
       ]
     }

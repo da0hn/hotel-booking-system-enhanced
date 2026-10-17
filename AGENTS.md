@@ -134,7 +134,7 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 `E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
 `Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
 
-Hoje há dois. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
+Hoje há três. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
 dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
 bancos. Os quatro cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
 (`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio
@@ -144,9 +144,11 @@ fronteira transacional ou na regra de disponibilidade: um evento movido de pacot
 fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
 saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
-O outro, o `ActuatorExposureIT`, não toca na saga: bate nos quatro serviços e confere o que o
-Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). Por ser uma
-`Specification` à parte, ele paga um segundo arranque do ambiente inteiro.
+Os outros dois não tocam na saga. O `ActuatorExposureIT` bate nos quatro serviços e confere o
+que o Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). O
+`HttpErrorContractIT` confere o contrato de erro HTTP do `hotel-service` e do
+`customer-service` nos jars de verdade: o status e a chave de `message` de cada situação (ver
+*Erros HTTP*). Por serem `Specification`s à parte, cada um paga um arranque do ambiente inteiro.
 
 **O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
 profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
@@ -320,7 +322,8 @@ quando o desenho do retry ou o nome das filas mudar: regrave-o ou apague-o na me
   (`FAILURE_CHANCE_PERCENTAGE`).
 - `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
 - `e2e-tests` — só testes de ponta a ponta, em Spock: sobem os quatro serviços e exercitam o
-  sistema inteiro. Hoje só o `SagaIT`, que prova a saga. Não é serviço, não vira imagem e nada
+  sistema inteiro. Hoje o `SagaIT`, que prova a saga, e dois testes da fronteira HTTP, o
+  `ActuatorExposureIT` e o `HttpErrorContractIT`. Não é serviço, não vira imagem e nada
   depende dele. Só existe no reactor com o profile `e2e` (ver "Testes ponta a ponta").
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
@@ -563,6 +566,54 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   Boot 4.1 não expõe. Lido no código do Spring AMQP, sem teste: passado o prazo, o container
   interrompe a thread, e a interrupção na espera do retry vira "retry esgotado" — o
   recoverer manda a mensagem para a DLQ e o container a confirma, em vez de devolvê-la à fila.
+
+### Erros HTTP
+
+Todo erro HTTP sai no envelope do `ApiErrorResponse` (`success: false`, `message`, `data`,
+`time`), e o `message` é **uma chave de `ApplicationMessage`**, nunca texto livre nem a mensagem
+de uma exceção que não seja de domínio. A chave é o contrato: quem consome a API (o
+`HttpErrorContractIT`, a collection do Postman) casa por ela, e o texto para o usuário final é
+problema de quem apresenta.
+
+Cada serviço com controller tem um `@RestControllerAdvice` em `application/web/advice` que
+estende o `GlobalExceptionHandler` do `commons` (`HotelExceptionHandler` e
+`CustomerExceptionHandler`); o `booking-service` e o `payment-service` não têm controller e,
+se ganharem um, o advice nasce no mesmo molde. Dentro do advice só entram as exceções do
+domínio do serviço, por `this.reject(status, exception)`.
+
+| Situação | Status | `message` |
+|---|---|---|
+| Cliente ou ordem de reserva da URL não existem | 404 | a chave da exceção |
+| Regra de domínio violada (`HotelDomainException`, `CustomerDomainException`) | 422 | a chave da exceção |
+| Campos de entrada recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
+| Corpo ilegível, método não suportado, rota inexistente | o do Spring (400, 405, 404) | `request.invalid` |
+| Falha ao publicar o evento (`MessagePublishException`) | 503 | `hotel.booking.temporarily.unavailable` |
+| Qualquer outra exceção | 500 | `internal.server.error`, sem detalhe |
+
+O que não se deduz do código:
+
+- **O recurso citado no corpo e inexistente é 422, não 404.** O 404 diz que o recurso da URL não
+  existe. O `hotel-service` nunca endereça um quarto pela URL; ele o recebe no corpo de
+  `POST /hotel/booking`, então `hotel.room.not.found` é uma regra violada.
+- **A base estende `ResponseEntityExceptionHandler`, e não só declara `@ExceptionHandler(Exception.class)`.**
+  Um catch-all sozinho captura o `NoResourceFoundException` e promove a 500 o 404 de uma rota
+  que não existe, como o `/actuator/env`, que o `ActuatorExposureIT` exige 404. Handler novo
+  de erro de framework sobrescreve o método da base; não se cria um segundo catch-all.
+- **O `handleExceptionInternal` troca o `ProblemDetail` pelo envelope.** No Spring 7 o
+  `handleHttpMessageNotReadable` já chega ali com um `ProblemDetail` montado como `body`, e sem a
+  troca o cliente recebe `application/problem+json` fora do envelope. Os 404 e 405 chegam com
+  `body == null`, e a troca vale para eles também.
+- **4xx loga em WARN, sem stacktrace; 5xx loga em ERROR, com stacktrace.** O stacktrace vai só
+  para o log, nunca para o corpo. A consulta repetida de uma ordem que o `customer-service` ainda
+  não processou gera 404 em sequência, e um stacktrace por tentativa enterraria o log.
+- **Dois limites conhecidos.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
+  declare `@NotEmpty` e `@Min`: as restrições existem e nunca são avaliadas na fronteira HTTP.
+  O 400 com lista de campos é, por isso, preventivo, provado por uma
+  `MethodArgumentNotValidException` construída e não por um request real, até a #10 ligar o
+  `@Valid`. Quem a implementar encontra o item do erro como `{field, message}`, em que
+  `message` é a chave declarada na restrição, e não o `{field, detail}` com texto livre do
+  exemplo daquela issue. E um id malformado no path (`UUID.fromString` lança
+  `IllegalArgumentException`) continua respondendo 500.
 
 ### Actuator
 
