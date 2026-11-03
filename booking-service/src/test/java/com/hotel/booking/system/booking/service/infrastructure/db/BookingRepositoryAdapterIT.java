@@ -67,14 +67,14 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
   @DisplayName("mapeia quartos encontrados e traduz identificador ausente")
   void buscaQuartosMapeiaCamposERejeitaIdentificadorAusente() {
     final var entity = this.rooms.findRoomEntityById(ROOM);
-    assertThat(this.rooms.findAllByRoomId(List.of(ROOM, ROOM, RoomId.of(UUID.randomUUID())))).singleElement().satisfies(room -> {
+    assertThat(this.rooms.lockAllByRoomId(List.of(ROOM, ROOM, RoomId.of(UUID.randomUUID())))).singleElement().satisfies(room -> {
       assertThat(room.getId()).isEqualTo(ROOM);
       assertThat(room.getHotelId().getValue()).isEqualTo(entity.getHotelId());
       assertThat(room.getCapacity()).isEqualTo(entity.getCapacity());
       assertThat(room.getQuantity()).isEqualTo(entity.getQuantity());
     });
     assertThatThrownBy(() -> this.rooms.findRoomEntityById(RoomId.of(UUID.randomUUID()))).isInstanceOf(RoomNotFoundException.class);
-    assertThat(this.rooms.findAllByRoomId(List.of())).isEmpty();
+    assertThat(this.rooms.lockAllByRoomId(List.of())).isEmpty();
     assertThat(this.bookings.findBookingByReservationOrderId(ReservationOrderId.of(UUID.randomUUID()))).isEmpty();
   }
 }

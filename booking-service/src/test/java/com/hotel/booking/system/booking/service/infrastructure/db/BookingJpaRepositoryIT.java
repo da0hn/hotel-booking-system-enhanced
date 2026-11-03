@@ -14,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Exercita as duas consultas escritas à mão do {@code booking-service}.
  *
  * <p>A {@code findByRoomIdAndPeriod} é o coração da regra de disponibilidade: é ela que
- * decide se um quarto está livre no período pedido. Como usa {@code between} sobre
- * {@code date}, ela depende de como o banco compara datas — e é exatamente o tipo de coisa
+ * decide se um quarto está livre no período pedido. Como compara colunas {@code date}
+ * com desigualdades estritas, ela depende de como o banco compara datas — e é exatamente o tipo de coisa
  * que uma troca de engine muda em silêncio.</p>
  */
 @DisplayName("Consultas de reserva por período")
@@ -55,21 +55,33 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   @Test
-  @DisplayName("trata as bordas do período como ocupadas")
-  void trataBordasComoOcupadas() {
-    final var noCheckIn = this.repository.findByRoomIdAndPeriod(
+  @DisplayName("acha a reserva quando o período pedido cai inteiro dentro dela")
+  void achaQuandoPeriodoCaiInteiroDentro() {
+    final var encontradas = this.repository.findByRoomIdAndPeriod(
       QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 15),
-      LocalDate.of(2023, 6, 15)
-    );
-    final var noCheckOut = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 25),
-      LocalDate.of(2023, 6, 25)
+      LocalDate.of(2023, 6, 18),
+      LocalDate.of(2023, 6, 20)
     );
 
-    assertThat(noCheckIn).as("o `between` do JPQL é inclusivo nas duas pontas").hasSize(1);
-    assertThat(noCheckOut).hasSize(1);
+    assertThat(encontradas).hasSize(1);
+  }
+
+  @Test
+  @DisplayName("não trata o dia de troca como conflito: o check-out de uma reserva libera o check-in da outra")
+  void naoTrataODiaDeTrocaComoConflito() {
+    final var comecaNoCheckOut = this.repository.findByRoomIdAndPeriod(
+      QUARTO_TRIPLO_DELUXE,
+      LocalDate.of(2023, 6, 25),
+      LocalDate.of(2023, 6, 27)
+    );
+    final var terminaNoCheckIn = this.repository.findByRoomIdAndPeriod(
+      QUARTO_TRIPLO_DELUXE,
+      LocalDate.of(2023, 6, 10),
+      LocalDate.of(2023, 6, 15)
+    );
+
+    assertThat(comecaNoCheckOut).as("entra no dia em que a reserva sai").isEmpty();
+    assertThat(terminaNoCheckIn).as("sai no dia em que a reserva entra").isEmpty();
   }
 
   @Test
@@ -97,20 +109,16 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   /**
-   * Trava uma lacuna conhecida da consulta, e não um comportamento desejado.
+   * Guarda a correção da lacuna do {@code between} (issue #5).
    *
-   * <p>A cláusula só testa se o check-in <em>ou</em> o check-out pedido caem dentro de uma
-   * reserva existente. Um período que <strong>contém</strong> a reserva inteira — chega antes
-   * e sai depois — não casa com nenhuma das duas, e o quarto aparece como livre num intervalo
-   * em que está ocupado.</p>
-   *
-   * <p>A asserção é a de hoje de propósito: a migração de banco não pode alterar esta
-   * semântica sem que alguém perceba. Corrigi-la é trabalho de outra issue, com um teste que
-   * inverte esta expectativa.</p>
+   * <p>A cláusula antiga só testava se o check-in <em>ou</em> o check-out pedido caíam dentro
+   * de uma reserva existente. Um período que <strong>contém</strong> a reserva inteira — chega
+   * antes e sai depois — não casava com nenhuma das duas, e o quarto aparecia como livre num
+   * intervalo em que está ocupado.</p>
    */
   @Test
-  @DisplayName("não acha a reserva quando o período pedido a engloba (lacuna conhecida)")
-  void naoAchaQuandoPeriodoEngloba() {
+  @DisplayName("acha a reserva quando o período pedido a engloba")
+  void achaQuandoPeriodoEngloba() {
     final var encontradas = this.repository.findByRoomIdAndPeriod(
       QUARTO_TRIPLO_DELUXE,
       LocalDate.of(2023, 6, 1),
@@ -118,8 +126,8 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
     );
 
     assertThat(encontradas)
-      .as("lacuna do `between`: o período engloba a reserva e mesmo assim o quarto passa por livre")
-      .isEmpty();
+      .as("o período engloba a reserva: o quarto está ocupado nesse intervalo")
+      .hasSize(1);
   }
 
   @Test

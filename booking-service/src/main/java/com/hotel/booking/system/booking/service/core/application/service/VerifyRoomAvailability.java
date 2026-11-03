@@ -2,17 +2,33 @@ package com.hotel.booking.system.booking.service.core.application.service;
 
 import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingRoom;
+import com.hotel.booking.system.booking.service.core.domain.entity.Room;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.BookingRepository;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.RoomRepository;
 import com.hotel.booking.system.commons.core.application.annotation.DomainService;
 import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
+import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.extern.slf4j.Slf4j;
 
 import java.text.MessageFormat;
-import java.util.ArrayList;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+/**
+ * Decide se os quartos de uma reserva ainda têm unidades livres no período pedido.
+ *
+ * <p>Um quarto é uma <em>categoria</em> com {@code quantity} unidades, e cada linha de reserva
+ * consome {@code quantity} delas. O quarto está indisponível quando as unidades já ocupadas por
+ * reservas ativas no período, somadas às que o pedido quer, passam do que o quarto tem.</p>
+ *
+ * <p><strong>Pressupõe uma transação aberta, e é ela que torna a decisão confiável.</strong>
+ * Verificar e gravar são dois passos, e sem proteção duas reservas do último quarto leem a mesma
+ * ocupação e passam as duas. A primeira coisa que {@link #execute} faz é travar os quartos
+ * ({@link RoomRepository#lockAllByRoomId}); o lock dura até o commit de quem chamou, que também
+ * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
+ */
 @Slf4j
 @DomainService
 public class VerifyRoomAvailability {
@@ -30,42 +46,54 @@ public class VerifyRoomAvailability {
   public FailureMessages execute(final Booking booking) {
     final var failureMessages = FailureMessages.empty();
 
-    final var rooms = this.roomRepository.findAllByRoomId(booking.getRoomsId());
+    final var rooms = this.roomRepository.lockAllByRoomId(booking.getRoomsId());
+    final var requestedUnitsByRoom = this.requestedUnitsByRoom(booking);
 
     log.info("Verifying rooms availability reservationOrderId={}", booking.getReservationOrderId());
-    for (final var bookingRoom : booking.getBookingRooms()) {
-      final var bookings = this.bookingRepository.findBookingByRoomIdAndPeriod(
-        bookingRoom.getRoomId(),
-        booking.getBookingPeriod()
-      );
-      final var bookingsOnPeriod = bookings.stream()
-        .filter(item -> item.getStatus() != BookingStatus.CANCELED)
-        .filter(item -> booking.isBookingPeriodContainedIn(item.getBookingPeriod()))
-        .toList();
-
-      final var allBookingRoomsGroupedByRoomId = bookingsOnPeriod.stream()
-        .flatMap(item -> item.getBookingRooms().stream())
-        .collect(Collectors.groupingBy(BookingRoom::getRoomId));
-
-      for (final var room : rooms) {
-        final var bookingsForRoom = allBookingRoomsGroupedByRoomId.getOrDefault(room.getId(), new ArrayList<>());
-        if (room.getQuantity() == bookingsForRoom.size()) {
-          log.error(
-            "The roomId={} is unavailable for period={}, reservationOrderId={}",
-            bookingRoom.getRoomId(),
-            booking.getBookingPeriod().periodAsString(),
-            booking.getReservationOrderId()
-          );
-          failureMessages.add(MessageFormat.format(
-            ROOM_UNAVAILABLE_TEMPLATE_MESSAGE,
-            room.getId(),
-            booking.getBookingPeriod().periodAsString()
-          ));
-        }
+    for (final var room : rooms) {
+      final var requestedUnits = requestedUnitsByRoom.getOrDefault(room.getId(), 0);
+      final var occupiedUnits = this.occupiedUnits(room, booking);
+      if (occupiedUnits + requestedUnits > room.getQuantity()) {
+        log.error(
+          "The roomId={} is unavailable for period={}, reservationOrderId={}",
+          room.getId(),
+          booking.getBookingPeriod().periodAsString(),
+          booking.getReservationOrderId()
+        );
+        failureMessages.add(MessageFormat.format(
+          ROOM_UNAVAILABLE_TEMPLATE_MESSAGE,
+          room.getId(),
+          booking.getBookingPeriod().periodAsString()
+        ));
       }
     }
 
     return failureMessages;
+  }
+
+  private Map<RoomId, Integer> requestedUnitsByRoom(final Booking booking) {
+    return booking.getBookingRooms().stream()
+      .collect(Collectors.groupingBy(BookingRoom::getRoomId, Collectors.summingInt(VerifyRoomAvailability::unitsOf)));
+  }
+
+  private int occupiedUnits(final Room room, final Booking booking) {
+    return this.bookingRepository.findBookingByRoomIdAndPeriod(room.getId(), booking.getBookingPeriod()).stream()
+      .filter(item -> item.getStatus() != BookingStatus.CANCELED)
+      .filter(item -> booking.isBookingPeriodContainedIn(item.getBookingPeriod()))
+      .flatMap(item -> item.getBookingRooms().stream())
+      .filter(item -> room.getId().equals(item.getRoomId()))
+      .mapToInt(VerifyRoomAvailability::unitsOf)
+      .sum();
+  }
+
+  /**
+   * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} já recusa
+   * esse pedido por dados inconsistentes, mas o caso de uso verifica a disponibilidade mesmo
+   * assim, e um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem
+   * indo para a DLQ.
+   */
+  private static int unitsOf(final BookingRoom bookingRoom) {
+    return Optional.ofNullable(bookingRoom.getQuantity()).orElse(0);
   }
 
 }

@@ -133,10 +133,10 @@ class BookingApplicationTest {
     verify(this.repository, never()).save(any());
   }
 
-  /** A disponibilidade atual conta linhas de quartos, e não a soma das quantidades. */
+  /** A ocupação é a soma das unidades das reservas ativas: o pedido e a reserva existente valem 2 cada. */
   @Test
-  @DisplayName("ignora reservas canceladas e períodos fora da consulta de disponibilidade")
-  void disponibilidadeFiltraCanceladasEPeriodosEContaLinhas() {
+  @DisplayName("ignora reservas canceladas e períodos fora da consulta e soma as unidades das ativas")
+  void disponibilidadeFiltraCanceladasEPeriodosESomaUnidades() {
     final var requested = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     final var occupied = Booking.builder().bookingPeriod(requested.getBookingPeriod()).status(BookingStatus.PENDING)
       .bookingRooms(requested.getBookingRooms()).build();
@@ -145,12 +145,13 @@ class BookingApplicationTest {
     final var outside = Booking.builder().bookingPeriod(BookingPeriod.of(this.checkIn.plusDays(10), this.checkIn.plusDays(12)))
       .status(BookingStatus.CONFIRMED).bookingRooms(requested.getBookingRooms()).build();
     when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(occupied, canceled, outside));
-    when(this.rooms.findAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 1)));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 3)));
     final var service = new VerifyRoomAvailability(this.repository, this.rooms);
     assertThat(service.execute(requested).data()).containsExactly("The room roomId=" + this.room + " is no longer available for period 10/01/2030 - 13/01/2030");
-    when(this.rooms.findAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 2)));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 4)));
     assertThat(service.execute(requested).data()).isEmpty();
     when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(canceled, outside));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 2)));
     assertThat(service.execute(requested).data()).isEmpty();
   }
 

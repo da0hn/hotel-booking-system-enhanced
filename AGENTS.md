@@ -127,13 +127,6 @@ no CI, é a label `e2e` no pull request ou o `workflow_dispatch` de
 `.github/workflows/e2e.yml`. Os cenários, as armadilhas e como acrescentar um teste estão em
 `e2e-tests/AGENTS.md`.
 
-`VerifyRoomAvailabilityTest` (booking) segue outra política: quatro métodos estão `@Disabled`
-porque descrevem comportamento **correto** que o código de hoje não tem (issue #5: o `==` no
-lugar de `>=`, a contagem de linhas no lugar de `quantity` e o pedido que ignora a
-quantidade). O CI roda `mvn verify` em todo pull request e não pode ficar vermelho, mas o
-teste não pode ser apagado: ao corrigir a issue #5, remova o `@Disabled` — eles são a
-especificação da correção.
-
 ### Imagens e pipeline
 
 As quatro imagens saem de um **único `Dockerfile` na raiz**, parametrizado por
@@ -249,6 +242,17 @@ Regras que o código segue e que devem ser mantidas:
   coordenam leitura e escrita. Use `@Transactional(readOnly = true)` nas consultas. Não
   aplique `@Transactional` diretamente nos use cases nem nos adapters de repositório;
   o listener deve propagar a exceção para permitir o rollback.
+- **A disponibilidade do quarto depende de um lock, e o lock depende da transação do
+  listener.** O `VerifyRoomAvailability` começa por `RoomRepository.lockAllByRoomId`
+  (`SELECT ... FOR UPDATE`, em ordem de id) e só então lê a ocupação; o lock dura até o commit do
+  `BookingRoomRequestedRabbitMQListener`, que também grava a reserva. Transação sozinha não
+  basta: no `READ COMMITTED` duas reservas do último quarto leem a mesma ocupação e passam as
+  duas, e o `RoomAvailabilityConcurrencyIT` prova isso contra o PostgreSQL. Tirar o
+  `@Transactional` do listener não passa em silêncio — a consulta com `@Lock` lança
+  `TransactionRequiredException`. A ocupação **soma `booking_room.quantity`**; contar linhas
+  trata 3 unidades como 1. O `application.yml` não define `concurrency`, e o Spring AMQP usa 1
+  consumidor por listener: a corrida só aparece com mais de uma réplica do `booking-service` ou
+  com a concorrência elevada, e é por isso que o e2e, que roda uma réplica, não a reproduz.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).

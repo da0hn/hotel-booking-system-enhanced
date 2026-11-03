@@ -11,7 +11,6 @@ import com.hotel.booking.system.commons.core.domain.valueobject.HotelId;
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -30,14 +29,11 @@ import static org.mockito.Mockito.when;
  * <p>O repositório é um mock que devolve exatamente o que a consulta por período devolveria;
  * a regra sob teste é o que o serviço faz com essa lista. Por isso o cenário de período
  * contido existe nas duas pontas: aqui prova-se que o <em>filtro de domínio</em> reconhece a
- * sobreposição, e a lacuna que sobra está na consulta, documentada em
- * {@code BookingJpaRepositoryIT#naoAchaQuandoPeriodoEngloba}.</p>
+ * sobreposição, e a prova de que a consulta devolve essa reserva está em
+ * {@code BookingJpaRepositoryIT#achaQuandoPeriodoEngloba}.</p>
  *
- * <p><strong>Os testes {@link Disabled} são bugs conhecidos, e não testes abandonados.</strong>
- * Cada um expressa o comportamento correto descrito na issue #5 e falha hoje, pelo motivo
- * escrito na própria anotação. Estão desabilitados porque o {@code mvn verify} do PR não pode
- * ficar vermelho; ao corrigir o bug, remova o {@code @Disabled} e o teste passa a guardar a
- * correção. Os que não estão desabilitados passam hoje e continuam valendo depois dela.</p>
+ * <p>A corrida entre duas reservas do último quarto não cabe num mock: ela depende do lock do
+ * banco e é provada em {@code RoomAvailabilityConcurrencyIT}.</p>
  */
 @DisplayName("Verificação de disponibilidade de quartos")
 class VerifyRoomAvailabilityTest {
@@ -73,7 +69,7 @@ class VerifyRoomAvailabilityTest {
   }
 
   private void givenRoomWithQuantity(final int quantity) {
-    when(this.rooms.findAllByRoomId(any())).thenReturn(List.of(this.roomWithQuantity(this.roomId, quantity)));
+    when(this.rooms.lockAllByRoomId(any())).thenReturn(List.of(this.roomWithQuantity(this.roomId, quantity)));
   }
 
   private void givenExisting(final Booking... existing) {
@@ -150,7 +146,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("aponta só o quarto indisponível quando o pedido tem vários quartos")
   void apontaSoOQuartoIndisponivel() {
     final var free = RoomId.newInstance();
-    when(this.rooms.findAllByRoomId(any())).thenReturn(List.of(
+    when(this.rooms.lockAllByRoomId(any())).thenReturn(List.of(
       this.roomWithQuantity(this.roomId, 1),
       this.roomWithQuantity(free, 1)
     ));
@@ -172,7 +168,22 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @Disabled("Bug conhecido, issue #5: a quantidade pedida é ignorada; 6 unidades num quarto de 5 passam")
+  @DisplayName("não quebra com linha sem quantidade: quem a recusa é o BookingInitializer")
+  void naoQuebraComLinhaSemQuantidade() {
+    this.givenRoomWithQuantity(1);
+    this.givenExisting();
+    final var semQuantidade = Booking.builder()
+      .bookingPeriod(period(10, 13))
+      .status(BookingStatus.PENDING)
+      .bookingRooms(List.of(BookingRoom.builder().roomId(this.roomId).price(Money.of(100)).build()))
+      .build();
+
+    final var failures = this.service.execute(semQuantidade);
+
+    assertThat(failures.data()).isEmpty();
+  }
+
+  @Test
   @DisplayName("rejeita pedido maior que o total de unidades do quarto")
   void rejeitaPedidoMaiorQueOTotalDoQuarto() {
     this.givenRoomWithQuantity(5);
@@ -184,7 +195,6 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @Disabled("Bug conhecido, issue #5: conta linhas de booking_room em vez de somar quantity; 3 unidades valem 1")
   @DisplayName("soma as unidades de cada reserva ao contar a ocupação")
   void somaAsUnidadesDeCadaReserva() {
     this.givenRoomWithQuantity(3);
@@ -196,7 +206,6 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @Disabled("Bug conhecido, issue #5: só confere ocupação == total; pedido que passa do que sobrou é aceito")
   @DisplayName("rejeita pedido que ultrapassa o que sobrou do quarto")
   void rejeitaPedidoQueUltrapassaOQueSobrou() {
     this.givenRoomWithQuantity(5);
@@ -208,7 +217,6 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @Disabled("Bug conhecido, issue #5: usa == em vez de >=; com overbooking a indisponibilidade deixa de ser detectada")
   @DisplayName("continua rejeitando quando o quarto já está em overbooking")
   void continuaRejeitandoQuandoJaHaOverbooking() {
     this.givenRoomWithQuantity(5);
