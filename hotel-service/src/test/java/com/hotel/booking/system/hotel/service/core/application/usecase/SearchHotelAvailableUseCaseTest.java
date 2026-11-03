@@ -1,5 +1,7 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.commons.core.domain.valueobject.HotelId;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableInput;
 import com.hotel.booking.system.hotel.service.core.application.mapper.HotelUseCaseMapperImpl;
@@ -57,6 +59,46 @@ class SearchHotelAvailableUseCaseTest {
     Assertions.assertThat(output).first()
       .usingRecursiveAssertion()
       .hasNoNullFields();
+  }
+
+  @Test
+  @DisplayName("Should search available Hotel by page keeping the page information")
+  void test2() {
+    final var request = PageRequest.of(1, 2);
+    Mockito.doReturn(Page.withoutTotal(List.of(new FakeSearchHotelAvailableQueryResult()), request, true))
+      .when(this.hotelRepository)
+      .searchHotelAvailableBy("Pousada", null, null, null, request);
+
+    final var output = this.sut.execute(
+      SearchHotelAvailableInput.builder()
+        .name("Pousada")
+        .build(),
+      request
+    );
+
+    Assertions.assertThat(output.content()).hasSize(1);
+    Assertions.assertThat(output.content()).first()
+      .usingRecursiveAssertion()
+      .hasNoNullFields();
+    Assertions.assertThat(output.number()).isEqualTo(1);
+    Assertions.assertThat(output.size()).isEqualTo(2);
+    Assertions.assertThat(output.hasNext()).isTrue();
+    Assertions.assertThat(output.totalElements()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("Should return an empty page, not fail, when the page is past the end")
+  void test3() {
+    final var request = PageRequest.of(9, 20);
+    Mockito.doReturn(Page.withoutTotal(List.<SearchHotelAvailableQueryResult>of(), request, false))
+      .when(this.hotelRepository)
+      .searchHotelAvailableBy(null, null, null, null, request);
+
+    final var output = this.sut.execute(SearchHotelAvailableInput.builder().build(), request);
+
+    Assertions.assertThat(output.content()).isEmpty();
+    Assertions.assertThat(output.number()).isEqualTo(9);
+    Assertions.assertThat(output.hasNext()).isFalse();
   }
 
   private static class FakeSearchHotelAvailableQueryResult implements SearchHotelAvailableQueryResult {

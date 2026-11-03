@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.infrastructure.db;
 
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import com.hotel.booking.system.hotel.service.core.application.dto.*;
 import com.hotel.booking.system.hotel.service.core.application.mapper.HotelUseCaseMapperImpl;
@@ -95,6 +96,40 @@ class HotelRepositoryAdapterIT extends AbstractDatabaseIT {
     assertThat(this.localities.existsLocalityById(LocalityId.of(UUID.randomUUID()))).isFalse();
     assertThat(this.hotels.findAllRoomsById(List.of(RoomId.newInstance()))).isEmpty();
     assertThat(this.hotels.searchHotelAvailableBy("hotel inexistente", "", "", "")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("devolve a página do domínio, sem contagem total, com hasNext pelo elemento extra")
+  void buscaPaginadaDevolvePaginaDoDominioSemContagemTotal() {
+    final var primeira = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(0, 2));
+    final var ultima = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(2, 2));
+    final var alemDoFim = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(9, 2));
+
+    assertThat(primeira.content()).hasSize(2);
+    assertThat(primeira.number()).isZero();
+    assertThat(primeira.size()).isEqualTo(2);
+    assertThat(primeira.hasNext()).isTrue();
+    assertThat(primeira.totalElements()).isEmpty();
+    assertThat(primeira.totalPages()).isEmpty();
+    assertThat(ultima.content()).hasSize(1);
+    assertThat(ultima.hasNext()).isFalse();
+    assertThat(alemDoFim.content()).isEmpty();
+    assertThat(alemDoFim.number()).isEqualTo(9);
+    assertThat(alemDoFim.hasNext()).isFalse();
+  }
+
+  @Test
+  @DisplayName("a página de uma busca com filtro devolve os quartos de cada hotel")
+  void paginaComFiltroDevolveHoteisComQuartos() {
+    final var page = new SearchHotelAvailableUseCaseImpl(this.hotels, new HotelUseCaseMapperImpl())
+      .execute(new SearchHotelAvailableInput("cuiaba", "", "Hotel", ""), PageRequest.of(0, 10));
+
+    assertThat(page.hasNext()).isFalse();
+    assertThat(page.content()).isNotEmpty().allSatisfy(hotel -> {
+      assertThat(hotel.city()).isEqualTo("Cuiabá");
+      assertThat(hotel.category()).isEqualTo("Hotel");
+      assertThat(hotel.rooms()).isNotEmpty();
+    });
   }
 
   /** Caracteriza o defeito atual: a conversão usa o id do hotel como id da localidade. */

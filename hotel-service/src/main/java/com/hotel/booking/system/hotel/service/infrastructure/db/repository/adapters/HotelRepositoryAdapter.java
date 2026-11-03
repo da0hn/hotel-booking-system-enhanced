@@ -1,5 +1,7 @@
 package com.hotel.booking.system.hotel.service.infrastructure.db.repository.adapters;
 
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import com.hotel.booking.system.hotel.service.core.domain.entity.Hotel;
 import com.hotel.booking.system.hotel.service.core.domain.entity.Rooms;
@@ -11,6 +13,7 @@ import com.hotel.booking.system.hotel.service.infrastructure.db.repository.Hotel
 import com.hotel.booking.system.hotel.service.infrastructure.db.repository.HotelJpaRepository;
 import com.hotel.booking.system.hotel.service.infrastructure.db.repository.RoomJpaRepository;
 import lombok.AllArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -48,6 +51,31 @@ public class HotelRepositoryAdapter implements HotelRepository {
     return this.hotelJpaRepository.findAllAvailableHotelByParameters(name, category, city, state).stream()
       .map(this.hotelDatabaseMapper::hotelEntityToSearchHotelAvailableQueryResult)
       .toList();
+  }
+
+  /**
+   * Converte o {@code Slice} do Spring Data na {@link Page} do domínio. O {@code Pageable} sai
+   * sem {@code Sort}: a ordem {@code name, id} está na própria consulta.
+   */
+  @Override
+  public Page<SearchHotelAvailableQueryResult> searchHotelAvailableBy(
+    final String name,
+    final String category,
+    final String city,
+    final String state,
+    final PageRequest pageRequest
+  ) {
+    final var slice = this.hotelJpaRepository.findAvailableHotelPageByParameters(
+      name,
+      category,
+      city,
+      state,
+      Pageable.ofSize(pageRequest.size()).withPage(pageRequest.number())
+    );
+    final var content = slice.getContent().stream()
+      .map(this.hotelDatabaseMapper::hotelEntityToSearchHotelAvailableQueryResult)
+      .toList();
+    return Page.withoutTotal(content, pageRequest, slice.hasNext());
   }
 
   @Override

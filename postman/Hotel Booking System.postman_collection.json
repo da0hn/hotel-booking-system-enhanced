@@ -88,11 +88,93 @@
                   "key": "city",
                   "value": "",
                   "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "0",
+                  "description": "A partir de 0. Com page ou size a resposta é uma página; sem nenhum dos dois, a lista inteira.",
+                  "disabled": true
+                },
+                {
+                  "key": "size",
+                  "value": "20",
+                  "description": "De 1 a 100 (padrão 20).",
+                  "disabled": true
                 }
               ]
             }
           },
           "response": [
+            {
+              "name": "Busca paginada (200 com page, sem contagem total)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hotel_service}}/hotel?page=0&size=2",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "0"
+                    },
+                    {
+                      "key": "size",
+                      "value": "2"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"id\": \"b69b768f-32d8-4c70-a3ef-b5ace438c5e7\",\n      \"name\": \"Amazon Plaza Hotel\",\n      \"city\": \"Cuiabá\",\n      \"...\": \"...\"\n    }\n  ],\n  \"page\": {\n    \"number\": 0,\n    \"size\": 2,\n    \"hasNext\": true\n  },\n  \"success\": true\n}"
+            },
+            {
+              "name": "Página inválida (400, size acima de 100)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hotel_service}}/hotel?size=101",
+                  "host": [
+                    "{{hotel_service}}"
+                  ],
+                  "path": [
+                    "hotel"
+                  ],
+                  "query": [
+                    {
+                      "key": "size",
+                      "value": "101"
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"request.invalid\",\n  \"data\": [\n    {\n      \"field\": \"size\",\n      \"message\": \"page.size.invalid\"\n    }\n  ],\n  \"time\": \"02/11/2026 22:30:00\"\n}"
+            },
             {
               "name": "Busca sem resultado (200 com data vazio)",
               "originalRequest": {

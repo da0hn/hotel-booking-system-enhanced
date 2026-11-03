@@ -30,6 +30,12 @@ class CommonsArchitectureTest {
     );
 
   @ArchTest
+  static final ArchRule corePaginationDoesNotDependOnSpringData = noClasses()
+    .that().resideInAnyPackage("com.hotel.booking.system.commons.core..")
+    .should().dependOnClassesThat().resideInAnyPackage("org.springframework.data..")
+    .because("o contrato de página é do domínio; só o adapter de persistência conhece Slice e Pageable");
+
+  @ArchTest
   static void importsNonEmptyProductionScope(final JavaClasses classes) {
     assertThat(classes.stream()).isNotEmpty();
     assertPackageIsPresent(classes, "com.hotel.booking.system.commons.core");

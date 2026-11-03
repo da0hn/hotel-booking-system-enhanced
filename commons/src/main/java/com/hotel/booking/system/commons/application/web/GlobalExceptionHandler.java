@@ -12,7 +12,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+import java.util.Optional;
 
 /**
  * Base dos advices HTTP dos serviços: toda falha de uma requisição sai no envelope
@@ -79,6 +82,38 @@ public abstract class GlobalExceptionHandler extends ResponseEntityExceptionHand
   ) {
     final var violations = exception.getBindingResult().getFieldErrors().stream()
       .map(error -> new ApiErrorResponse.FieldViolation(error.getField(), error.getDefaultMessage()))
+      .toList();
+    return this.handleExceptionInternal(
+      exception,
+      ApiErrorResponse.of(violations, ApplicationMessage.REQUEST_INVALID),
+      headers,
+      status,
+      request
+    );
+  }
+
+  /**
+   * Lista os parâmetros recusados pela validação no {@code data} do {@code 400}, no mesmo formato
+   * do {@link #handleMethodArgumentNotValid}. É o caso de uma restrição posta direto num parâmetro
+   * do controller, como o {@code @Min} de um {@code @RequestParam}: o Spring a avalia sozinho e
+   * lança esta exceção, e não a de campo de corpo.
+   *
+   * <p>O {@code field} é o nome do parâmetro Java, que coincide com o da requisição enquanto o
+   * {@code @RequestParam} não o renomeia; o {@code message} é a chave declarada na restrição.</p>
+   */
+  @Override
+  protected ResponseEntity<Object> handleHandlerMethodValidationException(
+    final HandlerMethodValidationException exception,
+    final HttpHeaders headers,
+    final HttpStatusCode status,
+    final WebRequest request
+  ) {
+    final var violations = exception.getParameterValidationResults().stream()
+      .flatMap(result -> result.getResolvableErrors().stream()
+        .map(error -> new ApiErrorResponse.FieldViolation(
+          Optional.ofNullable(result.getMethodParameter().getParameterName()).orElse(""),
+          error.getDefaultMessage()
+        )))
       .toList();
     return this.handleExceptionInternal(
       exception,
