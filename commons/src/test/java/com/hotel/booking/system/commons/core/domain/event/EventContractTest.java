@@ -169,10 +169,11 @@ class EventContractTest {
    * novo entre na cobertura sem ninguém precisar lembrar disso.
    * <p>
    * O critério é o pacote, e não {@code Event.class::isAssignableFrom}. O filtro por
-   * interface seria o reflexo natural e deixaria justamente as classes erradas de fora:
-   * {@code BookingRoomStatusUpdatedEvent} e {@code PaymentRequestedEvent} não implementam
-   * {@code Event}, e é sob a primeira que vivem as duas subclasses que quebraram na
-   * migração para o Jackson 3. A única exceção é nomeada.
+   * interface seria o reflexo natural, e um evento que esquecesse de implementar {@code Event}
+   * sumiria da varredura justamente quando o contrato precisa pegá-lo: foi o caso de
+   * {@code BookingRoomStatusUpdatedEvent} e de {@code PaymentRequestedEvent}, e é sob a primeira
+   * que vivem as duas subclasses que quebraram na migração para o Jackson 3. Hoje as duas
+   * implementam {@code Event}, mas a varredura não depende disso. A única exceção é nomeada.
    */
   private List<Class<?>> classesDeEvento() throws IOException {
     final var raiz = Path.of("target", "classes");

@@ -21,10 +21,10 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
   construtor direto, e o `@Builder.Default` do `eventId` não se aplica — o campo ausente (mensagem
   legada) chega `null` em vez de gerado. Todo evento declara `eventId` com `@Builder.Default`.
 - `EventContractTest`, no `commons`, varre o pacote e prova que cada classe concreta de
-  evento é construível e que o `eventId` sobrevive à conversão AMQP. Foi escrito depois que essa falha passou por um `mvn verify` verde:
-  ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
-  saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
-  cobertura sozinho; não há lista para manter.
+  evento é construível e que o `eventId` sobrevive à conversão AMQP. Foi escrito depois que
+  essa falha passou por um `mvn verify` verde: ela não aparece no arranque nem nos testes de
+  domínio, só no listener — serviços saudáveis, `POST /hotel/booking` respondendo 200 e a saga
+  parada. Evento novo entra na cobertura sozinho; não há lista para manter.
 
 ## Retry e DLQ: detalhes
 

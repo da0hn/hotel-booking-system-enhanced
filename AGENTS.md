@@ -118,7 +118,8 @@ uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 O módulo `e2e-tests` (Spock) sobe PostgreSQL, RabbitMQ e os quatro serviços como processos
 filhos e prova que a saga fecha: o `SagaIT` cobre pagamento aprovado, último quarto já
-ocupado, `booking-service` derrubado no meio da transação e pagamento recusado; o
+ocupado, `booking-service` derrubado no meio da transação, mensagem reentregue pelo broker ao
+`booking-service` e pagamento recusado; o
 `ActuatorExposureIT` e o `HttpErrorContractIT` conferem a fronteira HTTP. **O `mvn verify`
 comum não os roda**: o módulo só entra no reactor com o profile `e2e` (comando na tabela de
 *Comandos*), por decisão do mantenedor para poupar tempo de CI. Quem mexe no contrato de
@@ -369,8 +370,11 @@ escolha estão nos Javadocs; o que não se deduz do código:
   `IdempotentEventConsumer` está no contexto.
 - **O hotel também deduplica**, embora só publique: o que ele publica leva `eventId` novo, e o
   serviço seguinte não reconheceria a repetição.
-- **Mensagem legada, sem `eventId`, é processada sem deduplicação** (recebe um id gerado na
-  leitura), em vez de ir para a DLQ: recusá-la perderia reservas em voo no deploy.
+- **Mensagem legada, sem o campo `eventId`, é aceita**: o `@Builder.Default` gera um id na
+  leitura, então ela é registrada e processada como qualquer outra — nunca é reconhecida como
+  repetida e deixa uma linha órfã em `processed_event` até o expurgo —, em vez de ir para a DLQ:
+  recusá-la perderia reservas em voo no deploy. O `warn` do `IdempotentEventConsumer` cobre outro
+  caso, o campo presente e nulo ou em branco, que só um produtor com defeito gera.
 - **A chave de negócio é a segunda rede.** `BookingRoomUseCaseImpl` busca por `reservationOrderId`
   *antes* de validar disponibilidade e, se já há reserva, devolve a saída marcada `duplicate` — o
   handler não publica nada, porque a resposta da primeira vez foi confirmada pelo broker na mesma

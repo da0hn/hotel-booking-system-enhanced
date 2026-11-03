@@ -29,6 +29,13 @@ public class IdempotentEventConsumer {
   }
 
   /**
+   * Um {@code eventId} nulo ou em branco só chega aqui por um produtor com defeito, que
+   * serializou o campo vazio. A mensagem legada de verdade, anterior à #7, não tem o campo no
+   * JSON: o {@code @Builder.Default} gera um identificador na leitura, e ela segue o caminho
+   * normal — é registrada e processada, nunca reconhecida como repetida, e deixa uma linha órfã
+   * em {@code processed_event} até o expurgo. Aqui não há o que registrar, então o evento é
+   * processado sem deduplicação e o defeito fica no log.
+   *
    * @param event      o evento recebido
    * @param processing o efeito a aplicar, que roda só se o evento for novo
    * @return {@code true} se o efeito rodou; {@code false} se o evento era uma reentrega e foi
@@ -38,7 +45,7 @@ public class IdempotentEventConsumer {
     final var eventId = Optional.ofNullable(event.getEventId()).filter(id -> !id.isBlank());
     if (eventId.isEmpty()) {
       log.warn(
-        "Event without eventId (legacy message), processing without deduplication | type={}",
+        "Event with a null or blank eventId, processing without deduplication | type={}",
         event.getClass().getName()
       );
       processing.run();

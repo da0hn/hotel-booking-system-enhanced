@@ -4,6 +4,7 @@ import com.hotel.booking.system.commons.core.application.idempotency.IdempotentE
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterRetryConfiguration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterTopology;
 import com.hotel.booking.system.commons.infrastructure.messaging.EventMessageConverter;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.ProcessedEventPurgeJob;
 import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.QueueProperties;
 import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.RoutingKeyProperties;
@@ -80,6 +81,30 @@ class DeadLetterConfigurationTest {
         .hasSingleBean(MessageRecoverer.class)
         .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class)
         .hasSingleBean(IdempotentEventConsumer.class));
+  }
+
+  /**
+   * O {@code payment-service} guarda os {@code eventId} na memória da JVM, então a retenção é o que
+   * limita o mapa: uma hora no {@code application.yml}, e não os sete dias do padrão. Como o Boot
+   * ignora em silêncio uma chave que não existe, uma digitação em {@code app.idempotency.retention}
+   * faria o serviço cair nos sete dias sem nenhum aviso. O teste lê o arquivo de verdade e confere
+   * o que o job de expurgo enxerga.
+   */
+  @Test
+  @DisplayName("retém os eventos processados por 1 hora, lida do application.yml")
+  void retemOsEventosProcessadosPorUmaHora() throws IOException {
+    final var ambiente = ambienteDoApplicationYml();
+
+    new ApplicationContextRunner()
+      .withInitializer(context -> ambiente.getPropertySources().forEach(context.getEnvironment().getPropertySources()::addLast))
+      .withUserConfiguration(RabbitMQConfiguration.class)
+      .withBean(RoutingKeyProperties.class, () -> ROUTING_KEYS)
+      .withBean(QueueProperties.class, () -> QUEUES)
+      .withBean(ExchangeProperties.class, () -> EXCHANGES)
+      .withBean(JsonMapper.class, () -> JsonMapper.builder().build())
+      .withBean(RabbitTemplate.class, () -> mock(RabbitTemplate.class))
+      .run(context -> assertThat(context.getBean(ProcessedEventPurgeJob.class).retention())
+        .isEqualTo(Duration.ofHours(1)));
   }
 
   @Test

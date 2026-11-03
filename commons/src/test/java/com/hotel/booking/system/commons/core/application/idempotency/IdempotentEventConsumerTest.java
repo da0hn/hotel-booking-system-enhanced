@@ -117,12 +117,11 @@ class IdempotentEventConsumerTest {
   @ParameterizedTest
   @NullAndEmptySource
   @ValueSource(strings = {"  "})
-  @DisplayName("processa sem deduplicar o evento legado, sem eventId")
-  void processaSemDeduplicarEventoLegado(final String eventId) {
-    final var legado = mock(BookingRoomRequestedEvent.class);
-    when(legado.getEventId()).thenReturn(eventId);
+  @DisplayName("processa sem deduplicar o evento com eventId nulo ou em branco")
+  void processaSemDeduplicarEventoComEventIdNuloOuEmBranco(final String eventId) {
+    final var semIdentificador = BookingRoomRequestedEvent.builder().eventId(eventId).build();
 
-    final var processed = this.consumer.consume(legado, this.effects::incrementAndGet);
+    final var processed = this.consumer.consume(semIdentificador, this.effects::incrementAndGet);
 
     assertThat(processed).isTrue();
     assertThat(this.effects).hasValue(1);

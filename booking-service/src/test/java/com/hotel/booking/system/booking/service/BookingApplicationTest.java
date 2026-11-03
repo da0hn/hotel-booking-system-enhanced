@@ -145,13 +145,27 @@ class BookingApplicationTest {
   }
 
   /**
+   * O que o caso de uso deve informar para cada status da reserva existente. Fica escrito aqui, e
+   * não derivado do código, para que trocar duas entradas do mapa de produção deixe o teste
+   * vermelho.
+   */
+  private static final Map<BookingStatus, CustomerReservationStatus> REPORTED_STATUS = Map.of(
+    BookingStatus.PENDING, CustomerReservationStatus.AWAITING_PAYMENT,
+    BookingStatus.CONFIRMED, CustomerReservationStatus.RESERVED,
+    BookingStatus.CANCELED, CustomerReservationStatus.PAYMENT_FAILED
+  );
+
+  /**
    * Percorre o enum inteiro: um {@code BookingStatus} novo sem entrada no mapa do caso de uso
-   * viraria {@code null} no status da saída, e a repetição estouraria longe de onde nasceu.
+   * viraria {@code null} no status da saída, e a repetição estouraria longe de onde nasceu. Sem
+   * entrada em {@code REPORTED_STATUS}, o próprio teste acusa o valor novo.
    */
   @ParameterizedTest
   @EnumSource(BookingStatus.class)
   @DisplayName("informa o status que a reserva existente tem na saga, seja qual for o status dela")
   void repeticaoInformaOStatusDaReservaExistente(final BookingStatus status) {
+    final var expected = Optional.ofNullable(REPORTED_STATUS.get(status))
+      .orElseThrow(() -> new AssertionError("BookingStatus sem status esperado neste teste: " + status));
     final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
       new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
     final var existing = this.mapper.bookingRoomInputToBooking(
@@ -162,7 +176,7 @@ class BookingApplicationTest {
 
     final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
 
-    assertThat(output.status()).isNotNull();
+    assertThat(output.status()).isEqualTo(expected);
     assertThat(output.duplicate()).isTrue();
   }
 

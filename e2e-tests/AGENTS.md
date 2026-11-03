@@ -9,15 +9,16 @@ Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos fil
 `E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
 `Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
 
-Hoje há três. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
-dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
-bancos. Os quatro cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
-(`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio
-da transação (a saga retoma ao reiniciar, com uma única reserva) e pagamento recusado
-(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
-fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
-fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
-saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
+Hoje há três. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele dispara
+`POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos bancos. Os
+cinco cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
+(`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio da
+transação (a saga retoma ao reiniciar, com uma única reserva), mensagem reentregue pelo broker
+ao `booking-service` (descartada pelo `eventId`, sem segunda reserva nem segunda resposta) e
+pagamento recusado (`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de
+eventos, na fronteira transacional ou na regra de disponibilidade: um evento movido de pacote,
+um pacote fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro
+serviços saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
 
 Os outros dois não tocam na saga. O `ActuatorExposureIT` bate nos quatro serviços e confere o
 que o Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). O
@@ -55,18 +56,30 @@ O que não se deduz do código:
   responde que não encontra o projeto `e2e-tests`.
 - **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
   `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
-  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos três
+  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos quatro
   primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
   quarto, e se o primeiro falhar os outros ainda dizem se o resto da saga funciona. O
-  custo é que uma saga quebrada leva ~6 min para falhar (4 cenários × 90 s de espera).
+  custo é que uma saga quebrada leva ~7 min para falhar (5 cenários × 90 s de espera).
 - **A morte do consumidor se provoca com um lock, não com cronometragem.** O cenário do
   `booking-service` morto trava `booking.booking` com `lock table ... access exclusive` numa
   conexão do dono do container e espera, em `pg_stat_activity`, o serviço parar num `Lock`:
   só então a mensagem está recebida, sem ack e dentro da transação, e o `kill` é seguro. O
   `ServiceProcess.kill()` encerra sem aviso (`destroyForcibly`); o `stop()` pede o
   encerramento e espera. A janela entre o commit e o ack, que repetiria o efeito, não tem
-  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` (a garantia crua do broker) e no `BookingIdempotencyIT` (a
-  deduplicação, #7).
+  gancho para ser provocada daqui; a reentrega em si se simula no cenário seguinte (abaixo). A
+  garantia crua do broker está no `DeadLetterRetryIT` e a deduplicação (#7), no
+  `BookingIdempotencyIT` e neste módulo.
+- **A reentrega se simula com filas-espiãs, não com JSON escrito à mão.** Antes da reserva o
+  cenário liga duas filas descartáveis ao exchange `exchange.booking-room`, pela API de
+  gerenciamento do RabbitMQ (a imagem `rabbitmq:3-management` a expõe, e
+  `E2eEnvironment.brokerManagementUrl()` entrega a URL). Uma recebe a cópia do pedido que o
+  `hotel-service` publicou, de onde sai a mensagem real, com o `eventId` e o `__TypeId__` dela,
+  republicada duas vezes; a outra conta as respostas do booking, que não podem aumentar. O que
+  prova que foi o `eventId` — e não a chave de negócio, que também impediria a segunda reserva —
+  é a linha de log `Event already processed, discarding redelivery` do `IdempotentEventConsumer`,
+  contada por `E2eEnvironment.bookingLogCount`: mudar esse texto quebra o cenário, de propósito.
+  As filas são lidas pelo `get` da API, e não pelas contagens do gerenciamento, que só se
+  atualizam a cada poucos segundos.
 - **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
   `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
   `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do

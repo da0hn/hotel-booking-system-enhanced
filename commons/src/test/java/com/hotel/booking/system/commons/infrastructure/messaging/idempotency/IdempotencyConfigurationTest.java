@@ -10,9 +10,13 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.Duration;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 
 @DisplayName("Configuração da idempotência de consumo")
 class IdempotencyConfigurationTest {
@@ -63,6 +67,24 @@ class IdempotencyConfigurationTest {
       .withUserConfiguration(InMemoryIdempotencyConfiguration.class)
       .run(context -> assertThat(context.getBean(ProcessedEventPurgeJob.class).retention())
         .isEqualTo(Duration.ofDays(7)));
+  }
+
+  /**
+   * Prova o disparo, e não só a existência do bean: remover o {@code @EnableScheduling} da
+   * configuração ou o {@code @Scheduled} do job deixaria os testes acima verdes e a tabela
+   * {@code processed_event} crescendo sem limite. O intervalo de 50 ms vale para o atraso inicial
+   * e para o intervalo entre execuções; o padrão de uma hora nunca dispararia dentro de um teste.
+   */
+  @Test
+  @DisplayName("dispara o expurgo sozinho no intervalo de app.idempotency.purge-interval")
+  void disparaOExpurgoNoIntervaloConfigurado() {
+    final var repository = mock(ProcessedEventRepository.class);
+
+    this.runner
+      .withBean(ProcessedEventRepository.class, () -> repository)
+      .withUserConfiguration(IdempotencyConfiguration.class)
+      .withPropertyValues("app.idempotency.purge-interval=PT0.05S")
+      .run(context -> verify(repository, timeout(2000).atLeastOnce()).deleteRegisteredBefore(any(Instant.class)));
   }
 
   @Configuration(proxyBeanMethods = false)

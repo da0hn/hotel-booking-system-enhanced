@@ -7,9 +7,9 @@ import com.hotel.booking.system.booking.service.infrastructure.messaging.publish
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.*;
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
-import com.hotel.booking.system.commons.core.application.idempotency.ProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageProperties;
@@ -43,7 +43,7 @@ class BookingMessagingTest {
     final var changeHandler = mock(BookingRoomStatusChangedHandler.class);
     final var request = BookingRoomRequestedEvent.builder().build();
     final var change = BookingRoomPaymentCompleted.builder().build();
-    final var consumer = new IdempotentEventConsumer(registroQueAceitaTudo());
+    final var consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
     new BookingRoomRequestedRabbitMQListener(requestHandler, consumer).listen(request);
     new BookingRoomStatusChangedRabbitMQListener(changeHandler, consumer).listen(change);
     verify(requestHandler).handle(request);
@@ -53,15 +53,15 @@ class BookingMessagingTest {
   /**
    * Cenário 1 da issue #7: o mesmo evento entregue duas vezes é processado uma só. A segunda
    * entrega retorna normalmente — é isso que confirma a mensagem no broker — sem chamar o handler.
+   * O descarte nasce do {@code eventId} do evento, e não de um roteiro do repositório: um evento
+   * novo do mesmo tipo, com outro {@code eventId}, é processado.
    */
   @Test
   @DisplayName("descarta a reentrega do mesmo eventId sem chamar o handler")
   void listenersDescartamReentregaSemChamarOHandler() {
     final var requestHandler = mock(BookingRoomRequestedHandler.class);
     final var changeHandler = mock(BookingRoomStatusChangedHandler.class);
-    final var registro = mock(ProcessedEventRepository.class);
-    when(registro.register(anyString(), anyString())).thenReturn(true, false, true, false);
-    final var consumer = new IdempotentEventConsumer(registro);
+    final var consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
     final var requestListener = new BookingRoomRequestedRabbitMQListener(requestHandler, consumer);
     final var changeListener = new BookingRoomStatusChangedRabbitMQListener(changeHandler, consumer);
     final var request = BookingRoomRequestedEvent.builder().build();
@@ -74,6 +74,12 @@ class BookingMessagingTest {
 
     verify(requestHandler, times(1)).handle(request);
     verify(changeHandler, times(1)).handle(change);
+
+    final var outroPedido = BookingRoomRequestedEvent.builder().build();
+    requestListener.listen(outroPedido);
+
+    assertThat(outroPedido.getEventId()).isNotEqualTo(request.getEventId());
+    verify(requestHandler, times(1)).handle(outroPedido);
   }
 
   /**
@@ -86,15 +92,9 @@ class BookingMessagingTest {
     final var requestHandler = mock(BookingRoomRequestedHandler.class);
     final var falha = new IllegalStateException("banco indisponível");
     doThrow(falha).when(requestHandler).handle(any());
-    final var listener = new BookingRoomRequestedRabbitMQListener(requestHandler, new IdempotentEventConsumer(registroQueAceitaTudo()));
+    final var listener = new BookingRoomRequestedRabbitMQListener(requestHandler, new IdempotentEventConsumer(new InMemoryProcessedEventRepository()));
 
     assertThatThrownBy(() -> listener.listen(BookingRoomRequestedEvent.builder().build())).isSameAs(falha);
-  }
-
-  private static ProcessedEventRepository registroQueAceitaTudo() {
-    final var registro = mock(ProcessedEventRepository.class);
-    when(registro.register(anyString(), anyString())).thenReturn(true);
-    return registro;
   }
 
   /**
