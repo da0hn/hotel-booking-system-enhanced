@@ -1,6 +1,8 @@
 package com.hotel.booking.system.customer.service;
 
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.core.domain.event.customer.*;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import com.hotel.booking.system.customer.service.infrastructure.configuration.*;
 import com.hotel.booking.system.customer.service.application.service.impl.CustomerApplicationServiceImpl;
@@ -31,6 +33,7 @@ class CustomerFlowTest {
   private final CustomerId customerId = CustomerId.newInstance();
   private final ReservationOrderId orderId = ReservationOrderId.newInstance();
   private final HotelId hotelId = HotelId.newInstance();
+  private final IdempotentEventConsumer consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
 
   @Test
   @DisplayName("declara transação de leitura no acesso HTTP e de escrita no listener")
@@ -55,7 +58,7 @@ class CustomerFlowTest {
       new InitializeCustomerBookingUseCaseImpl(this.customers, this.orders, mapper),
       new UpdateCustomerBookingStatusUseCaseImpl(this.orders),
       new UpdateCustomerBookingFailureStatusUseCaseImpl(this.orders), mapper);
-    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler);
+    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler, this.consumer);
     listener.listen(List.of(this.initiated()));
     final var captured = ArgumentCaptor.forClass(ReservationOrder.class);
     verify(this.orders).save(captured.capture());
@@ -114,7 +117,7 @@ class CustomerFlowTest {
     final var handler = mock(com.hotel.booking.system.customer.service.core.ports.api.messaging.CustomerBookingStatusUpdatedHandler.class);
     final var event = this.initiated();
     doThrow(new IllegalStateException("falha de persistência")).when(handler).handle(event);
-    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler);
+    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler, this.consumer);
     assertThatThrownBy(() -> listener.listen(List.of(event, this.initiated())))
       .isInstanceOf(IllegalStateException.class)
       .hasMessage("Failed to process CustomerBookingStatusUpdatedEvent")
@@ -122,6 +125,55 @@ class CustomerFlowTest {
     listener.listen(List.of());
     verify(handler, times(1)).handle(event);
     verifyNoMoreInteractions(handler);
+  }
+
+  @Test
+  @DisplayName("processa uma só vez o evento repetido, no mesmo lote ou em outra entrega")
+  void listenerDescartaEventoRepetido() {
+    final var handler = mock(com.hotel.booking.system.customer.service.core.ports.api.messaging.CustomerBookingStatusUpdatedHandler.class);
+    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler, this.consumer);
+    final var event = this.initiated();
+    listener.listen(List.of(event, event));
+    listener.listen(List.of(event));
+    verify(handler, times(1)).handle(event);
+  }
+
+  /**
+   * Regra 3 da issue #7: a deduplicação por {@code eventId} não vê estes eventos como repetidos,
+   * porque cada um tem o seu. É a projeção que os reconhece — inclusive a reentrega tardia do
+   * evento inicial, que reescreveria o pedido de volta para {@code AWAITING_RESERVATION}.
+   */
+  @Test
+  @DisplayName("não repete a transição que chega em outro evento, com eventId novo")
+  void naoRepeteATransicaoQueChegaEmOutroEvento() {
+    when(this.customers.customerExistsBy(this.customerId)).thenReturn(true);
+    final var mapper = new CustomerUseCaseMapperImpl();
+    final var handler = this.beans.customerBookingStatusUpdatedHandler(
+      new InitializeCustomerBookingUseCaseImpl(this.customers, this.orders, mapper),
+      new UpdateCustomerBookingStatusUseCaseImpl(this.orders),
+      new UpdateCustomerBookingFailureStatusUseCaseImpl(this.orders), mapper);
+    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler, this.consumer);
+    listener.listen(List.of(this.initiated()));
+    final var captured = ArgumentCaptor.forClass(ReservationOrder.class);
+    verify(this.orders).save(captured.capture());
+    final var order = captured.getValue();
+    when(this.orders.findById(this.orderId)).thenReturn(order);
+    when(this.orders.exists(this.orderId)).thenReturn(true);
+
+    listener.listen(List.of(this.paymentRequested()));
+    listener.listen(List.of(this.paymentRequested()));
+    listener.listen(List.of(this.initiated()));
+
+    assertThat(order.getTimeline()).extracting(ReservationOrderTimeline::getStatus)
+      .containsExactly(CustomerReservationStatus.AWAITING_RESERVATION, CustomerReservationStatus.AWAITING_PAYMENT);
+    assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+    verify(this.orders, times(2)).save(any(ReservationOrder.class));
+  }
+
+  private CustomerBookingPaymentRequestedEvent paymentRequested() {
+    return CustomerBookingPaymentRequestedEvent.builder()
+      .customerId(this.customerId.toString()).reservationOrderId(this.orderId.toString())
+      .status(CustomerReservationStatus.AWAITING_PAYMENT).build();
   }
 
   private CustomerBookingInitiatedEvent initiated() {

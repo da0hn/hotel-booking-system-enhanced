@@ -1,6 +1,7 @@
 package com.hotel.booking.system.e2e;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -191,6 +192,24 @@ final class ServiceProcess {
 
   String name() {
     return this.name;
+  }
+
+  /**
+   * Quantas linhas do log do serviço contêm o trecho. O log é acumulado entre os reinícios do
+   * mesmo serviço, então a contagem atravessa uma queda e uma subida de volta.
+   */
+  long countLogLines(final String fragment) {
+    try {
+      if (!Files.exists(this.log)) {
+        return 0;
+      }
+      try (var lines = Files.lines(this.log)) {
+        return lines.filter(line -> line.contains(fragment)).count();
+      }
+    }
+    catch (final IOException e) {
+      throw new UncheckedIOException("Log ilegível: " + this.log, e);
+    }
   }
 
   /**

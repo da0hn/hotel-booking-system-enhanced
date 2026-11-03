@@ -15,6 +15,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.SpringApplication;
@@ -95,6 +96,100 @@ class BookingApplicationTest {
       assertThat(failed.getCheckIn()).isEqualTo(this.checkIn);
       assertThat(failed.getCheckOut()).isEqualTo(this.checkIn.plusDays(3));
     });
+  }
+
+  /**
+   * Cenário 3 da issue #7: dois {@code BookingRoomRequestedEvent} com o mesmo
+   * {@code reservationOrderId} e {@code eventId} diferentes — a deduplicação por {@code eventId}
+   * não os distingue, e quem barra é a chave de negócio. O segundo não pode gravar outra reserva,
+   * nem rodar a verificação de disponibilidade (que enxergaria a reserva do primeiro como
+   * ocupação e responderia uma <em>falha</em> para um pedido que está reservado), nem publicar
+   * resposta: a primeira só foi gravada porque a publicação dela foi confirmada pelo broker na
+   * mesma transação.
+   */
+  @Test
+  @DisplayName("não grava, não revalida nem publica quando o pedido já tem reserva")
+  void pedidoJaReservadoNaoCriaOutraReservaNemPublica() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    final var existing = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    existing.initialize();
+    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
+    final var firstDelivery = this.event(new BigDecimal("20.2468"));
+    final var secondDelivery = this.event(new BigDecimal("20.2468"));
+    assertThat(secondDelivery.getEventId()).isNotEqualTo(firstDelivery.getEventId());
+
+    new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(secondDelivery);
+
+    verify(this.repository, never()).save(any());
+    verify(this.repository, never()).findBookingByRoomIdAndPeriod(any(), any());
+    verifyNoInteractions(this.publisher);
+  }
+
+  @Test
+  @DisplayName("devolve a reserva existente marcada como repetida")
+  void pedidoJaReservadoDevolveASaidaMarcadaComoRepetida() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    final var existing = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    existing.initialize();
+    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
+
+    final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+
+    assertThat(output.duplicate()).isTrue();
+    assertThat(output.booking()).isSameAs(existing);
+    assertThat(output.failureMessages().isNotEmpty()).isFalse();
+  }
+
+  /**
+   * O que o caso de uso deve informar para cada status da reserva existente. Fica escrito aqui, e
+   * não derivado do código, para que trocar duas entradas do mapa de produção deixe o teste
+   * vermelho.
+   */
+  private static final Map<BookingStatus, CustomerReservationStatus> REPORTED_STATUS = Map.of(
+    BookingStatus.PENDING, CustomerReservationStatus.AWAITING_PAYMENT,
+    BookingStatus.CONFIRMED, CustomerReservationStatus.RESERVED,
+    BookingStatus.CANCELED, CustomerReservationStatus.PAYMENT_FAILED
+  );
+
+  /**
+   * Percorre o enum inteiro: um {@code BookingStatus} novo sem entrada no mapa do caso de uso
+   * viraria {@code null} no status da saída, e a repetição estouraria longe de onde nasceu. Sem
+   * entrada em {@code REPORTED_STATUS}, o próprio teste acusa o valor novo.
+   */
+  @ParameterizedTest
+  @EnumSource(BookingStatus.class)
+  @DisplayName("informa o status que a reserva existente tem na saga, seja qual for o status dela")
+  void repeticaoInformaOStatusDaReservaExistente(final BookingStatus status) {
+    final var expected = Optional.ofNullable(REPORTED_STATUS.get(status))
+      .orElseThrow(() -> new AssertionError("BookingStatus sem status esperado neste teste: " + status));
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    final var existing = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    existing.initialize();
+    existing.changeStatusTo(status);
+    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
+
+    final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+
+    assertThat(output.status()).isEqualTo(expected);
+    assertThat(output.duplicate()).isTrue();
+  }
+
+  @Test
+  @DisplayName("marca como nova a reserva criada pela primeira vez")
+  void reservaNovaNaoEhMarcadaComoRepetida() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+
+    final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+
+    assertThat(output.duplicate()).isFalse();
+    verify(this.repository).save(output.booking());
   }
 
   @ParameterizedTest

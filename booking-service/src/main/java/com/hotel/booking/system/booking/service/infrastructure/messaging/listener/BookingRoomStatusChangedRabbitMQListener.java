@@ -3,6 +3,7 @@ package com.hotel.booking.system.booking.service.infrastructure.messaging.listen
 import com.hotel.booking.system.booking.service.core.ports.api.messaging.BookingRoomStatusChangedHandler;
 import com.hotel.booking.system.booking.service.core.ports.spi.messaging.listener.BookingRoomStatusChangedListener;
 import com.hotel.booking.system.commons.core.application.annotation.Listener;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomStatusUpdatedEvent;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,11 +17,13 @@ public class BookingRoomStatusChangedRabbitMQListener implements BookingRoomStat
 
   private final BookingRoomStatusChangedHandler handler;
 
+  private final IdempotentEventConsumer idempotentEventConsumer;
+
   @Override
   @RabbitListener(queues = "${app.rabbitmq.queue.booking-room-status-changed}")
   @Transactional
   public void listen(final BookingRoomStatusUpdatedEvent event) {
     log.info("BookingRoomStatusUpdatedEvent received: {}, ", event);
-    this.handler.handle(event);
+    this.idempotentEventConsumer.consume(event, () -> this.handler.handle(event));
   }
 }

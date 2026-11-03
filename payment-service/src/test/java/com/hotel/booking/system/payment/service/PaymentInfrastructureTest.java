@@ -1,6 +1,8 @@
 package com.hotel.booking.system.payment.service;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.event.PaymentCompletedEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.PaymentStatus;
@@ -83,8 +85,12 @@ class PaymentInfrastructureTest {
   void forwardsIncomingEventAndPublishesResponseOnConfiguredRoute() {
     final var handler = mock(PaymentRequestedHandler.class);
     final var request = PaymentRequestedEvent.builder().reservationOrderId("order").build();
-    new PaymentRequestedListenerImpl(handler).listen(request);
+    final var consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
+    final var listener = new PaymentRequestedListenerImpl(handler, consumer);
+    listener.listen(request);
     verify(handler).handle(request);
+    listener.listen(request);
+    verify(handler, times(1)).handle(request);
 
     final var template = mock(RabbitTemplate.class);
     final var response = PaymentCompletedEvent.builder().reservationOrderId("order").build();

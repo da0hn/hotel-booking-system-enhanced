@@ -193,6 +193,23 @@ final class E2eEnvironment implements AutoCloseable {
     this.booking.awaitHealthy(STARTUP_TIMEOUT);
   }
 
+  /**
+   * URL da API de gerenciamento do RabbitMQ (a imagem {@code rabbitmq:3-management} a expõe), com
+   * o mesmo usuário e senha que os serviços usam. É por ela que um teste enxerga e injeta
+   * mensagens no broker sem depender de um cliente AMQP.
+   */
+  String brokerManagementUrl() {
+    return this.broker.getHttpUrl();
+  }
+
+  /**
+   * Quantas linhas do log do {@code booking-service} contêm o trecho, somando as execuções do
+   * serviço desde o início do ambiente.
+   */
+  long bookingLogCount(final String fragment) {
+    return this.booking.countLogLines(fragment);
+  }
+
   String hotelUrl() {
     return this.hotel.baseUrl();
   }
