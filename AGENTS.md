@@ -371,7 +371,8 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   ordem**, e o retry deixa de segurar as mensagens seguintes — enquanto uma espera o backoff, as
   outras andam. Todo handler que lê, altera e grava o mesmo agregado tem de ser seguro sob
   concorrência. O `booking-service` já é, pelo lock do quarto; o `customer-service` ainda não
-  (`UpdateCustomerBookingStatusUseCaseImpl` lê o pedido e grava sem lock nem `@Version`).
+  (`UpdateCustomerBookingStatusUseCaseImpl` lê o pedido e grava sem lock nem `@Version`, e o
+  `current_status` fica com o de quem commita por último: issue #53).
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real
