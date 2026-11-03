@@ -423,10 +423,13 @@ O que não se deduz do código:
 ### Paginação
 
 O contrato de página é do domínio e mora no `commons`: `Page<T>` e `PageRequest`
-(`core/domain/pagination`), sem nenhum tipo do Spring Data. O `Slice` e o `Pageable` existem só no
-`HotelRepositoryAdapter`, que converte nos dois sentidos, e um ArchUnit em cada módulo recusa a
-dependência do `core` no `org.springframework.data`. No HTTP, o envelope de página é o de lista
-mais o campo `page` (`PageResponse` estende `CollectionResponse`); a resposta de lista não o ganha.
+(`core/domain/pagination`), sem nenhum tipo do Spring Data. O `Slice` e o `Pageable` ficam só na
+infraestrutura de persistência do `hotel-service`: o `HotelJpaRepository` os declara e o
+`HotelRepositoryAdapter` converte nos dois sentidos. Um ArchUnit no `commons` e outro no
+`hotel-service` recusam a dependência do `core` no `org.springframework.data`; os outros serviços
+com banco não têm essa regra, então quem paginar o `booking-service` ou o `customer-service` a
+acrescenta ao `*ArchitectureTest` dele. No HTTP, o envelope de página é o de lista mais o campo
+`page` (`PageResponse` estende `CollectionResponse`); a resposta de lista não o ganha.
 
 - **`GET /hotel` tem dois modos, e é a requisição que escolhe.** Sem `page` nem `size`, responde a
   lista de sempre: sem ordem garantida e sem `page`. Com qualquer um dos dois, responde a página, e
@@ -447,7 +450,12 @@ mais o campo `page` (`PageResponse` estende `CollectionResponse`); a resposta de
   de valer sem aviso. O teto de 100 é do `GET /hotel` (`HotelController`), não do `PageRequest`, que
   só recusa o que não faz sentido (página negativa, tamanho menor que 1).
 - **Página além do fim é 200 com `data` vazio**, pelo mesmo motivo da busca sem resultado: zero
-  itens é resposta válida, não ausência de recurso.
+  itens é resposta válida, não ausência de recurso. Vale também para o `page` que não cabe no
+  `int` do Spring Data JPA (`page × size` acima de `Integer.MAX_VALUE`, como `?page=2147483647`
+  ou `?page=21474837&size=100`): o `PageRequest` calcula o offset em `long`, mas o Spring Data o
+  converte para `int` e lança `InvalidDataAccessApiUsageException`, que viraria um 500. O
+  `HotelRepositoryAdapter` responde a página vazia sem consultar o banco nesse caso, e `page`
+  não tem `@Max` por isso: um teto em `page` abriria uma exceção à regra de que o fim não é erro.
 - **Limite conhecido: a busca resolve os quartos hotel a hotel.** `rooms` é `LAZY` e o mapper os
   lê dentro da transação de leitura, então uma página de N hotéis faz até N consultas de quartos
   (lido no código, não medido); `locality` e `category` são `@ManyToOne` `EAGER` e saem uma vez por

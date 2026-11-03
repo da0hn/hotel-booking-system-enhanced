@@ -5,6 +5,7 @@ import com.hotel.booking.system.hotel.service.infrastructure.db.entity.HotelEnti
 import com.hotel.booking.system.hotel.service.infrastructure.db.entity.LocalityEntity;
 import com.hotel.booking.system.hotel.service.infrastructure.db.repository.HotelJpaRepository;
 import jakarta.persistence.EntityManager;
+import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -124,6 +125,35 @@ class HotelJpaRepositoryIT extends AbstractDatabaseIT {
 
     assertThat(pagina.getContent()).hasSize(5);
     assertThat(pagina.hasNext()).isFalse();
+  }
+
+  /**
+   * Trava a decisão central da paginação: {@code hasNext} sai do elemento extra de um
+   * {@code Slice}, sem um {@code COUNT} por requisição. Se o retorno virasse {@code Page}, os
+   * outros testes continuariam verdes (só leem {@code getContent()} e {@code hasNext()}) e cada
+   * busca passaria a emitir duas consultas; só a contagem de execuções acusa isso.
+   *
+   * <p>As estatísticas do Hibernate são ligadas só durante o teste, para não pagar um contexto do
+   * Spring à parte por uma propriedade.</p>
+   */
+  @Test
+  @DisplayName("a página sai de uma única consulta, sem COUNT")
+  void paginaSaiDeUmaUnicaConsultaSemCount() {
+    final var statistics = this.entityManager.getEntityManagerFactory()
+      .unwrap(SessionFactory.class)
+      .getStatistics();
+    statistics.setStatisticsEnabled(true);
+    try {
+      statistics.clear();
+
+      final var pagina = this.repository.findAvailableHotelPageByParameters(null, null, null, null, pagina(0, 2));
+
+      assertThat(pagina.getContent()).hasSize(2);
+      assertThat(pagina.hasNext()).isTrue();
+      assertThat(statistics.getQueryExecutionCount()).isEqualTo(1L);
+    } finally {
+      statistics.setStatisticsEnabled(false);
+    }
   }
 
   @Test

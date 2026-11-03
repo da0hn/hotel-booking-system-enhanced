@@ -75,6 +75,10 @@ public record Page<T>(
 
   /**
    * Quantas páginas o total comporta; vazio quando o total não foi contado.
+   *
+   * @throws ArithmeticException se o número de páginas não cabe em {@code int}: só acontece com
+   *                             mais de {@code Integer.MAX_VALUE} páginas, e saturar devolveria um
+   *                             número errado sem aviso
    */
   public Optional<Integer> totalPages() {
     return this.totalElements.map(total -> Math.toIntExact(Math.ceilDiv(total, this.size())));
@@ -84,7 +88,7 @@ public record Page<T>(
    * Transforma o conteúdo e preserva tudo o mais: a página pedida, {@code hasNext} e o total.
    */
   public <R> Page<R> map(final Function<? super T, ? extends R> mapper) {
-    final List<R> mapped = this.content.stream().<R>map(mapper).toList();
+    final var mapped = this.content.stream().<R>map(mapper).toList();
     return new Page<>(mapped, this.request, this.hasNext, this.totalElements);
   }
 }

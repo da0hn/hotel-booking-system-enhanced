@@ -23,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -76,7 +75,7 @@ public class HotelController {
     final var pageNumber = Optional.ofNullable(page);
     final var pageSize = Optional.ofNullable(size);
     if (pageNumber.isEmpty() && pageSize.isEmpty()) {
-      final List<SearchHotelAvailableOutput> output = this.hotelApplicationService.searchHotelAvailableBy(input);
+      final var output = this.hotelApplicationService.searchHotelAvailableBy(input);
       return ResponseEntityAdapter.items(output);
     }
     final var pageRequest = PageRequest.of(

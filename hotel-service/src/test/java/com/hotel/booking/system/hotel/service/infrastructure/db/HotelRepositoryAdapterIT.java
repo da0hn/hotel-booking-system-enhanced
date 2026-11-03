@@ -15,6 +15,8 @@ import com.hotel.booking.system.hotel.service.infrastructure.db.repository.adapt
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import java.math.BigDecimal;
@@ -116,6 +118,31 @@ class HotelRepositoryAdapterIT extends AbstractDatabaseIT {
     assertThat(alemDoFim.content()).isEmpty();
     assertThat(alemDoFim.number()).isEqualTo(9);
     assertThat(alemDoFim.hasNext()).isFalse();
+  }
+
+  /**
+   * O Spring Data JPA converte o offset para {@code int} e lança
+   * {@code InvalidDataAccessApiUsageException} quando ele passa de {@code Integer.MAX_VALUE}. A
+   * página tão além do fim é uma página vazia, como qualquer outra além do fim, e não um erro: a
+   * linha em que o offset ainda cabe no {@code int} ({@code 2147483647}) continua indo ao banco.
+   */
+  @ParameterizedTest(name = "page={0} size={1}")
+  @CsvSource({
+    "21474836, 100",
+    "2147483647, 1",
+    "1073741824, 2",
+    "21474837, 100",
+    "2147483647, 20"
+  })
+  @DisplayName("a página cujo offset estoura o int é uma página vazia, e não um erro")
+  void paginaComOffsetAlemDoIntDevolvePaginaVazia(final int number, final int size) {
+    final var page = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(number, size));
+
+    assertThat(page.content()).isEmpty();
+    assertThat(page.number()).isEqualTo(number);
+    assertThat(page.size()).isEqualTo(size);
+    assertThat(page.hasNext()).isFalse();
+    assertThat(page.totalElements()).isEmpty();
   }
 
   @Test

@@ -56,6 +56,12 @@ public class HotelRepositoryAdapter implements HotelRepository {
   /**
    * Converte o {@code Slice} do Spring Data na {@link Page} do domínio. O {@code Pageable} sai
    * sem {@code Sort}: a ordem {@code name, id} está na própria consulta.
+   *
+   * <p>O Spring Data JPA converte o offset para {@code int} e lança
+   * {@code InvalidDataAccessApiUsageException} quando ele passa de {@code Integer.MAX_VALUE}, o
+   * que o {@link PageRequest} (offset em {@code long}) não impede. Nenhuma tabela tem tantas
+   * linhas, então uma página nesse ponto é uma página além do fim: responde vazia, sem consultar
+   * o banco, em vez de deixar a exceção virar um 500.</p>
    */
   @Override
   public Page<SearchHotelAvailableQueryResult> searchHotelAvailableBy(
@@ -65,6 +71,9 @@ public class HotelRepositoryAdapter implements HotelRepository {
     final String state,
     final PageRequest pageRequest
   ) {
+    if (pageRequest.offset() > Integer.MAX_VALUE) {
+      return Page.withoutTotal(List.of(), pageRequest, false);
+    }
     final var slice = this.hotelJpaRepository.findAvailableHotelPageByParameters(
       name,
       category,

@@ -41,6 +41,19 @@ class HttpErrorContractIT extends Specification {
 
   static final int SEEDED_HOTELS = 5
 
+  /**
+   * Os nomes do seed da V010 em ordem alfabética. A migration insere a "Villa Guiamares" antes da
+   * "Canto dos Pássaros", então sem o {@code ORDER BY} a leitura sequencial devolveria as duas
+   * trocadas.
+   */
+  static final List<String> SEEDED_HOTEL_NAMES = [
+    'Amazon Plaza Hotel',
+    'Getúlio Hotel',
+    'Hotel Taiamã',
+    'Pousada Canto dos Pássaros',
+    'Pousada Villa Guiamares'
+  ]
+
   static final HttpClient HTTP = HttpClient.newHttpClient()
 
   @Shared
@@ -145,13 +158,26 @@ class HttpErrorContractIT extends Specification {
     beyond.body.page == [number: 9, size: 20, hasNext: false]
   }
 
+  def "a página cujo offset estoura o int responde 200 com data vazio, e não 500"() {
+    when:
+    def huge = hotelSearch('page=21474837&size=100')
+    def maxPage = hotelSearch('page=2147483647')
+
+    then:
+    huge.status == 200
+    huge.body.data == []
+    huge.body.page == [number: 21474837, size: 100, hasNext: false]
+    maxPage.status == 200
+    maxPage.body.data == []
+    maxPage.body.page == [number: 2147483647, size: 20, hasNext: false]
+  }
+
   def "a busca de hotéis lista as páginas por nome, sem repetir nem omitir"() {
     when:
     def names = (0..2).collectMany { hotelSearch("page=${it}&size=2").body.data*.name }
 
     then:
-    names.size() == SEEDED_HOTELS
-    names.toSet().size() == SEEDED_HOTELS
+    names == SEEDED_HOTEL_NAMES
   }
 
   def "#parameter=#value responde 400 com o campo e a chave da restrição"() {

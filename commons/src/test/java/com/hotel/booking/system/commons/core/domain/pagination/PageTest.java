@@ -128,6 +128,38 @@ class PageTest {
   }
 
   @Test
+  @DisplayName("recusa um total negativo")
+  void recusaTotalNegativo() {
+    assertThatThrownBy(() -> Page.withTotal(List.of(), PageRequest.of(0, 20), -1L))
+      .isInstanceOf(IllegalArgumentException.class)
+      .hasMessageContaining("-1");
+  }
+
+  @Test
+  @DisplayName("recusa conteúdo, página pedida e total nulos")
+  void recusaArgumentosNulos() {
+    final var request = PageRequest.of(0, 20);
+
+    assertThatThrownBy(() -> new Page<String>(null, request, false, Optional.empty()))
+      .isInstanceOf(NullPointerException.class)
+      .hasMessage("content");
+    assertThatThrownBy(() -> new Page<>(List.of(), null, false, Optional.empty()))
+      .isInstanceOf(NullPointerException.class)
+      .hasMessage("request");
+    assertThatThrownBy(() -> new Page<>(List.of(), request, false, null))
+      .isInstanceOf(NullPointerException.class)
+      .hasMessage("totalElements");
+  }
+
+  @Test
+  @DisplayName("o total de páginas que não cabe em int lança, em vez de saturar em silêncio")
+  void totalDePaginasQueNaoCabeEmIntLanca() {
+    final var page = Page.withTotal(List.of(), PageRequest.of(0, 1), Long.MAX_VALUE);
+
+    assertThatThrownBy(page::totalPages).isInstanceOf(ArithmeticException.class);
+  }
+
+  @Test
   @DisplayName("o total é um Optional vazio, e não nulo, quando não foi contado")
   void totalNaoContadoEOptionalVazio() {
     final var page = Page.withoutTotal(List.of(), PageRequest.of(0, 1), false);
