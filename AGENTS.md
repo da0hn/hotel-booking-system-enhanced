@@ -155,13 +155,6 @@ no CI, é a label `e2e` no pull request ou o `workflow_dispatch` de
 `.github/workflows/e2e.yml`. Os cenários, as armadilhas e como acrescentar um teste estão em
 `e2e-tests/AGENTS.md`.
 
-`VerifyRoomAvailabilityTest` (booking) segue outra política: quatro métodos estão `@Disabled`
-porque descrevem comportamento **correto** que o código de hoje não tem (issue #5: o `==` no
-lugar de `>=`, a contagem de linhas no lugar de `quantity` e o pedido que ignora a
-quantidade). O CI roda `mvn verify` em todo pull request e não pode ficar vermelho, mas o
-teste não pode ser apagado: ao corrigir a issue #5, remova o `@Disabled` — eles são a
-especificação da correção.
-
 ### Imagens e pipeline
 
 As quatro imagens saem de um **único `Dockerfile` na raiz**, parametrizado por
@@ -277,6 +270,31 @@ Regras que o código segue e que devem ser mantidas:
   coordenam leitura e escrita. Use `@Transactional(readOnly = true)` nas consultas. Não
   aplique `@Transactional` diretamente nos use cases nem nos adapters de repositório;
   o listener deve propagar a exceção para permitir o rollback.
+- **A disponibilidade do quarto depende de um lock, e o lock depende da transação do
+  listener.** O `VerifyRoomAvailability` começa por `RoomRepository.lockAllByRoomId`
+  (lock de escrita em ordem de id, que o Hibernate emite como `for no key update` no PostgreSQL)
+  e só então lê a ocupação; o lock dura até o commit do
+  `BookingRoomRequestedRabbitMQListener`, que também grava a reserva. Transação sozinha não
+  basta: no `READ COMMITTED` duas reservas do último quarto leem a mesma ocupação e passam as
+  duas, e o `RoomAvailabilityConcurrencyIT` prova isso contra o PostgreSQL. Tirar o
+  `@Transactional` do listener não passa em silêncio — a consulta com `@Lock` lança
+  `TransactionRequiredException`. A ocupação **soma `booking_room.quantity`**; contar linhas
+  trata 3 unidades como 1. Como todo listener roda com no mínimo 3 consumidores (seção
+  *Falha no consumidor*), a corrida existe mesmo com uma só réplica; o e2e não a reproduz
+  porque o `SagaIT` envia um pedido por vez. Como a soma decide a vaga, `BookingRoom.validate()`
+  recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
+  vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
+  **O lock tem custo**: só é solto no commit do listener, que inclui o publish com espera do
+  confirm do broker (5 s por tentativa, até 3 tentativas) e não tem `lock_timeout`. Com o broker
+  lento, cada pedido do mesmo quarto espera o anterior. O remédio estrutural é o Outbox (#35).
+- **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
+  anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
+  `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
+  propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
+  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
+  disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
+  toda checagem do quarto dela lançar exceção. O `hotel-service` não valida período, então este
+  é o único ponto que barra o pedido.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
@@ -408,6 +426,11 @@ escolha estão nos Javadocs; o que não se deduz do código:
   transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
   reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
   falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
+  **A busca vem depois do lock dos quartos** (`VerifyRoomAvailability.lockRooms`), e a ordem não é
+  enfeite: com as duas entregas do mesmo pedido em paralelo, sem o lock antes a segunda passa pela
+  busca sem ver nada, acorda do lock com a reserva da primeira já comitada e a conta como ocupação
+  — no último quarto, responde "indisponível" para um pedido reservado. O
+  `RoomAvailabilityConcurrencyIT` prova o efeito e o `BookingApplicationTest` crava a ordem.
 - **No `customer-service`, a segunda rede é a própria timeline.** `ReservationOrder.updateStatus` e
   `updateToFailureStatus` devolvem `false`, e o caso de uso não grava, quando a transição repete a
   **entrada mais recente da timeline, escolhida pelo instante**: mesmo status e mesmo motivo, com
@@ -442,6 +465,20 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   fila com `x-dead-letter-*` diferente dos que ela já tem (`PRECONDITION_FAILED`); o remédio
   é apagar a fila antes, e as mensagens em voo se perdem. Por isso o README documenta a
   remoção das seis filas no deploy que introduziu as DLQs.
+- **Todo listener consome com no mínimo 3 threads**: `spring.rabbitmq.listener.simple.concurrency: 3`
+  no `application.yml` de cada serviço, e o `ListenerConcurrencyTest` de cada um o guarda lendo o
+  arquivo real. Sem a chave o Spring AMQP usa 1 consumidor por listener. A convenção tem um
+  preço que quem escreve um handler precisa conhecer: **a fila deixa de ser processada em
+  ordem**, e o retry deixa de parar a fila inteira: enquanto uma mensagem espera o backoff, os
+  outros consumidores seguem. Só as mensagens que o broker já entregou ao consumidor em backoff
+  (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
+  lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
+  protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
+  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
+  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
+  leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
+  por último (issue #53).
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real

@@ -32,8 +32,8 @@ public class RoomRepositoryAdapter implements RoomRepository {
   }
 
   @Override
-  public List<Room> findAllByRoomId(final Collection<? extends RoomId> ids) {
-    return this.roomJpaRepository.findAllById(ids.stream()
+  public List<Room> lockAllByRoomId(final Collection<? extends RoomId> ids) {
+    return this.roomJpaRepository.findAllByIdForUpdate(ids.stream()
         .map(RoomId::getValue)
         .collect(Collectors.toSet())
       ).stream()

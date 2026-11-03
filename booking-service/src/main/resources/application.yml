@@ -22,6 +22,10 @@ spring:
       simple:
         # Sem isto uma rejeição devolve a mensagem ao início da fila em vez de levá-la à DLQ.
         default-requeue-rejected: false
+        # Convenção do projeto: todo listener consome com no mínimo 3 threads. É o mínimo (o
+        # Boot chama de `concurrency`), e sem a chave o Spring AMQP usa 1 consumidor por fila.
+        # Com vários consumidores a ordem de processamento da fila deixa de ser garantida.
+        concurrency: 3
         retry:
           enabled: true
           # Retentativas depois da primeira: 2 são 3 tentativas ao todo. O Boot 4 não tem mais

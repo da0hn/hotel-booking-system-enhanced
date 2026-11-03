@@ -99,6 +99,61 @@ class BookingApplicationTest {
   }
 
   /**
+   * O total acompanha o sinal da quantidade ({@code 10,1234 × -3}), então a validação do total
+   * não barra o pedido. Se a reserva fosse gravada, as três vagas "negativas" sairiam da
+   * ocupação e liberariam o quarto para as reservas seguintes (issue #5).
+   */
+  @Test
+  @DisplayName("publica falha sem persistir uma reserva de quantidade negativa cujo total bate")
+  void quantidadeNegativaPublicaFalhaSemPersistir() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    final var negativa = BookingRoomRequestedEvent.builder().reservationOrderId(this.order).customerId(this.customer)
+      .price(new BigDecimal("-30.3702")).guests(3).checkIn(this.checkIn).checkOut(this.checkIn.plusDays(3))
+      .rooms(List.of(BookingRoomItemRepresentation.builder().roomId(this.room.toString())
+        .quantity(-3).price(new BigDecimal("10.1234")).build())).build();
+
+    new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(negativa);
+
+    verify(this.repository, never()).save(any());
+    final var sent = ArgumentCaptor.forClass(BookingRoomResponseEvent.class);
+    verify(this.publisher).publish(sent.capture());
+    assertThat(sent.getValue()).isInstanceOfSatisfying(BookingRoomFailedEvent.class, failed -> {
+      assertThat(failed.getFailureMessages()).containsExactly("The booking with reservationOrderId=" + this.order + " has inconsistent data");
+      assertThat(failed.getStatus()).isEqualTo(CustomerReservationStatus.RESERVATION_FAILED);
+    });
+  }
+
+  /**
+   * Estadia de zero noites e check-out anterior ao check-in são recusados pelo domínio e saem
+   * como falha limpa pelo {@code BookingInitializer}, e não como exceção do mapper que iria
+   * para o retry e a DLQ. O {@code hotel-service} não valida período, então este é o único
+   * ponto em que o pedido é barrado.
+   */
+  @ParameterizedTest(name = "check-out {0} dia(s) depois do check-in")
+  @DisplayName("publica falha sem persistir uma reserva sem noites")
+  @ValueSource(ints = {0, -1})
+  void periodoSemNoitesPublicaFalhaSemPersistir(final int dias) {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    final var semNoites = BookingRoomRequestedEvent.builder().reservationOrderId(this.order).customerId(this.customer)
+      .price(new BigDecimal("20.2468")).guests(3).checkIn(this.checkIn).checkOut(this.checkIn.plusDays(dias))
+      .rooms(List.of(BookingRoomItemRepresentation.builder().roomId(this.room.toString())
+        .quantity(2).price(new BigDecimal("10.1234")).build())).build();
+
+    new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(semNoites);
+
+    verify(this.repository, never()).save(any());
+    final var sent = ArgumentCaptor.forClass(BookingRoomResponseEvent.class);
+    verify(this.publisher).publish(sent.capture());
+    assertThat(sent.getValue()).isInstanceOfSatisfying(BookingRoomFailedEvent.class, failed -> {
+      assertThat(failed.getFailureMessages()).containsExactly("The booking with reservationOrderId=" + this.order + " has inconsistent data");
+      assertThat(failed.getStatus()).isEqualTo(CustomerReservationStatus.RESERVATION_FAILED);
+      assertThat(failed.getCheckOut()).isEqualTo(this.checkIn.plusDays(dias));
+    });
+  }
+
+  /**
    * Cenário 3 da issue #7: dois {@code BookingRoomRequestedEvent} com o mesmo
    * {@code reservationOrderId} e {@code eventId} diferentes — a deduplicação por {@code eventId}
    * não os distingue, e quem barra é a chave de negócio. O segundo não pode gravar outra reserva,
@@ -142,6 +197,26 @@ class BookingApplicationTest {
     assertThat(output.duplicate()).isTrue();
     assertThat(output.booking()).isSameAs(existing);
     assertThat(output.failureMessages().isNotEmpty()).isFalse();
+  }
+
+  /**
+   * O lock do quarto vem antes da busca por pedido repetido. Com a busca antes, duas entregas do
+   * mesmo pedido passam por ela sem ver nada, e a segunda acorda do lock contando a reserva da
+   * primeira como ocupação: responde "indisponível" para um pedido que está reservado. O
+   * {@code RoomAvailabilityConcurrencyIT} prova o efeito contra o PostgreSQL; este teste prova a
+   * ordem sem depender de temporização.
+   */
+  @Test
+  @DisplayName("trava os quartos antes de procurar a reserva do pedido")
+  void travaOsQuartosAntesDeProcurarAReservaDoPedido() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+
+    usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+
+    final var inOrder = inOrder(this.rooms, this.repository);
+    inOrder.verify(this.rooms).lockAllByRoomId(any());
+    inOrder.verify(this.repository).findBookingByReservationOrderId(any());
   }
 
   /**
@@ -228,10 +303,10 @@ class BookingApplicationTest {
     verify(this.repository, never()).save(any());
   }
 
-  /** A disponibilidade atual conta linhas de quartos, e não a soma das quantidades. */
+  /** A ocupação é a soma das unidades das reservas ativas: o pedido e a reserva existente valem 2 cada. */
   @Test
-  @DisplayName("ignora reservas canceladas e períodos fora da consulta de disponibilidade")
-  void disponibilidadeFiltraCanceladasEPeriodosEContaLinhas() {
+  @DisplayName("ignora reservas canceladas e períodos fora da consulta e soma as unidades das ativas")
+  void disponibilidadeFiltraCanceladasEPeriodosESomaUnidades() {
     final var requested = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     final var occupied = Booking.builder().bookingPeriod(requested.getBookingPeriod()).status(BookingStatus.PENDING)
       .bookingRooms(requested.getBookingRooms()).build();
@@ -240,12 +315,13 @@ class BookingApplicationTest {
     final var outside = Booking.builder().bookingPeriod(BookingPeriod.of(this.checkIn.plusDays(10), this.checkIn.plusDays(12)))
       .status(BookingStatus.CONFIRMED).bookingRooms(requested.getBookingRooms()).build();
     when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(occupied, canceled, outside));
-    when(this.rooms.findAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 1)));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 3)));
     final var service = new VerifyRoomAvailability(this.repository, this.rooms);
     assertThat(service.execute(requested).data()).containsExactly("The room roomId=" + this.room + " is no longer available for period 10/01/2030 - 13/01/2030");
-    when(this.rooms.findAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 2)));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 4)));
     assertThat(service.execute(requested).data()).isEmpty();
     when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(canceled, outside));
+    when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 2)));
     assertThat(service.execute(requested).data()).isEmpty();
   }
 

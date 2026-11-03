@@ -62,8 +62,8 @@ public class Booking extends AbstractDomainEntity<BookingId> {
     this.validateReservationOrderId();
     this.bookingPeriod.validate();
     this.validateCustomerId();
-    this.validateTotalPrice();
     this.validateBookingRooms();
+    this.validateTotalPrice();
     this.validateStatus();
   }
 

@@ -34,7 +34,9 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
   `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real e prova que o
   binding pegou. Cada tentativa roda numa transação própria (o interceptor envolve o
   listener por fora), e a thread do consumidor fica bloqueada durante o backoff: uma
-  mensagem venenosa segura a fila por 2 a 4,5s.
+  mensagem venenosa ocupa um dos consumidores por 2 a 4,5s. Como todo listener roda com no
+  mínimo 3 consumidores, os outros seguem; as mensagens que o broker já entregou àquele
+  consumidor (`prefetch` padrão de 250) esperam atrás dela.
 - **O jitter tem chave própria, `app.rabbitmq.retry.jitter`.** O Boot 4.1 não expõe jitter
   em `spring.rabbitmq.listener.simple.retry.*`, embora o `RetryPolicySettings` o suporte, e
   uma chave desconhecida sob esse prefixo seria ignorada em silêncio. Quem a lê é o
