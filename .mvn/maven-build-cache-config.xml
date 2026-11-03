@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cache xmlns="http://maven.apache.org/BUILD-CACHE-CONFIG/1.4.0"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://maven.apache.org/BUILD-CACHE-CONFIG/1.4.0 https://maven.apache.org/xsd/build-cache-config-1.4.0.xsd">
+
+  <configuration>
+    <enabled>true</enabled>
+    <hashAlgorithm>XX</hashAlgorithm>
+    <local>
+      <maxBuildsCached>3</maxBuildsCached>
+    </local>
+  </configuration>
+
+  <!-- A chave do cache de um módulo é o hash do que está sob o basedir dele e das suas
+       dependências. Estes dois arquivos influenciam o resultado dos testes e moram FORA
+       dos módulos, então sem eles aqui um módulo seria dado como inalterado depois de
+       mudarem, e o teste que os exercita deixaria de rodar:
+       - `docker/scripts/01-create-service-roles.sql` é montado nos containers pelo
+         `AbstractDatabaseIT` de cada serviço (`../docker/scripts`).
+       - `lombok.config` é lido pelo Lombok subindo a árvore de diretórios a partir de
+         cada fonte compilada.
+       Os caminhos são relativos ao basedir de cada módulo. -->
+  <input>
+    <global>
+      <includes>
+        <include>../docker/scripts</include>
+        <include>../lombok.config</include>
+      </includes>
+    </global>
+  </input>
+</cache>

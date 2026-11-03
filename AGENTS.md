@@ -83,10 +83,37 @@ O arquivo não aceita comentário, por isso o porquê mora aqui. O custo é que 
 os módulos: para lê-lo em ordem, ao investigar um teste que falha, passe `-T 1`, que a linha
 de comando sobrescreve o arquivo.
 
+### Cache de build
+
+O build tem cache local: `.mvn/extensions.xml` carrega o Maven Build Cache Extension, que
+guarda em `~/.m2/build-cache` o resultado de cada módulo, indexado pelo **hash do conteúdo e
+não pelo caminho**. Por isso worktrees e agentes diferentes na mesma máquina compartilham as
+mesmas entradas, e o módulo (e as dependências dele) que não mudou volta do cache sem
+compilar nem rodar surefire e failsafe. Medido em nov/2026: `verify` sem mudança leva 8 s
+contra ~2 min; mudar só o `booking-service` reconstrói só ele (73 s); duas worktrees
+construindo ao mesmo tempo terminam sem erro e deixam o cache íntegro; um teste vermelho
+nunca é gravado, então falha de novo na execução seguinte. Mudar o `commons` reconstrói os
+quatro serviços, porque todos dependem dele.
+
+O que não se deduz do código:
+
+- **Um hit pula os testes, e isso inclui o filtro.** Uma execução filtrada (`-Dtest`,
+  `-Dit.test`) ou a prova do e2e, num módulo inalterado, é dada como cumprida sem rodar nada.
+  Para essas, e sempre que a pergunta for "isto realmente passa agora?", acrescente
+  `-Dmaven.build.cache.enabled=false`. O CI sempre o desliga: o runner começa sem cache.
+- **Arquivos fora do módulo que mudam o resultado têm de estar em
+  `.mvn/maven-build-cache-config.xml`.** Hoje são `docker/scripts` (montado pelos
+  `AbstractDatabaseIT`) e `lombok.config`. Mudar qualquer um invalida **todos** os módulos,
+  mais do que o estritamente necessário, de propósito: errar para mais só custa um build.
+  Um arquivo novo nessa situação entra ali, ou o teste que o usa passa a ser pulado.
+- **O hash não enxerga o ambiente.** A imagem `postgres:17-alpine` e a do RabbitMQ que o
+  Testcontainers baixa não são arquivos do repositório; para provar contra a versão atual
+  delas, rode com a flag acima.
+
 | Objetivo | Comando |
 |---|---|
-| Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
-| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
+| Um teste de integração | `mvn -B verify -pl hotel-service -Dmaven.build.cache.enabled=false -Dit.test=FlywayMigrationIT` |
+| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dmaven.build.cache.enabled=false -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 
 Não há linter, formatter nem gate de cobertura configurado.
 
