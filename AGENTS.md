@@ -77,15 +77,8 @@ de o erro voltar exatamente com essa cara.
 
 | Objetivo | Comando |
 |---|---|
-| Build completo (reator) | `mvn -B clean install -DskipTests` |
-| Rodar os testes unitários | `mvn -B test` |
-| Rodar tudo, incluindo os de integração | `mvn -B verify` |
-| Testes de um módulo | `mvn -B test -pl hotel-service` |
-| Um teste específico | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest` |
-| Um método de teste | `mvn -B test -pl hotel-service -Dtest=RoomValidationTest#nomeDoMetodo` |
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
 | Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
-| Compilar só o `commons` e dependentes | `mvn -B compile -pl commons -am` |
 
 Não há linter, formatter nem gate de cobertura configurado.
 
@@ -107,20 +100,6 @@ O `AbstractDatabaseIT` é o **único ponto de cada módulo que nomeia o banco**.
 engine é trocar aquela declaração; nenhuma subclasse menciona MySQL ou PostgreSQL, e é
 por isso que elas provam equivalência em vez de provar que um banco funciona.
 
-Essa rede foi escrita **antes** da troca de MySQL por PostgreSQL, e verde contra o banco
-antigo. É o que a fez provar equivalência: um teste que nasce junto com o banco novo prova
-apenas que o banco novo funciona. Dos 61, só um precisou mudar por motivo não previsto —
-`aplicaTodasAsVersoes`, por causa da linha sem versão que o `create-schemas` grava.
-
-Três testes carregam intenção que o nome não entrega, e o Javadoc de cada um explica:
-
-| Teste | O que ele guarda |
-|---|---|
-| `FlywayMigrationIT#preservaCentavosNoPrecoDoQuarto` (hotel) | Nasceu cobrando `200` para quebrar na migração. Quebrou: a escala 2 devolve `199.99` |
-| `FlywayMigrationIT#preservaCentavosNoTotalDaReserva` (booking) | O mesmo, com `1235` → `1234.56` |
-| `FlywayMigrationIT#preservaAEscalaDeCalculo*` (hotel, booking, customer) | O par dos dois acima, e a razão de existirem separados: `199.99` atravessa `numeric(10, 2)` intacto, então aqueles ficariam verdes mesmo se a V012/V007/V008 não tivessem rodado. Só um valor que precise da quarta casa distingue as duas escalas |
-| `HotelJpaRepositoryIT#achaCidadeSemAcento` | Cobrava um comportamento que o MySQL dava de graça pela colação `utf8mb4_0900_ai_ci`. Continuou verde porque a migração o tornou explícito, não porque sobreviveu sozinho |
-
 A busca sem acento é o caso que mais ensina: `cuiaba` achava `Cuiabá` sem que nenhuma linha
 de código pedisse isso. No PostgreSQL ela depende de três peças que precisam continuar
 casando — a extensão `unaccent` da `V011`, o `UnaccentFunctionContributor` que declara o
@@ -129,80 +108,16 @@ uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 ### Testes ponta a ponta (`e2e-tests`)
 
-O módulo `e2e-tests` reúne os testes que sobem o sistema inteiro: PostgreSQL e RabbitMQ pelo
-Testcontainers e `hotel`, `booking`, `customer` e `payment` **como processos filhos**. O
-`E2eEnvironment` faz essa subida e é a base de qualquer teste novo do módulo; os testes são
-`Specification`s do Spock em `src/test/groovy/com/hotel/booking/system/e2e/`.
-
-Hoje há três. O `SagaIT` é o único teste que prova que as quatro pontas se entendem. Ele
-dispara `POST /hotel/booking` no `hotel-service` e lê o desfecho no `customer-service` e nos
-bancos. Os quatro cenários são pagamento aprovado (`RESERVED`), último quarto já ocupado
-(`RESERVATION_FAILED`, sem gravar a reserva), `booking-service` derrubado com `kill` no meio
-da transação (a saga retoma ao reiniciar, com uma única reserva) e pagamento recusado
-(`PAYMENT_FAILED`, reserva `CANCELED`). É a rede de quem mexe no contrato de eventos, na
-fronteira transacional ou na regra de disponibilidade: um evento movido de pacote, um pacote
-fora do `TrustedEventPackages` ou um listener sem `@Transactional` deixam os quatro serviços
-saudáveis e a saga parada, e nenhum teste de unidade enxerga isso.
-
-Os outros dois não tocam na saga. O `ActuatorExposureIT` bate nos quatro serviços e confere o
-que o Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). O
-`HttpErrorContractIT` confere o contrato de erro HTTP do `hotel-service` e do
-`customer-service` nos jars de verdade: o status e a chave de `message` de cada situação (ver
-*Erros HTTP*). Por serem `Specification`s à parte, cada um paga um arranque do ambiente inteiro.
-
-**O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
-profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5
-min no reactor e ~1,5 min no `SagaIT`, bem mais na máquina local). Quem mexe no que a saga
-protege roda o comando da tabela antes de abrir o PR. No CI há dois caminhos, ambos no
-workflow `.github/workflows/e2e.yml`: a **label `e2e`** num pull request, que roda a
-partir do branch do PR, e o **`workflow_dispatch`**, cujo botão só aparece depois de o
-arquivo estar na `master`. Falhou, o artefato `e2e-logs` traz o log inteiro de cada serviço.
-
-**Para acrescentar um teste ponta a ponta**, crie outra `Specification` com sufixo `IT` no
-pacote `com.hotel.booking.system.e2e` e suba o ambiente com `E2eEnvironment.start()` em
-`setupSpec()`. O filtro do comando da tabela e do workflow
-(`-Dit.test='com.hotel.booking.system.e2e.**'`) o pega sem mudança. Cada `Specification` sobe
-o próprio ambiente, então agrupe cenários na mesma classe quando o custo do arranque dos
-quatro serviços pesar.
-
-O que não se deduz do código:
-
-- **Processos filhos, e não contextos Spring numa JVM só.** Os quatro `application.yml` têm o
-  mesmo nome e colidem no classpath. `ServiceProcess` executa `java -jar` do jar que o
-  `package` de cada serviço gerou e espera o `/actuator/health`; o log de cada um vai para
-  `e2e-tests/target/e2e-logs/` e a cauda dos quatro é anexada à mensagem quando um cenário
-  estoura o tempo.
-- **Dependências `pom` com `<exclusion>*:*</exclusion>`.** Os jars dos serviços não são
-  biblioteca para o teste: a dependência existe só para criar a aresta no grafo do reactor.
-  Sem ela, `-Pe2e -pl e2e-tests -am` não traria os quatro serviços e uma build paralela
-  (`-T`) poderia rodar o teste antes de os jars existirem. Sem o `-am`, o `ServiceProcess`
-  falha com "jar não encontrado" quando os `target/` estão vazios. Sem o `-Pe2e`, o Maven
-  responde que não encontra o projeto `e2e-tests`.
-- **Um único reinício.** O `payment-service` sorteia o resultado no arranque a partir de
-  `FAILURE_CHANCE_PERCENTAGE`. Os cenários rodam na ordem de declaração (o padrão do Spock) e
-  `usePaymentFailureChance` só reinicia o serviço quando o valor muda: `0` nos três
-  primeiros, `100` no último. Não há `@Stepwise` de propósito: cada cenário tem o próprio
-  quarto, e se o primeiro falhar os outros ainda dizem se o resto da saga funciona. O
-  custo é que uma saga quebrada leva ~6 min para falhar (4 cenários × 90 s de espera).
-- **A morte do consumidor se provoca com um lock, não com cronometragem.** O cenário do
-  `booking-service` morto trava `booking.booking` com `lock table ... access exclusive` numa
-  conexão do dono do container e espera, em `pg_stat_activity`, o serviço parar num `Lock`:
-  só então a mensagem está recebida, sem ack e dentro da transação, e o `kill` é seguro. O
-  `ServiceProcess.kill()` encerra sem aviso (`destroyForcibly`); o `stop()` pede o
-  encerramento e espera. A janela entre o commit e o ack, que repetiria o efeito, não tem
-  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` e depende da #7.
-- **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
-  `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
-  `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do
-  Spring Boot gerencia o Groovy (5.0.8) mas não o Spock, cuja versão está em `spock.version`
-  no `pom.xml` do módulo. O Spock 2.5 foi compilado contra o JUnit Platform 1.14 e roda aqui
-  sobre o 6.0.3 do BOM, no JDK 25. Dentro de `PollingConditions.eventually { }` o Spock trata
-  **cada comando como condição**, até em método auxiliar: uma atribuição solta quebra a
-  compilação ("Expected a condition, but found an assignment"). Por isso `awaitStatus` guarda
-  o último estado visto numa atribuição dentro do `assert`.
-- **O quarto do cenário 2 é semeado pelo teste.** Nenhum quarto das migrations de seed
-  permite esgotar o estoque com uma reserva. Hotel e booking guardam réplicas separadas do
-  quarto (issue #4), então a semente grava nos dois bancos.
+O módulo `e2e-tests` (Spock) sobe PostgreSQL, RabbitMQ e os quatro serviços como processos
+filhos e prova que a saga fecha: o `SagaIT` cobre pagamento aprovado, último quarto já
+ocupado, `booking-service` derrubado no meio da transação e pagamento recusado; o
+`ActuatorExposureIT` e o `HttpErrorContractIT` conferem a fronteira HTTP. **O `mvn verify`
+comum não os roda**: o módulo só entra no reactor com o profile `e2e` (comando na tabela de
+*Comandos*), por decisão do mantenedor para poupar tempo de CI. Quem mexe no contrato de
+eventos, na fronteira transacional ou na regra de disponibilidade o roda antes de abrir o PR;
+no CI, é a label `e2e` no pull request ou o `workflow_dispatch` de
+`.github/workflows/e2e.yml`. Os cenários, as armadilhas e como acrescentar um teste estão em
+`e2e-tests/AGENTS.md`.
 
 `VerifyRoomAvailabilityTest` (booking) segue outra política: quatro métodos estão `@Disabled`
 porque descrevem comportamento **correto** que o código de hoje não tem (issue #5: o `==` no
@@ -211,53 +126,23 @@ quantidade). O CI roda `mvn verify` em todo pull request e não pode ficar verme
 teste não pode ser apagado: ao corrigir a issue #5, remova o `@Disabled` — eles são a
 especificação da correção.
 
-**Subir o ambiente** (a partir de `docker/`, com os volumes externos já criados — ver
-README): `docker-compose -p hotel-booking-system -f common.yml -f services.yml up -d`.
+### Imagens e pipeline
+
 As quatro imagens saem de um **único `Dockerfile` na raiz**, parametrizado por
-`--build-arg MODULE=<servico>`. As camadas estão ordenadas por volatilidade (poms →
-`commons/src` → `<servico>/src`), então as três primeiras são idênticas nas quatro
-imagens e vêm do cache. Ao adicionar um módulo ao reator, o `COPY` do `pom.xml` dele
-precisa entrar no `Dockerfile` — o Maven exige o reactor completo para resolver o parent.
-
-O workflow `.github/workflows/build.yml` roda `mvn verify` no reactor inteiro e publica
-no GHCR só o que mudou, com labels OCI de proveniência. `commons` não vira imagem: é
-gatilho de reconstrução dos quatro. O que sai do build depende de onde o commit caiu:
-
-| Gatilho                                   | Roda                                | Publica                                     |
-|-------------------------------------------|-------------------------------------|---------------------------------------------|
-| `pull_request` (qualquer origem)          | `mvn verify`                        | —                                           |
-| push em `develop`                         | `mvn verify`                        | —                                           |
-| push em `release/X.Y.Z` ou `hotfix/X.Y.Z` | bump do `<revision>` + `mvn verify` | `X.Y.Z-RC.<run_number>` e `X.Y.Z-RC-latest` |
-| push em `master`                          | `mvn verify` + `git tag X.Y.Z`      | `X.Y.Z-<run_number>` e `X.Y.Z-latest`       |
-
-A tag imutável (`-<run_number>`) é a que se cita num diagnóstico: ela responde qual
-imagem está rodando no homelab. A móvel (`-latest`) existe só para quem não quer
-descobrir o número do build, e nunca substitui a primeira.
-
-`.github/workflows/back-merge.yml` abre o PR `master → develop` a cada push na `master`,
-para que a correção que entrou por `hotfix/*` não desapareça no próximo corte de release.
-Ele não faz o merge — só abre o PR, e reaproveita o que já estiver aberto.
-
-O desenho completo do fluxo está em `docs/diagrams/06-gitflow-pipeline.jpg`.
+`--build-arg MODULE=<servico>`; o passo a passo para subir o ambiente está no README. Ao
+adicionar um módulo ao reator, o `COPY` do `pom.xml` dele precisa entrar no `Dockerfile` — o
+Maven exige o reactor completo para resolver o parent. O que cada gatilho publica no GHCR
+está em `.github/workflows/build.yml`.
 
 ### Gitflow
 
-- O fluxo normal de branches de trabalho e PRs está definido em `Processo de desenvolvimento`.
-- `release/X.Y.Z` nasce da `develop`; `hotfix/X.Y.Z` nasce da `master`. Essas branches são
-  exceções do fluxo normal e servem ao processo de release. Nas duas, **a versão vem do
-  nome da branch** e o pom é ajustado para segui-la — a pipeline commita
-  `chore(release): bump da versão para X.Y.Z` na própria branch. O `<revision>` recebe
-  apenas o semver; o `run_number` existe só na tag da imagem.
-- `release/*` e `hotfix/*` entram na `master` por PR, e a `master` volta para a `develop`
-  pelo PR que o `back-merge` abre.
-- Ao entrar na `master`, o commit ganha a tag anotada `X.Y.Z` — sem prefixo `v`, e criada
-  depois do build e da publicação, nunca antes. Ela é idempotente: um push posterior na
-  `master` que não mexa no `<revision>` encontra a tag existente e não tenta recriá-la.
+`release/X.Y.Z` nasce da `develop` e `hotfix/X.Y.Z` da `master`; nas duas, **a versão vem do
+nome da branch** e a pipeline commita o bump do `<revision>`. A `master` volta para a `develop`
+pelo PR que o `back-merge` abre, e o commit que entra na `master` ganha a tag anotada `X.Y.Z`
+(sem prefixo `v`). O fluxo completo, as tags de imagem e os efeitos do `GITHUB_TOKEN` estão em
+`.github/AGENTS.md`; o desenho está em `docs/diagrams/06-gitflow-pipeline.jpg`.
 
-Dois efeitos do `GITHUB_TOKEN` que explicam decisões do workflow: pushes feitos com ele
-não disparam novas execuções — é o que impede o bump de entrar em loop, e é por isso que
-a imagem RC precisa ser construída na mesma execução que fez o bump. Pela mesma razão, o
-PR de back-merge nasce sem checks.
+### Banco de dados em desenvolvimento
 
 Para rodar um serviço isolado na IDE não é preciso configurar nada: os defaults do
 `application.yml` apontam para `localhost:5442`, que é a porta que o compose **publica** — não
@@ -276,55 +161,23 @@ O `default_schema` não é opcional neste layout: sem ele o validador procura a 
 qualificar o schema, e `room` existe tanto em `hotel` quanto em `booking` dentro do mesmo
 banco.
 
-Os diagramas do README ficam em `docs/diagrams/`. O `.excalidraw` é a fonte; o `.jpg`
-é derivado e precisa ser regerado sempre que a fonte mudar:
+### Diagramas
 
-```bash
-# 1. .excalidraw -> .png (renderer headless da skill excalidraw-diagram)
-cd ~/.claude/skills/excalidraw-diagram/references
-uv run python render_excalidraw.py <abs-path>/docs/diagrams/NN-nome.excalidraw
-
-# 2. .png -> .jpg reamostrado para 2600px de largura, e descarte do .png
-cd <repo>/docs/diagrams
-uv run --with pillow python -c "
-from PIL import Image; import glob, os
-for p in glob.glob('*.png'):
-    im = Image.open(p); rgb = Image.new('RGB', im.size, (255,255,255))
-    rgb.paste(im, mask=im.split()[-1] if im.mode=='RGBA' else None)
-    if rgb.width > 2600: rgb = rgb.resize((2600, round(rgb.height*2600/rgb.width)), Image.LANCZOS)
-    rgb.save(p[:-4]+'.jpg', 'JPEG', quality=90, optimize=True, subsampling=0); os.remove(p)
-"
-```
-
-Só o `.jpg` é versionado — o `.png` é intermediário.
-
-O `05-data-model` existe em duas versões, `-antes-mysql` e `-depois-postgres`, e a
-primeira é **deliberada**: ela registra o desenho de três bancos separados que a migração
-desfez. Não a regenere, não a "atualize" e não a apague — o que ela documenta é justamente
-o estado que não existe mais. Quando uma mudança estrutural merecer o mesmo tratamento, o
-par segue esse nome; nos outros casos o diagrama é editado no lugar.
-
-O `07-mensagem-venenosa-antes-depois.gif` é a outra exceção: não tem `.excalidraw`, é a
-gravação do simulador do artefato "Mensagem Venenosa" (um listener que falha, antes e depois
-da #6, em três cenários) e o próprio `.gif` é o que se versiona. As esperas aparecem exatas
-(1 s e 2 s, sem o jitter) e a DLQ usa os nomes atuais das filas. Ele envelhece sem acusar
-quando o desenho do retry ou o nome das filas mudar: regrave-o ou apague-o na mesma mudança.
+Os diagramas do README ficam em `docs/diagrams/`: o `.excalidraw` é a fonte e o `.jpg` é
+derivado, regerado a cada mudança da fonte (o passo a passo está em `docs/diagrams/AGENTS.md`).
+O `05-data-model-antes-mysql` é **deliberado**: ele registra o desenho de três bancos que a
+migração desfez, e por isso não se regenera, não se atualiza e não se apaga.
 
 ## Arquitetura
 
 ### Módulos
 
-- `commons` — building blocks de domínio (`AbstractDomainEntity`, `Money`, ids tipados),
-  DTOs de resposta HTTP e, principalmente, **o contrato de eventos entre os serviços**.
-- `hotel-service` (8001) — API REST de hotéis/quartos e **coordenador da saga**.
-- `booking-service` (8002) — dono da disponibilidade e das reservas por período.
-- `payment-service` (8003) — pagamento **fake**; sem banco; falha por sorteio
-  (`FAILURE_CHANCE_PERCENTAGE`).
-- `customer-service` (8004) — projeção read-model da reserva do cliente + timeline.
-- `e2e-tests` — só testes de ponta a ponta, em Spock: sobem os quatro serviços e exercitam o
-  sistema inteiro. Hoje o `SagaIT`, que prova a saga, e dois testes da fronteira HTTP, o
-  `ActuatorExposureIT` e o `HttpErrorContractIT`. Não é serviço, não vira imagem e nada
-  depende dele. Só existe no reactor com o profile `e2e` (ver "Testes ponta a ponta").
+- `hotel-service` coordena a saga; `booking-service` é dono da disponibilidade e das reservas;
+  `customer-service` é read-model; `payment-service` é fake, sem banco, e falha por sorteio
+  (`FAILURE_CHANCE_PERCENTAGE`); `commons` guarda os building blocks de domínio e, principalmente,
+  **o contrato de eventos entre os serviços**. Portas e papéis estão no README.
+- `e2e-tests` não é serviço, não vira imagem e nada depende dele; só existe no reactor com o
+  profile `e2e`.
 
 Os três serviços com banco dividem uma instância PostgreSQL e têm um **schema** próprio
 (`hotel`, `booking`, `customer`), com migrations Flyway em `src/main/resources/db/migration`.
@@ -370,18 +223,7 @@ Os dois desenhos estão lado a lado em `docs/diagrams/05-data-model-antes-mysql.
 
 ### Camadas dentro de cada serviço
 
-O padrão é hexagonal, repetido identicamente nos 4 serviços:
-
-```
-core/domain/      entidades, value objects, exceções — sem dependência da camada `infrastructure/`
-core/application/ use cases, handlers de mensagem, mappers, DTOs (records)
-core/ports/api/   portas de entrada  (use cases, handlers, mappers)
-core/ports/spi/   portas de saída    (repositories, listeners, publishers, queries)
-infrastructure/db/            entidades JPA, adapters de repositório, mappers de persistência
-infrastructure/messaging/     listeners e publishers RabbitMQ
-infrastructure/configuration/ configurações do Spring, properties e wiring da aplicação
-application/                  Spring: controllers e application service
-```
+O padrão é hexagonal, repetido identicamente nos 4 serviços.
 
 Regras que o código segue e que devem ser mantidas:
 
@@ -469,22 +311,13 @@ handler correspondente no `hotel-service`.
   de evento precisa entrar naquela lista**. `UnsupportedEventTypeException` mora em
   `core/domain/exception/` de propósito: dentro do pacote de eventos ela seria varrida pelo
   `EventContractTest` e teria de constar em `TrustedEventPackages`.
-- O Jackson só constrói uma classe se enxergar **um** creator. Com um construtor público
-  único ele o usa sozinho, sem configuração nenhuma; com dois candidatos ele não desempata
-  e recusa a mensagem. O `@SuperBuilder` cria exatamente esse segundo candidato — o
-  construtor que recebe o builder —, então **toda classe de evento com `@SuperBuilder`
-  precisa de `@Jacksonized`**, que manda o Jackson desserializar pelo próprio builder.
-- O `@Jacksonized` depende de `lombok.config` na raiz: sem
-  `lombok.jacksonized.jacksonVersion += 3` o Lombok gera as anotações do Jackson **2** e a
-  compilação quebra com `package com.fasterxml.jackson.databind.annotation does not exist`.
-  A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
-  o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
-  `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
-- `EventContractTest`, no `commons`, varre o pacote e prova que cada classe concreta de
-  evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
-  ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
-  saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
-  cobertura sozinho; não há lista para manter.
+- **Toda classe de evento com `@SuperBuilder` precisa de `@Jacksonized`.** O Jackson só
+  constrói uma classe que enxergue **um** creator, e o `@SuperBuilder` cria um segundo (o
+  construtor que recebe o builder). Sem a anotação ele recusa a mensagem **no listener**: os
+  serviços sobem saudáveis e a saga para. O `@Jacksonized` depende de
+  `lombok.jacksonized.jacksonVersion += 3` no `lombok.config` da raiz (com `=` no lugar de `+=`
+  a chave é ignorada em silêncio), e o `EventContractTest` prova que cada evento é construível.
+  Os detalhes estão em `commons/AGENTS.md`.
 - **Publisher falha alto; nunca engole a exceção.** Todo publisher estende
   `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que envia com
   `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que nenhuma fila
@@ -519,53 +352,14 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   fila com `x-dead-letter-*` diferente dos que ela já tem (`PRECONDITION_FAILED`); o remédio
   é apagar a fila antes, e as mensagens em voo se perdem. Por isso o README documenta a
   remoção das seis filas no deploy que introduziu as DLQs.
-- **Retry sem estado, com backoff exponencial**: `max-retries: 2` (três tentativas ao todo),
-  1s → 2s, teto de 10s, em `spring.rabbitmq.listener.simple.retry.*`. O Boot 4 **não tem
-  `max-attempts`** e ignora em silêncio chave que não conhece — o
-  `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real e prova que o
-  binding pegou. Cada tentativa roda numa transação própria (o interceptor envolve o
-  listener por fora), e a thread do consumidor fica bloqueada durante o backoff: uma
-  mensagem venenosa segura a fila por 2 a 4,5s.
-- **O jitter tem chave própria, `app.rabbitmq.retry.jitter`.** O Boot 4.1 não expõe jitter
-  em `spring.rabbitmq.listener.simple.retry.*`, embora o `RetryPolicySettings` o suporte, e
-  uma chave desconhecida sob esse prefixo seria ignorada em silêncio. Quem a lê é o
-  `deadLetterRetrySettingsCustomizer` (`DeadLetterRetryConfiguration.JITTER_PROPERTY`). Cada
-  espera sai sorteada entre `intervalo - jitter` e `intervalo + jitter`, sem ficar abaixo do
-  intervalo inicial nem acima do teto, e o multiplicador age sobre o jitter também: com
-  500ms, a primeira espera fica em 1–1,5s e a segunda em 1–3s. Sem a chave não há jitter.
-- **Esgotadas as tentativas**, o `RepublishMessageRecoverer` publica a mensagem no DLX com a
-  routing key `<fila>.dlq`, preservando o corpo e acrescentando `x-exception-message`,
-  `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Os argumentos
-  de DLX na fila são a rede de segurança para uma rejeição que não passe pelo recoverer —
-  daí o `default-requeue-rejected: false`.
-- **Erro determinístico não é retentado.** O `exceptionPredicate` percorre a cadeia de
-  causas e trata como definitiva a que contenha `MessageConversionException` (JSON
-  malformado, classe inexistente, **pacote fora do `TrustedEventPackages`**) ou
-  `UnsupportedEventTypeException` (subtipo de evento sem ramo no `switch`). A primeira é
-  fabricada pelo `EventMessageConverter`, que traduz o `IllegalArgumentException` cru do
-  Jackson; sem ele, tipo não confiável seria retentado três vezes sem chance de dar certo.
-- O `default ->` dos handlers do `hotel-service` é **inalcançável hoje**: as hierarquias são
-  `sealed` e os `case` as esgotam. Nenhum teste o exercita (o Mockito não mocka classe
-  sealed). Ele existe para o dia em que um subtipo novo entrar na hierarquia e ninguém
-  lembrar do `switch`.
-- O que depende do broker é provado pelo `DeadLetterRetryIT` (`commons`), que sobe um
-  RabbitMQ real por Testcontainers: o que se quer saber é se a mensagem chega à DLQ com os
-  headers certos, e um broker simulado não responde isso.
-- **Morte do processo no meio do consumo não passa pelo retry nem pela DLQ.** O ack é
-  automático (nenhum `application.yml` configura `acknowledge-mode`): só sai depois que o
-  listener retorna. Sem ack, o broker devolve a mensagem à fila marcada como reentrega, e o
-  contador de tentativas, que vive na memória do processo, recomeça do zero. O lado seguro está
-  provado em dois níveis: o `DeadLetterRetryIT` mata um consumidor sem ack e confere a
-  reentrega fora da DLQ, e o `SagaIT` derruba o `booking-service` com `kill` dentro da
-  transação e confere que a saga retoma com uma única reserva. O lado inseguro — morrer depois
-  do commit e antes do ack — repete o efeito, e o `DeadLetterRetryIT` o fixa de propósito:
-  deduplicar é papel do consumidor (#7), e um dia que a deduplicação morar no `commons` esse
-  teste deve ser invertido.
-- **Desligamento gracioso (SIGTERM) não está configurado nem provado (#41).** Nenhum
-  `application.yml` define o prazo de desligamento; vale o padrão do container (5 s), que o
-  Boot 4.1 não expõe. Lido no código do Spring AMQP, sem teste: passado o prazo, o container
-  interrompe a thread, e a interrupção na espera do retry vira "retry esgotado" — o
-  recoverer manda a mensagem para a DLQ e o container a confirma, em vez de devolvê-la à fila.
+- **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
+  exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
+  `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real
+  para provar que o binding pegou. Esgotadas as tentativas, a mensagem vai para `<fila>.dlq`.
+- **Erro determinístico não é retentado**: `MessageConversionException` (JSON malformado,
+  classe inexistente, **pacote fora do `TrustedEventPackages`**) e
+  `UnsupportedEventTypeException` vão direto para a DLQ. O jitter, os headers da DLQ, a morte do
+  processo no meio do consumo e o SIGTERM estão em `commons/AGENTS.md`.
 
 ### Erros HTTP
 
