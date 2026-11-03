@@ -24,7 +24,8 @@ Os outros dois não tocam na saga. O `ActuatorExposureIT` bate nos quatro servi�
 que o Actuator mostra por fora (ver *Actuator*, na seção de arquitetura). O
 `HttpErrorContractIT` confere o contrato de erro HTTP do `hotel-service` e do
 `customer-service` nos jars de verdade: o status e a chave de `message` de cada situação (ver
-*Erros HTTP*). Por serem `Specification`s à parte, cada um paga um arranque do ambiente inteiro.
+*Erros HTTP*), e também a busca paginada `GET /hotel?page=&size=` (ver *Paginação*), porque só ele
+serializa o `page` com o Jackson de produção. Por serem `Specification`s à parte, cada um paga um arranque do ambiente inteiro.
 
 **O `mvn verify` comum não roda os testes ponta a ponta.** O módulo só entra no reactor com o
 profile `e2e`, por decisão do mantenedor para poupar tempo de CI (medido em out/2026: ~1,5

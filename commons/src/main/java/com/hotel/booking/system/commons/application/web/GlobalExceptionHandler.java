@@ -10,9 +10,14 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.InitBinder;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+import java.util.Optional;
 
 /**
  * Base dos advices HTTP dos serviços: toda falha de uma requisição sai no envelope
@@ -68,6 +73,24 @@ public abstract class GlobalExceptionHandler extends ResponseEntityExceptionHand
   }
 
   /**
+   * Faz um {@code page} ou {@code size} presente e vazio ser recusado pela validação, em vez de valer
+   * como ausente: o Spring converte {@code ?page=} em {@code null}, e a validação não avalia
+   * {@code null}. É a outra metade do {@link #handleHandlerMethodValidationException}, que lista a
+   * violação que este binder provoca (ver {@link EmptyIsInvalidIntegerEditor}).
+   *
+   * <p>Como um {@code @InitBinder} de {@code @ControllerAdvice}, vale para todos os controllers de
+   * quem estende esta base, sem registro nem repetição por serviço. Casa por <strong>nome</strong>
+   * ({@code page} e {@code size}) e não por tipo, de propósito: valer para todo {@code Integer}
+   * faria um parâmetro futuro sem restrição receber {@code Integer.MIN_VALUE} no lugar de
+   * {@code null}. Em contrapartida, um parâmetro com um desses nomes precisa declarar uma restrição,
+   * ou o vazio passará por um valor legítimo.</p>
+   */
+  @InitBinder({"page", "size"})
+  protected void rejectEmptyPageParameters(final WebDataBinder binder) {
+    binder.registerCustomEditor(Integer.class, new EmptyIsInvalidIntegerEditor());
+  }
+
+  /**
    * Lista os campos recusados pela validação no {@code data} do {@code 400}.
    */
   @Override
@@ -79,6 +102,38 @@ public abstract class GlobalExceptionHandler extends ResponseEntityExceptionHand
   ) {
     final var violations = exception.getBindingResult().getFieldErrors().stream()
       .map(error -> new ApiErrorResponse.FieldViolation(error.getField(), error.getDefaultMessage()))
+      .toList();
+    return this.handleExceptionInternal(
+      exception,
+      ApiErrorResponse.of(violations, ApplicationMessage.REQUEST_INVALID),
+      headers,
+      status,
+      request
+    );
+  }
+
+  /**
+   * Lista os parâmetros recusados pela validação no {@code data} do {@code 400}, no mesmo formato
+   * do {@link #handleMethodArgumentNotValid}. É o caso de uma restrição posta direto num parâmetro
+   * do controller, como o {@code @Min} de um {@code @RequestParam}: o Spring a avalia sozinho e
+   * lança esta exceção, e não a de campo de corpo.
+   *
+   * <p>O {@code field} é o nome do parâmetro Java, que coincide com o da requisição enquanto o
+   * {@code @RequestParam} não o renomeia; o {@code message} é a chave declarada na restrição.</p>
+   */
+  @Override
+  protected ResponseEntity<Object> handleHandlerMethodValidationException(
+    final HandlerMethodValidationException exception,
+    final HttpHeaders headers,
+    final HttpStatusCode status,
+    final WebRequest request
+  ) {
+    final var violations = exception.getParameterValidationResults().stream()
+      .flatMap(result -> result.getResolvableErrors().stream()
+        .map(error -> new ApiErrorResponse.FieldViolation(
+          Optional.ofNullable(result.getMethodParameter().getParameterName()).orElse(""),
+          error.getDefaultMessage()
+        )))
       .toList();
     return this.handleExceptionInternal(
       exception,

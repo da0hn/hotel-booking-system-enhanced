@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.infrastructure.db;
 
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import com.hotel.booking.system.hotel.service.core.application.dto.*;
 import com.hotel.booking.system.hotel.service.core.application.mapper.HotelUseCaseMapperImpl;
@@ -14,6 +15,8 @@ import com.hotel.booking.system.hotel.service.infrastructure.db.repository.adapt
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import java.math.BigDecimal;
@@ -95,6 +98,65 @@ class HotelRepositoryAdapterIT extends AbstractDatabaseIT {
     assertThat(this.localities.existsLocalityById(LocalityId.of(UUID.randomUUID()))).isFalse();
     assertThat(this.hotels.findAllRoomsById(List.of(RoomId.newInstance()))).isEmpty();
     assertThat(this.hotels.searchHotelAvailableBy("hotel inexistente", "", "", "")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("devolve a página do domínio, sem contagem total, com hasNext pelo elemento extra")
+  void buscaPaginadaDevolvePaginaDoDominioSemContagemTotal() {
+    final var primeira = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(0, 2));
+    final var ultima = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(2, 2));
+    final var alemDoFim = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(9, 2));
+
+    assertThat(primeira.content()).hasSize(2);
+    assertThat(primeira.number()).isZero();
+    assertThat(primeira.size()).isEqualTo(2);
+    assertThat(primeira.hasNext()).isTrue();
+    assertThat(primeira.totalElements()).isEmpty();
+    assertThat(primeira.totalPages()).isEmpty();
+    assertThat(ultima.content()).hasSize(1);
+    assertThat(ultima.hasNext()).isFalse();
+    assertThat(alemDoFim.content()).isEmpty();
+    assertThat(alemDoFim.number()).isEqualTo(9);
+    assertThat(alemDoFim.hasNext()).isFalse();
+  }
+
+  /**
+   * O Spring Data JPA converte o offset para {@code int} e lança
+   * {@code InvalidDataAccessApiUsageException} quando ele passa de {@code Integer.MAX_VALUE}. A
+   * página tão além do fim é uma página vazia, como qualquer outra além do fim, e não um erro: a
+   * linha em que o offset ainda cabe no {@code int} ({@code 2147483647}) continua indo ao banco.
+   */
+  @ParameterizedTest(name = "page={0} size={1}")
+  @CsvSource({
+    "21474836, 100",
+    "2147483647, 1",
+    "1073741824, 2",
+    "21474837, 100",
+    "2147483647, 20"
+  })
+  @DisplayName("a página cujo offset estoura o int é uma página vazia, e não um erro")
+  void paginaComOffsetAlemDoIntDevolvePaginaVazia(final int number, final int size) {
+    final var page = this.hotels.searchHotelAvailableBy("", "", "", "", PageRequest.of(number, size));
+
+    assertThat(page.content()).isEmpty();
+    assertThat(page.number()).isEqualTo(number);
+    assertThat(page.size()).isEqualTo(size);
+    assertThat(page.hasNext()).isFalse();
+    assertThat(page.totalElements()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("a página de uma busca com filtro devolve os quartos de cada hotel")
+  void paginaComFiltroDevolveHoteisComQuartos() {
+    final var page = new SearchHotelAvailableUseCaseImpl(this.hotels, new HotelUseCaseMapperImpl())
+      .execute(new SearchHotelAvailableInput("cuiaba", "", "Hotel", ""), PageRequest.of(0, 10));
+
+    assertThat(page.hasNext()).isFalse();
+    assertThat(page.content()).isNotEmpty().allSatisfy(hotel -> {
+      assertThat(hotel.city()).isEqualTo("Cuiabá");
+      assertThat(hotel.category()).isEqualTo("Hotel");
+      assertThat(hotel.rooms()).isNotEmpty();
+    });
   }
 
   /** Caracteriza o defeito atual: a conversão usa o id do hotel como id da localidade. */

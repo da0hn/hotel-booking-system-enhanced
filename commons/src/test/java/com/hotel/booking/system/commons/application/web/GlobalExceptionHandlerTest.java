@@ -5,10 +5,14 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.hotel.booking.system.commons.application.dto.ErrorResponse;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpMethod;
@@ -26,6 +30,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -33,6 +38,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -119,6 +125,97 @@ class GlobalExceptionHandlerTest {
       .andExpect(jsonPath("$.data[1].field").value("city"))
       .andExpect(jsonPath("$.data[1].message").value("hotel.locality.must.not.be.null"))
       .andExpect(jsonPath("$.time").isString());
+  }
+
+  @Test
+  @DisplayName("responde 400 com o campo e a chave quando um parâmetro de query viola a restrição")
+  void parametroDeQueryInvalidoResponde400ComListaDeCampos() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "-1").param("size", "101"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data.length()").value(2))
+      .andExpect(jsonPath("$.data[0].field").value("page"))
+      .andExpect(jsonPath("$.data[0].message").value("page.number.invalid"))
+      .andExpect(jsonPath("$.data[1].field").value("size"))
+      .andExpect(jsonPath("$.data[1].message").value("page.size.invalid"))
+      .andExpect(jsonPath("$.time").isString());
+  }
+
+  @Test
+  @DisplayName("lista só o parâmetro que viola a restrição")
+  void listaApenasOParametroInvalido() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "2").param("size", "0"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value("size"));
+  }
+
+  @Test
+  @DisplayName("aceita os limites da faixa e a ausência dos parâmetros")
+  void parametrosNoLimiteOuAusentesPassam() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "0").param("size", "1")).andExpect(status().isOk());
+    this.mockMvc.perform(get("/constrained").param("size", "100")).andExpect(status().isOk());
+    this.mockMvc.perform(get("/constrained")).andExpect(status().isOk());
+  }
+
+  @Test
+  @DisplayName("responde 400 com o envelope de erro quando o parâmetro de query não é um número")
+  void parametroDeQueryNaoNumericoResponde400ComEnvelope() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "abc"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data").doesNotExist());
+  }
+
+  @ParameterizedTest(name = "{0}= (vazio)")
+  @CsvSource({"page,page.number.invalid", "size,page.size.invalid"})
+  @DisplayName("responde 400 com a chave da restrição quando page ou size vem presente e vazio")
+  void pageOuSizeVazioResponde400(
+    final String parameter,
+    final String message
+  ) throws Exception {
+    this.mockMvc.perform(get("/constrained").param(parameter, ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value(parameter))
+      .andExpect(jsonPath("$.data[0].message").value(message));
+  }
+
+  @Test
+  @DisplayName("lista os dois parâmetros quando page e size vêm vazios juntos")
+  void pageESizeVaziosJuntosListamOsDois() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "").param("size", ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data.length()").value(2))
+      .andExpect(jsonPath("$.data[0].field").value("page"))
+      .andExpect(jsonPath("$.data[1].field").value("size"));
+  }
+
+  @Test
+  @DisplayName("um Integer que não se chama page nem size continua recebendo null quando vem vazio")
+  void outroInteiroVazioContinuaNulo() throws Exception {
+    this.mockMvc.perform(get("/unconstrained").param("count", ""))
+      .andExpect(status().isOk())
+      .andExpect(content().string("count=null"));
+    this.mockMvc.perform(get("/unconstrained").param("count", "7"))
+      .andExpect(content().string("count=7"));
+  }
+
+  @Test
+  @DisplayName("registra a violação de parâmetro em WARN, sem stacktrace")
+  void violacaoDeParametroVaiParaOLogEmWarn() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("size", "0"));
+
+    assertThat(this.logs.list)
+      .singleElement()
+      .satisfies(event -> {
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getThrowableProxy()).isNull();
+      });
   }
 
   @Test
@@ -253,6 +350,21 @@ class GlobalExceptionHandlerTest {
     @GetMapping("/missing-path-variable")
     String missingPathVariable(@PathVariable("absent") final String absent) {
       return absent;
+    }
+
+    @GetMapping("/constrained")
+    String constrained(
+      @RequestParam(value = "page", required = false) @Min(value = 0, message = "page.number.invalid") final Integer page,
+      @RequestParam(value = "size", required = false)
+      @Min(value = 1, message = "page.size.invalid")
+      @Max(value = 100, message = "page.size.invalid") final Integer size
+    ) {
+      return "ok";
+    }
+
+    @GetMapping("/unconstrained")
+    String unconstrained(@RequestParam(value = "count", required = false) final Integer count) {
+      return "count=" + count;
     }
 
     @GetMapping("/missing-resource")

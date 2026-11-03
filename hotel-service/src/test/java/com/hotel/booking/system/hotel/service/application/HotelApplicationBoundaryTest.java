@@ -1,5 +1,8 @@
 package com.hotel.booking.system.hotel.service.application;
 
+import com.hotel.booking.system.commons.application.dto.PageResponse;
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.hotel.service.application.service.impl.HotelApplicationServiceImpl;
 import com.hotel.booking.system.hotel.service.application.web.controller.HotelController;
 import com.hotel.booking.system.hotel.service.core.application.dto.*;
@@ -29,12 +32,16 @@ class HotelApplicationBoundaryTest {
     final var search = HotelApplicationServiceImpl.class
       .getMethod("searchHotelAvailableBy", SearchHotelAvailableInput.class)
       .getAnnotation(Transactional.class);
+    final var searchPage = HotelApplicationServiceImpl.class
+      .getMethod("searchHotelAvailablePageBy", SearchHotelAvailableInput.class, PageRequest.class)
+      .getAnnotation(Transactional.class);
     final var booking = HotelApplicationServiceImpl.class
       .getMethod("bookingRoomRequest", BookingRoomInput.class)
       .getAnnotation(Transactional.class);
 
     assertThat(register).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
     assertThat(search).isNotNull().extracting(Transactional::readOnly).isEqualTo(true);
+    assertThat(searchPage).isNotNull().extracting(Transactional::readOnly).isEqualTo(true);
     assertThat(booking).isNotNull().extracting(Transactional::readOnly).isEqualTo(false);
   }
 
@@ -58,11 +65,31 @@ class HotelApplicationBoundaryTest {
     final var input = new SearchHotelAvailableInput("Cuiaba", "MT", "Pousada", "Portal");
     final var output = List.of(SearchHotelAvailableOutput.builder().name("Portal").build());
     when(this.search.execute(input)).thenReturn(output);
-    final var response = this.controller.searchHotelAvailableBy("Portal", "Cuiaba", "MT", "Pousada");
+    final var response = this.controller.searchHotelAvailableBy("Portal", "Cuiaba", "MT", "Pousada", null, null);
     assertThat(response.getStatusCode().value()).isEqualTo(200);
     assertThat(response.getBody().getSuccess()).isTrue();
     assertThat(response.getBody().getData()).containsExactlyElementsOf(output);
     verify(this.search).execute(input);
+    verifyNoInteractions(this.register, this.book);
+  }
+
+  @Test
+  @DisplayName("devolve a página no envelope HTTP quando a busca traz page ou size")
+  void buscaPaginadaDevolveOEnvelopeDePagina() {
+    final var input = new SearchHotelAvailableInput("Cuiaba", "MT", "Pousada", "Portal");
+    final var request = PageRequest.of(2, 20);
+    final var output = Page.withoutTotal(List.of(SearchHotelAvailableOutput.builder().name("Portal").build()), request, true);
+    when(this.search.execute(input, request)).thenReturn(output);
+    final var response = this.controller.searchHotelAvailableBy("Portal", "Cuiaba", "MT", "Pousada", 2, null);
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody()).isInstanceOfSatisfying(PageResponse.class, page -> {
+      assertThat(page.getSuccess()).isTrue();
+      assertThat(page.getData()).containsExactlyElementsOf(output.content());
+      assertThat(page.getPage().number()).isEqualTo(2);
+      assertThat(page.getPage().size()).isEqualTo(20);
+      assertThat(page.getPage().hasNext()).isTrue();
+    });
+    verify(this.search).execute(input, request);
     verifyNoInteractions(this.register, this.book);
   }
 

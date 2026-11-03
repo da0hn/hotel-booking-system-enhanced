@@ -469,7 +469,7 @@ domínio do serviço, por `this.reject(status, exception)`.
 |---|---|---|
 | Cliente ou ordem de reserva da URL não existem | 404 | a chave da exceção |
 | Regra de domínio violada (`HotelDomainException`, `CustomerDomainException`) | 422 | a chave da exceção |
-| Campos de entrada recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
+| Campos de entrada (corpo ou parâmetro de query) recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
 | Corpo ilegível, método não suportado, rota inexistente | o do Spring (400, 405, 404) | `request.invalid` |
 | Falha ao publicar o evento (`MessagePublishException`) | 503 | `hotel.booking.temporarily.unavailable` |
 | Qualquer outra exceção | 500 | `internal.server.error`, sem detalhe |
@@ -492,12 +492,72 @@ O que não se deduz do código:
   não processou gera 404 em sequência, e um stacktrace por tentativa enterraria o log.
 - **Dois limites conhecidos.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
   declare `@NotEmpty` e `@Min`: as restrições existem e nunca são avaliadas na fronteira HTTP.
-  O 400 com lista de campos é, por isso, preventivo, provado por uma
+  O 400 com lista de campos **de corpo** é, por isso, preventivo, provado por uma
   `MethodArgumentNotValidException` construída e não por um request real, até a #10 ligar o
-  `@Valid`. Quem a implementar encontra o item do erro como `{field, message}`, em que
+  `@Valid`. O de **parâmetro de query** já é real: o `@Min`/`@Max` posto direto no
+  `@RequestParam` (ver *Paginação*) é avaliado pelo Spring e chega ao
+  `handleHandlerMethodValidationException` da base. Quem implementar a #10 encontra o item do
+  erro como `{field, message}`, em que
   `message` é a chave declarada na restrição, e não o `{field, detail}` com texto livre do
   exemplo daquela issue. E um id malformado no path (`UUID.fromString` lança
   `IllegalArgumentException`) continua respondendo 500.
+
+### Paginação
+
+O contrato de página é do domínio e mora no `commons`: `Page<T>` e `PageRequest`
+(`core/domain/pagination`), sem nenhum tipo do Spring Data. O `Slice` e o `Pageable` ficam só na
+infraestrutura de persistência do `hotel-service`: o `HotelJpaRepository` os declara e o
+`HotelRepositoryAdapter` converte nos dois sentidos. Um ArchUnit no `commons` e outro no
+`hotel-service` recusam a dependência do `core` no `org.springframework.data`; os outros serviços
+com banco não têm essa regra, então quem paginar o `booking-service` ou o `customer-service` a
+acrescenta ao `*ArchitectureTest` dele. No HTTP, o envelope de página é o de lista mais o campo
+`page` (`PageResponse` estende `CollectionResponse`); a resposta de lista não o ganha.
+
+- **`GET /hotel` tem dois modos, e é a requisição que escolhe.** Sem `page` nem `size`, responde a
+  lista de sempre: sem ordem garantida e sem `page`. Com qualquer um dos dois, responde a página, e
+  o outro assume o padrão (`page` 0, `size` 20). `size` vai de 1 a 100. Ausente é diferente de
+  presente e vazio: `?page=` e `?size=` são 400 (ver abaixo), e não valem como se o parâmetro não
+  tivesse vindo. Os filtros de texto vazios (`?name=`) continuam contando como ausentes.
+- **A página é sem contagem total.** O `Slice` pede `size + 1` linhas e `hasNext` sai da sobra,
+  sem `COUNT` por requisição (conferido no SQL: `order by ... offset ? rows fetch first ? rows only`).
+  `Page.withTotal` e `totalElements`/`totalPages` existem no envelope e ainda não têm consumidor;
+  essas chaves somem do JSON quando o total não foi contado porque são `Optional` vazio com
+  `NON_ABSENT`, e não um `null`, de modo que a chave presente sempre tem valor.
+- **A ordem `name, id` está no texto da `@Query`, não no `Pageable`.** O desempate por `id` é o que
+  estabiliza a paginação: sem ele, hotéis de mesmo nome trocam de lugar entre duas consultas e um
+  aparece em duas páginas ou em nenhuma. Lista e página compartilham o texto dos filtros por
+  `AVAILABLE_HOTELS_BY_PARAMETERS`; duplicá-lo deixaria os dois modos divergirem em silêncio.
+- **`page` e `size` inválidos são 400, e não 422.** São erro de formato, não regra de domínio. A
+  restrição fica no próprio `@RequestParam`, que por isso é `Integer` e não `Optional<Integer>`: o
+  Spring só avalia sozinho a anotação posta no parâmetro, e num `Optional<@Min Integer>` ela deixaria
+  de valer sem aviso. O teto de 100 é do `GET /hotel` (`HotelController`), não do `PageRequest`, que
+  só recusa o que não faz sentido (página negativa, tamanho menor que 1).
+- **`?page=` e `?size=` vazios são 400, com `page.number.invalid` e `page.size.invalid`**, a mesma
+  forma de `page=-1`. O Spring converte `""` em `null` para um `Integer` antes de a validação rodar, e
+  a validação não avalia `null`, então sem tratamento o vazio valeria como ausente e devolveria a
+  lista inteira. Um `@InitBinder` do `GlobalExceptionHandler`, a base dos advices, registra um
+  `PropertyEditor` (`EmptyIsInvalidIntegerEditor`) que troca o vazio por `Integer.MIN_VALUE`, valor
+  que o `@Min` recusa; assim a violação sai pelo mesmo caminho das outras e junto com elas
+  (`?page=&size=` lista os dois). Por estar na base, vale para todo controller de todo serviço que
+  a estende, sem registro nem cópia por serviço; o advice de um serviço novo o herda.
+  **O binder casa por nome (`page` e `size`), não por tipo**: valer para todo `Integer` faria um
+  parâmetro futuro sem restrição receber `Integer.MIN_VALUE` no lugar de `null`. O custo é que
+  qualquer parâmetro `Integer` com um desses nomes **precisa** de `@Min`, ou o vazio passa por um
+  valor legítimo. Valor que não é inteiro (`?page=abc`) segue outro caminho, o do tipo
+  incompatível: 400 `request.invalid`, sem `data`.
+- **Página além do fim é 200 com `data` vazio**, pelo mesmo motivo da busca sem resultado: zero
+  itens é resposta válida, não ausência de recurso. Vale também para o `page` que não cabe no
+  `int` do Spring Data JPA (`page × size` acima de `Integer.MAX_VALUE`, como `?page=2147483647`
+  ou `?page=21474837&size=100`): o `PageRequest` calcula o offset em `long`, mas o Spring Data o
+  converte para `int` e lança `InvalidDataAccessApiUsageException`, que viraria um 500. O
+  `HotelRepositoryAdapter` responde a página vazia sem consultar o banco nesse caso, e `page`
+  não tem `@Max` por isso: um teto em `page` abriria uma exceção à regra de que o fim não é erro.
+- **Limite conhecido: a busca resolve os quartos hotel a hotel.** `rooms` é `LAZY` e o mapper os
+  lê dentro da transação de leitura, então uma página de N hotéis faz até N consultas de quartos
+  (lido no código, não medido); `locality` e `category` são `@ManyToOne` `EAGER` e saem uma vez por
+  valor distinto. Vale igual para a lista, que ainda não tem teto. Um `join fetch` de `rooms` não
+  resolve: com `LIMIT` o Hibernate pagina em memória. O remédio é um `@BatchSize` ou uma segunda
+  consulta pelos ids da página.
 
 ### Actuator
 

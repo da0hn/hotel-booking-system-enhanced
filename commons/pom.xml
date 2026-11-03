@@ -20,6 +20,14 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
         </dependency>
+        <!-- Só para o GlobalExceptionHandlerTest exercitar @Min/@Max num request real: a API de
+             validação não vem do spring-boot-starter-web, e sem implementação o Spring MVC
+             ignora a restrição em silêncio. Quem valida em produção declara o starter no próprio pom. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- `optional` para que o payment-service, que nao tem banco, nao herde o JDBC: quem usa
              o JdbcProcessedEventRepository ja traz o spring-jdbc pelo starter de JPA. -->
         <dependency>

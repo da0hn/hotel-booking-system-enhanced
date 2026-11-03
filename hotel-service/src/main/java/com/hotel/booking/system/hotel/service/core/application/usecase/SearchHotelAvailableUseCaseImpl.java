@@ -1,6 +1,8 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
 import com.hotel.booking.system.commons.core.application.annotation.UseCase;
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableOutput;
 import com.hotel.booking.system.hotel.service.core.ports.api.mapper.HotelUseCaseMapper;
@@ -36,6 +38,16 @@ public class SearchHotelAvailableUseCaseImpl implements SearchHotelAvailableUseC
     return queryResult.stream()
       .map(this.hotelUseCaseMapper::searchHotelAvailableQueryResultToSearchHotelAvailableOutput)
       .collect(Collectors.toList());
+  }
+
+  @Override
+  public Page<SearchHotelAvailableOutput> execute(
+    final SearchHotelAvailableInput input,
+    final PageRequest pageRequest
+  ) {
+    return this.hotelRepository
+      .searchHotelAvailableBy(input.name(), input.category(), input.city(), input.state(), pageRequest)
+      .map(this.hotelUseCaseMapper::searchHotelAvailableQueryResultToSearchHotelAvailableOutput);
   }
 
 }

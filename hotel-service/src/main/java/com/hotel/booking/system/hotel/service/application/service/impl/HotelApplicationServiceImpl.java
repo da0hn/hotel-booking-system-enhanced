@@ -1,5 +1,7 @@
 package com.hotel.booking.system.hotel.service.application.service.impl;
 
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.hotel.service.application.service.HotelApplicationService;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookingRoomInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookingRoomOutput;
@@ -34,6 +36,15 @@ public class HotelApplicationServiceImpl implements HotelApplicationService {
   @Transactional(readOnly = true)
   public List<SearchHotelAvailableOutput> searchHotelAvailableBy(final SearchHotelAvailableInput input) {
     return this.searchHotelAvailableUseCase.execute(input);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Page<SearchHotelAvailableOutput> searchHotelAvailablePageBy(
+    final SearchHotelAvailableInput input,
+    final PageRequest pageRequest
+  ) {
+    return this.searchHotelAvailableUseCase.execute(input, pageRequest);
   }
 
   @Override

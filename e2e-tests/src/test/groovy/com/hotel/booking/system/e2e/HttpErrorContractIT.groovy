@@ -21,11 +21,16 @@ import java.time.Duration
  * que é o advice registrado no contexto de verdade e o corpo serializado pelo Jackson de
  * produção, com o {@code time} no formato do envelope.</p>
  *
+ * <p>Cobre também a fronteira da busca paginada, {@code GET /hotel?page=&size=} (issue #43): o
+ * corpo da página e o {@code 400} de {@code page} ou {@code size} inválido. É o único teste que
+ * serializa o {@code page} com o Jackson de produção e avalia o {@code @Min}/{@code @Max} do
+ * parâmetro com o validador do contexto real.</p>
+ *
  * <p>O 500 por exceção inesperada não aparece aqui: provocá-lo exigiria derrubar o banco, e o
  * que importa nele, a mensagem genérica e o stacktrace só no log, está no
  * {@code GlobalExceptionHandlerTest}.</p>
  */
-@Title("Contrato HTTP de erro dos serviços com API")
+@Title("Contrato HTTP dos serviços com API")
 class HttpErrorContractIT extends Specification {
 
   static final String CUSTOMER_ID = 'f1e28a47-8852-45e8-b8e1-e6701633dd56'
@@ -33,6 +38,21 @@ class HttpErrorContractIT extends Specification {
   static final String HOTEL_ID = 'b69b768f-32d8-4c70-a3ef-b5ace438c5e7'
 
   static final String KING_ROOM_ID = 'e86ff4c5-6f20-419e-8ce8-3140db9bd7a7'
+
+  static final int SEEDED_HOTELS = 5
+
+  /**
+   * Os nomes do seed da V010 em ordem alfabética. A migration insere a "Villa Guiamares" antes da
+   * "Canto dos Pássaros", então sem o {@code ORDER BY} a leitura sequencial devolveria as duas
+   * trocadas.
+   */
+  static final List<String> SEEDED_HOTEL_NAMES = [
+    'Amazon Plaza Hotel',
+    'Getúlio Hotel',
+    'Hotel Taiamã',
+    'Pousada Canto dos Pássaros',
+    'Pousada Villa Guiamares'
+  ]
 
   static final HttpClient HTTP = HttpClient.newHttpClient()
 
@@ -99,6 +119,100 @@ class HttpErrorContractIT extends Specification {
     then:
     response.statusCode() == 404
     isErrorEnvelope(response, 'request.invalid')
+  }
+
+  def "a busca de hotéis sem page nem size responde a lista de sempre, sem page"() {
+    when:
+    def response = get("${environment.hotelUrl()}/hotel")
+    def body = new JsonSlurper().parseText(response.body()) as Map
+
+    then:
+    response.statusCode() == 200
+    body.keySet() == ['success', 'data'] as Set
+    body.success == true
+    (body.data as List).size() == SEEDED_HOTELS
+  }
+
+  def "a busca de hotéis com size responde uma página sem contagem total, e hasNext só é falso na última"() {
+    when:
+    def first = hotelSearch('size=2')
+    def last = hotelSearch('page=2&size=2')
+
+    then:
+    first.status == 200
+    first.body.data.size() == 2
+    first.body.page == [number: 0, size: 2, hasNext: true]
+    last.status == 200
+    last.body.data.size() == 1
+    last.body.page == [number: 2, size: 2, hasNext: false]
+  }
+
+  def "a página além do fim responde 200 com data vazio, e não 404"() {
+    when:
+    def beyond = hotelSearch('page=9')
+
+    then:
+    beyond.status == 200
+    beyond.body.success == true
+    beyond.body.data == []
+    beyond.body.page == [number: 9, size: 20, hasNext: false]
+  }
+
+  def "a página cujo offset estoura o int responde 200 com data vazio, e não 500"() {
+    when:
+    def huge = hotelSearch('page=21474837&size=100')
+    def maxPage = hotelSearch('page=2147483647')
+
+    then:
+    huge.status == 200
+    huge.body.data == []
+    huge.body.page == [number: 21474837, size: 100, hasNext: false]
+    maxPage.status == 200
+    maxPage.body.data == []
+    maxPage.body.page == [number: 2147483647, size: 20, hasNext: false]
+  }
+
+  def "a busca de hotéis lista as páginas por nome, sem repetir nem omitir"() {
+    when:
+    def names = (0..2).collectMany { hotelSearch("page=${it}&size=2").body.data*.name }
+
+    then:
+    names == SEEDED_HOTEL_NAMES
+  }
+
+  def "#parameter=#value responde 400 com o campo e a chave da restrição"() {
+    when:
+    def response = get("${environment.hotelUrl()}/hotel?${parameter}=${value}")
+    def body = new JsonSlurper().parseText(response.body()) as Map
+
+    then:
+    response.statusCode() == 400
+    body.success == false
+    body.message == 'request.invalid'
+    body.data == [[field: parameter, message: message]]
+    (body.time as String) ==~ /\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}/
+
+    where:
+    parameter | value | message
+    'page'    | '-1'  | 'page.number.invalid'
+    'page'    | ''    | 'page.number.invalid'
+    'size'    | '0'   | 'page.size.invalid'
+    'size'    | '101' | 'page.size.invalid'
+    'size'    | ''    | 'page.size.invalid'
+  }
+
+  def "page que não é um inteiro responde 400 com o envelope de erro"() {
+    when:
+    def response = get("${environment.hotelUrl()}/hotel?page=abc")
+
+    then:
+    response.statusCode() == 400
+    isErrorEnvelope(response, 'request.invalid')
+  }
+
+  private Map hotelSearch(String query) {
+    def response = get("${environment.hotelUrl()}/hotel?${query}")
+    [status: response.statusCode(), body: new JsonSlurper().parseText(response.body()) as Map]
   }
 
   private boolean isErrorEnvelope(HttpResponse<String> response, String message) {

@@ -51,6 +51,12 @@ class HotelArchitectureTest {
     .should().dependOnClassesThat().resideInAnyPackage(INFRASTRUCTURE, APPLICATION);
 
   @ArchTest
+  static final ArchRule coreDoesNotDependOnSpringData = noClasses()
+    .that().resideInAnyPackage(CORE + "..")
+    .should().dependOnClassesThat().resideInAnyPackage("org.springframework.data..")
+    .because("a página do domínio é o Page do commons; Slice e Pageable ficam no adapter de persistência");
+
+  @ArchTest
   static final ArchRule portsDoNotDependOnApplicationImplementations = noClasses()
     .that().resideInAnyPackage(CORE_PORTS)
     .should().dependOnClassesThat().resideInAnyPackage(

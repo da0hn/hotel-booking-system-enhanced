@@ -1,5 +1,7 @@
 package com.hotel.booking.system.hotel.service.application.service;
 
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
+import com.hotel.booking.system.commons.core.domain.pagination.PageRequest;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookingRoomInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookingRoomOutput;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelInput;
@@ -16,6 +18,8 @@ public interface HotelApplicationService {
 
 
   List<SearchHotelAvailableOutput> searchHotelAvailableBy(SearchHotelAvailableInput input);
+
+  Page<SearchHotelAvailableOutput> searchHotelAvailablePageBy(SearchHotelAvailableInput input, PageRequest pageRequest);
 
   BookingRoomOutput bookingRoomRequest(BookingRoomInput input);
 }

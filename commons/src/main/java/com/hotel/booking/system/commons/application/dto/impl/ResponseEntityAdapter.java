@@ -2,7 +2,9 @@ package com.hotel.booking.system.commons.application.dto.impl;
 
 
 import com.hotel.booking.system.commons.application.dto.CollectionResponse;
+import com.hotel.booking.system.commons.application.dto.PageResponse;
 import com.hotel.booking.system.commons.application.dto.Response;
+import com.hotel.booking.system.commons.core.domain.pagination.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -26,6 +28,15 @@ public class ResponseEntityAdapter<T> extends ResponseEntity<T> {
    */
   public static <T> ResponseEntity<CollectionResponse<T>> items(final Collection<T> item) {
     return new ResponseEntityAdapter<>(ApiCollectionResponse.of(item), HttpStatus.OK);
+  }
+
+  /**
+   * Resposta de uma busca paginada: {@code 200} com o envelope de lista mais o campo {@code page}.
+   * Vale o mesmo de {@link #items}: a página vazia, ou além do fim, é {@code 200} com {@code data}
+   * vazio, e nunca {@code 404}.
+   */
+  public static <T> ResponseEntity<PageResponse<T>> page(final Page<T> page) {
+    return new ResponseEntityAdapter<>(ApiPageResponse.of(page), HttpStatus.OK);
   }
 
   /**
