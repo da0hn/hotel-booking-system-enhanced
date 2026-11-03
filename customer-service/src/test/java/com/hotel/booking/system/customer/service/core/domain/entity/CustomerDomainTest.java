@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.*;
 @DisplayName("Domínio de clientes")
 class CustomerDomainTest {
   @Test
-  @DisplayName("inicializa a identidade uma vez e registra cada transição")
-  void inicializaIdentidadeUmaVezERegistraCadaTransicao() {
+  @DisplayName("inicializa a identidade uma vez e não repete a primeira transição")
+  void inicializaIdentidadeUmaVezENaoRepeteAPrimeiraTransicao() {
     final var order = ReservationOrder.builder().build();
     order.initialize();
     final var id = order.getId();
@@ -24,11 +24,105 @@ class CustomerDomainTest {
     order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT);
     assertThat(order.getId()).isEqualTo(id);
     assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
-    assertThat(order.getTimeline()).hasSize(3);
+    assertThat(order.getTimeline()).hasSize(2);
     assertThat(order.getTimeline()).allSatisfy(item -> {
       assertThat(item.getId()).isNotNull();
       assertThat(item.getOccurredAt()).isBeforeOrEqualTo(Instant.now());
     });
+  }
+
+  @Test
+  @DisplayName("registra cada transição distinta da saga, na sequência em que chegam")
+  void registraCadaTransicaoDistintaEmSequencia() {
+    final var order = ReservationOrder.builder().build();
+    order.initialize();
+
+    assertThat(order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT)).isTrue();
+    assertThat(order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED)).isTrue();
+    assertThat(order.updateStatus(CustomerReservationStatus.RESERVED)).isTrue();
+
+    assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.RESERVED);
+    assertThat(order.getTimeline()).extracting(ReservationOrderTimeline::getStatus).containsExactly(
+      CustomerReservationStatus.AWAITING_RESERVATION,
+      CustomerReservationStatus.AWAITING_PAYMENT,
+      CustomerReservationStatus.PAYMENT_CONFIRMED,
+      CustomerReservationStatus.RESERVED
+    );
+  }
+
+  @Test
+  @DisplayName("ignora o status que já é o da última entrada da timeline")
+  void ignoraStatusIgualAoDaUltimaEntrada() {
+    final var order = ReservationOrder.builder().build();
+    order.initialize();
+    order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT);
+
+    final var applied = order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT);
+
+    assertThat(applied).isFalse();
+    assertThat(order.getTimeline()).hasSize(2);
+    assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+  }
+
+  @Test
+  @DisplayName("ignora a falha repetida com o mesmo status e os mesmos motivos")
+  void ignoraFalhaRepetidaComOMesmoStatusEOsMesmosMotivos() {
+    final var order = ReservationOrder.builder().build();
+    order.initialize();
+
+    final var first = order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED,
+      FailureMessages.newInstance(List.of("Cartão recusado")));
+    final var repeated = order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED,
+      FailureMessages.newInstance(List.of("Cartão recusado")));
+
+    assertThat(first).isTrue();
+    assertThat(repeated).isFalse();
+    assertThat(order.getTimeline()).hasSize(2);
+  }
+
+  @Test
+  @DisplayName("grava a nova falha quando o mesmo status volta com outro motivo")
+  void gravaANovaFalhaQuandoOMesmoStatusVoltaComOutroMotivo() {
+    final var order = ReservationOrder.builder().build();
+    order.initialize();
+    order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED,
+      FailureMessages.newInstance(List.of("Cartão recusado")));
+
+    final var applied = order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED,
+      FailureMessages.newInstance(List.of("Saldo insuficiente")));
+
+    assertThat(applied).isTrue();
+    assertThat(order.getTimeline()).extracting(ReservationOrderTimeline::getReason)
+      .containsExactly(null, "Cartão recusado", "Saldo insuficiente");
+  }
+
+  @Test
+  @DisplayName("compara com a entrada mais recente pelo instante, e não pela posição na lista")
+  void comparaComAEntradaMaisRecentePeloInstante() {
+    final var old = new ReservationOrderTimeline(ReservationOrderTimelineId.newInstance(),
+      CustomerReservationStatus.AWAITING_RESERVATION, null, Instant.parse("2026-01-01T00:00:00Z"));
+    final var recent = new ReservationOrderTimeline(ReservationOrderTimelineId.newInstance(),
+      CustomerReservationStatus.AWAITING_PAYMENT, null, Instant.parse("2026-01-02T00:00:00Z"));
+    final var order = ReservationOrder.builder()
+      .timeline(Timeline.of(List.of(recent, old)))
+      .currentStatus(CustomerReservationStatus.AWAITING_PAYMENT)
+      .build();
+
+    assertThat(order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT)).isFalse();
+    assertThat(order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED)).isTrue();
+  }
+
+  @Test
+  @DisplayName("trata motivo nulo e em branco como a mesma ausência de motivo")
+  void trataMotivoNuloEEmBrancoComoAMesmaAusencia() {
+    final var semMotivo = new ReservationOrderTimeline(ReservationOrderTimelineId.newInstance(),
+      CustomerReservationStatus.AWAITING_PAYMENT, "", Instant.parse("2026-01-01T00:00:00Z"));
+    final var order = ReservationOrder.builder()
+      .timeline(Timeline.of(List.of(semMotivo)))
+      .currentStatus(CustomerReservationStatus.AWAITING_PAYMENT)
+      .build();
+
+    assertThat(order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT)).isFalse();
   }
 
   @Test

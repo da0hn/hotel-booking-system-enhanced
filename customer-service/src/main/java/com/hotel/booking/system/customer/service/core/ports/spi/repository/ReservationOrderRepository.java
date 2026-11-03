@@ -7,4 +7,6 @@ public interface ReservationOrderRepository {
   void save(ReservationOrder reservationOrder);
 
   ReservationOrder findById(ReservationOrderId id);
+
+  boolean exists(ReservationOrderId id);
 }

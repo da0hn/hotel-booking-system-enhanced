@@ -8,7 +8,9 @@ import com.hotel.booking.system.customer.service.core.ports.api.mapper.CustomerU
 import com.hotel.booking.system.customer.service.core.ports.api.usecase.InitializeCustomerBookingUseCase;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.CustomerRepository;
 import com.hotel.booking.system.customer.service.core.ports.spi.repository.ReservationOrderRepository;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @UseCase
 public class InitializeCustomerBookingUseCaseImpl implements InitializeCustomerBookingUseCase {
 
@@ -26,11 +28,21 @@ public class InitializeCustomerBookingUseCaseImpl implements InitializeCustomerB
     this.customerUseCaseMapper = customerUseCaseMapper;
   }
 
+  /**
+   * Naturalmente idempotente (regra 3 da issue #7): o pedido nasce uma vez. Gravar de novo o
+   * agregado recém-montado com o mesmo id reescreveria o {@code current_status} de volta para
+   * {@code AWAITING_RESERVATION} e substituiria a timeline pela de uma entrada só, desfazendo o
+   * andamento da saga.
+   */
   @Override
   public void execute(final InitializeReservationOrderInput input) {
     final var reservationOrder = this.customerUseCaseMapper.initializeReservationOrderInputToReservationOrder(input);
-    reservationOrder.initialize();
     this.ensureCustomerExists(reservationOrder);
+    if (this.reservationOrderRepository.exists(reservationOrder.getId())) {
+      log.info("Reservation order already initialized, ignoring | reservationOrderId={}", reservationOrder.getId());
+      return;
+    }
+    reservationOrder.initialize();
     this.reservationOrderRepository.save(reservationOrder);
   }
 

@@ -138,6 +138,44 @@ class CustomerFlowTest {
     verify(handler, times(1)).handle(event);
   }
 
+  /**
+   * Regra 3 da issue #7: a deduplicação por {@code eventId} não vê estes eventos como repetidos,
+   * porque cada um tem o seu. É a projeção que os reconhece — inclusive a reentrega tardia do
+   * evento inicial, que reescreveria o pedido de volta para {@code AWAITING_RESERVATION}.
+   */
+  @Test
+  @DisplayName("não repete a transição que chega em outro evento, com eventId novo")
+  void naoRepeteATransicaoQueChegaEmOutroEvento() {
+    when(this.customers.customerExistsBy(this.customerId)).thenReturn(true);
+    final var mapper = new CustomerUseCaseMapperImpl();
+    final var handler = this.beans.customerBookingStatusUpdatedHandler(
+      new InitializeCustomerBookingUseCaseImpl(this.customers, this.orders, mapper),
+      new UpdateCustomerBookingStatusUseCaseImpl(this.orders),
+      new UpdateCustomerBookingFailureStatusUseCaseImpl(this.orders), mapper);
+    final var listener = new CustomerBookingStatusUpdatedListenerImpl(handler, this.consumer);
+    listener.listen(List.of(this.initiated()));
+    final var captured = ArgumentCaptor.forClass(ReservationOrder.class);
+    verify(this.orders).save(captured.capture());
+    final var order = captured.getValue();
+    when(this.orders.findById(this.orderId)).thenReturn(order);
+    when(this.orders.exists(this.orderId)).thenReturn(true);
+
+    listener.listen(List.of(this.paymentRequested()));
+    listener.listen(List.of(this.paymentRequested()));
+    listener.listen(List.of(this.initiated()));
+
+    assertThat(order.getTimeline()).extracting(ReservationOrderTimeline::getStatus)
+      .containsExactly(CustomerReservationStatus.AWAITING_RESERVATION, CustomerReservationStatus.AWAITING_PAYMENT);
+    assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+    verify(this.orders, times(2)).save(any(ReservationOrder.class));
+  }
+
+  private CustomerBookingPaymentRequestedEvent paymentRequested() {
+    return CustomerBookingPaymentRequestedEvent.builder()
+      .customerId(this.customerId.toString()).reservationOrderId(this.orderId.toString())
+      .status(CustomerReservationStatus.AWAITING_PAYMENT).build();
+  }
+
   private CustomerBookingInitiatedEvent initiated() {
     return CustomerBookingInitiatedEvent.builder().customerId(this.customerId.toString())
       .reservationOrderId(this.orderId.toString()).hotelId(this.hotelId.toString())

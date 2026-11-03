@@ -33,4 +33,9 @@ public class ReservationOrderRepositoryAdapter implements ReservationOrderReposi
       .map(this.mapper::reservationOrderEntityToReservationOrder)
       .orElseThrow(ReservationOrderNotFoundException::new);
   }
+
+  @Override
+  public boolean exists(final ReservationOrderId reservationOrderId) {
+    return this.repository.existsById(reservationOrderId.getValue());
+  }
 }

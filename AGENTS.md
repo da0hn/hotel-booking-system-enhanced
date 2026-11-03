@@ -381,6 +381,18 @@ escolha estão nos Javadocs; o que não se deduz do código:
   transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
   reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
   falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
+- **No `customer-service`, a segunda rede é a própria timeline.** `ReservationOrder.updateStatus` e
+  `updateToFailureStatus` devolvem `false`, e o caso de uso não grava, quando a transição repete a
+  **entrada mais recente da timeline, escolhida pelo instante**: mesmo status e mesmo motivo, com
+  motivo nulo e em branco contando como ausência (`ReservationOrderTimeline.isSameTransitionAs`).
+  O `CustomerBookingInitiatedEvent` tem a mesma proteção: `InitializeCustomerBookingUseCaseImpl` não
+  regrava um pedido que já existe, o que (medido no IT) reescreveria o `current_status` para
+  `AWAITING_RESERVATION` e trocaria a timeline inteira pela de uma entrada só. Vale com `eventId`
+  novo e fora da janela de 7 dias, que a deduplicação por evento não cobre. **O critério olha só a última entrada**: a reentrega tardia de
+  um status *anterior* (o pedido já em `PAYMENT_CONFIRMED` e chega de novo um `AWAITING_PAYMENT`)
+  não é reconhecida, porque isso pede uma tabela de transições permitidas, e uma regra mais larga
+  barraria uma volta legítima, como uma nova tentativa de pagamento. A corrida de duas transações
+  que leem o pedido ao mesmo tempo também fica de fora: é a #53.
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
 - **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer

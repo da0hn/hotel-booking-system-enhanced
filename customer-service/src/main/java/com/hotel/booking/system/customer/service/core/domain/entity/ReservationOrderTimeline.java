@@ -8,6 +8,8 @@ import lombok.Getter;
 import lombok.experimental.SuperBuilder;
 
 import java.time.Instant;
+import java.util.Optional;
+import java.util.function.Predicate;
 
 @Getter
 @SuperBuilder
@@ -27,6 +29,20 @@ public class ReservationOrderTimeline extends AbstractDomainEntity<ReservationOr
     this.status = status;
     this.reason = reason;
     this.occurredAt = occurredAt;
+  }
+
+  /**
+   * Duas entradas descrevem a mesma transição quando têm o mesmo status e o mesmo motivo. O id e o
+   * instante ficam fora da comparação: são justamente o que muda a cada entrega do mesmo evento.
+   * Motivo nulo e em branco são a mesma ausência, porque a coluna devolve um ou outro conforme
+   * quem gravou.
+   */
+  public boolean isSameTransitionAs(final ReservationOrderTimeline other) {
+    return this.status == other.status && this.normalizedReason().equals(other.normalizedReason());
+  }
+
+  private Optional<String> normalizedReason() {
+    return Optional.ofNullable(this.reason).filter(Predicate.not(String::isBlank));
   }
 
   public static ReservationOrderTimeline update(final CustomerReservationStatus status) {
