@@ -9,13 +9,28 @@ import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
 import com.hotel.booking.system.booking.service.core.ports.api.mapper.BookingUseCaseMapper;
 import com.hotel.booking.system.booking.service.core.ports.api.usecase.BookingRoomUseCase;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.BookingRepository;
+import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Map;
+
 @Slf4j
 @UseCase
 public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
+
+  /**
+   * Um mapa, e não um {@code switch} sobre o enum: o {@code switch} faz o javac gerar uma classe
+   * sintética ({@code BookingRoomUseCaseImpl$1}) neste pacote, e a regra de arquitetura exige
+   * {@code @UseCase} em tudo que mora nele. O teste que percorre {@code BookingStatus.values()}
+   * cobra o lugar de um valor novo no enum.
+   */
+  private static final Map<BookingStatus, CustomerReservationStatus> REPORTED_STATUS = Map.of(
+    BookingStatus.PENDING, CustomerReservationStatus.AWAITING_PAYMENT,
+    BookingStatus.CONFIRMED, CustomerReservationStatus.RESERVED,
+    BookingStatus.CANCELED, CustomerReservationStatus.PAYMENT_FAILED
+  );
 
   private final BookingRepository bookingRepository;
   private final BookingUseCaseMapper mapper;
@@ -39,9 +54,23 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
     failureMessages.addAll(collectedFailureMessages);
   }
 
+  /**
+   * Idempotente pela chave de negócio: se o pedido já tem reserva, devolve a existente, marcada
+   * como repetida, em vez de gravar outra. A busca vem <em>antes</em> da verificação de
+   * disponibilidade de propósito — depois dela, a reserva do primeiro pedido contaria como
+   * ocupação do quarto e a repetição seria respondida como "indisponível", derrubando na saga
+   * um pedido que está reservado. A constraint {@code booking_reservation_order_id_uk} é a rede
+   * de segurança do banco caso duas entregas passem por aqui ao mesmo tempo.
+   */
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
     final var booking = this.mapper.bookingRoomInputToBooking(input);
+    return this.bookingRepository.findBookingByReservationOrderId(booking.getReservationOrderId())
+      .map(this::duplicateOf)
+      .orElseGet(() -> this.create(booking));
+  }
+
+  private BookingRoomOutput create(final Booking booking) {
     final var failureMessages = FailureMessages.empty();
     this.initializeAndValidate(booking, failureMessages);
     this.verifyRoomAvailability(booking, failureMessages);
@@ -50,6 +79,19 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
     }
     this.bookingRepository.save(booking);
     return new BookingRoomOutput(booking, CustomerReservationStatus.AWAITING_PAYMENT, failureMessages);
+  }
+
+  private BookingRoomOutput duplicateOf(final Booking existing) {
+    log.info(
+      "A booking already exists for the reservation order, ignoring duplicate request | reservationOrderId={} | status={}",
+      existing.getReservationOrderId(),
+      existing.getStatus()
+    );
+    return new BookingRoomOutput(existing, this.statusOf(existing), FailureMessages.empty(), true);
+  }
+
+  private CustomerReservationStatus statusOf(final Booking booking) {
+    return REPORTED_STATUS.get(booking.getStatus());
   }
 
   private void verifyRoomAvailability(final Booking booking, final FailureMessages failureMessages) {

@@ -3,6 +3,7 @@ package com.hotel.booking.system.hotel.service.infrastructure.configuration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterRetryConfiguration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterTopology;
 import com.hotel.booking.system.commons.infrastructure.messaging.EventMessageConverter;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.JdbcIdempotencyConfiguration;
 import com.hotel.booking.system.hotel.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.hotel.service.infrastructure.messaging.properties.QueueProperties;
 import com.hotel.booking.system.hotel.service.infrastructure.messaging.properties.RoutingKeyProperties;
@@ -19,7 +20,7 @@ import org.springframework.context.annotation.Import;
 import tools.jackson.databind.json.JsonMapper;
 
 @Configuration
-@Import(DeadLetterRetryConfiguration.class)
+@Import({DeadLetterRetryConfiguration.class, JdbcIdempotencyConfiguration.class})
 @AllArgsConstructor
 public class RabbitMQConfiguration {
 

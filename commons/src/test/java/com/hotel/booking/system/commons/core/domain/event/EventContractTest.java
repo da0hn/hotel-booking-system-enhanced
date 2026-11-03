@@ -68,6 +68,52 @@ class EventContractTest {
     }));
   }
 
+  /**
+   * A deduplicação no consumidor só funciona se o identificador que ele lê for o mesmo que o
+   * produtor gerou. Um {@code eventId} declarado como campo {@code final} com inicializador, fora
+   * do construtor, seria regerado a cada desserialização e a mesma mensagem entregue duas vezes
+   * pareceria dois eventos distintos — a ida e volta pelo conversor real é o que impede isso.
+   */
+  @TestFactory
+  @DisplayName("preserva o eventId do produtor na conversão AMQP")
+  Stream<DynamicTest> eventIdSobreviveAConversaoAmqp() throws IOException {
+    final var converter = new JacksonJsonMessageConverter(MAPPER, TrustedEventPackages.names());
+    return this.eventosComEventId().stream().map(type -> DynamicTest.dynamicTest(type.getSimpleName(), () -> {
+      final var original = (Event) MAPPER.readValue("{}", type);
+      final var message = converter.toMessage(original, new MessageProperties());
+      final var restored = (Event) converter.fromMessage(message);
+      assertThat(original.getEventId()).as("eventId gerado na construção").isNotBlank();
+      assertThat(restored.getEventId()).isEqualTo(original.getEventId());
+    }));
+  }
+
+  @TestFactory
+  @DisplayName("gera um eventId novo a cada construção")
+  Stream<DynamicTest> cadaConstrucaoGeraUmEventIdProprio() throws IOException {
+    return this.eventosComEventId().stream().map(type -> DynamicTest.dynamicTest(type.getSimpleName(), () -> {
+      final var primeiro = (Event) MAPPER.readValue("{}", type);
+      final var segundo = (Event) MAPPER.readValue("{}", type);
+      assertThat(primeiro.getEventId()).isNotEqualTo(segundo.getEventId());
+      assertThat(java.util.UUID.fromString(primeiro.getEventId())).isNotNull();
+    }));
+  }
+
+  /**
+   * Mensagem que já estava na fila antes do deploy não tem o campo. Ela é processada como
+   * qualquer evento novo — com um identificador gerado na leitura, portanto sem deduplicação por
+   * {@code eventId} —, em vez de ir para a DLQ: recusá-la perderia reservas legítimas em voo.
+   */
+  @Test
+  @DisplayName("aceita a mensagem legada sem eventId, gerando um identificador na leitura")
+  void mensagemLegadaSemEventIdEhAceita() {
+    final var legado = MAPPER.readValue("""
+      {"createdAt":"2026-01-01T00:00:00Z","reservationOrderId":"order","customerId":"customer"}
+      """, BookingRoomRequestedEvent.class);
+
+    assertThat(legado.getEventId()).isNotBlank();
+    assertThat(legado.getReservationOrderId()).isEqualTo("order");
+  }
+
   @Test
   @DisplayName("não expõe o array de pacotes confiáveis para alteração")
   void pacotesConfiaveisNaoPodemSerAlteradosPeloChamador() {
@@ -123,10 +169,11 @@ class EventContractTest {
    * novo entre na cobertura sem ninguém precisar lembrar disso.
    * <p>
    * O critério é o pacote, e não {@code Event.class::isAssignableFrom}. O filtro por
-   * interface seria o reflexo natural e deixaria justamente as classes erradas de fora:
-   * {@code BookingRoomStatusUpdatedEvent} e {@code PaymentRequestedEvent} não implementam
-   * {@code Event}, e é sob a primeira que vivem as duas subclasses que quebraram na
-   * migração para o Jackson 3. A única exceção é nomeada.
+   * interface seria o reflexo natural, e um evento que esquecesse de implementar {@code Event}
+   * sumiria da varredura justamente quando o contrato precisa pegá-lo: foi o caso de
+   * {@code BookingRoomStatusUpdatedEvent} e de {@code PaymentRequestedEvent}, e é sob a primeira
+   * que vivem as duas subclasses que quebraram na migração para o Jackson 3. Hoje as duas
+   * implementam {@code Event}, mas a varredura não depende disso. A única exceção é nomeada.
    */
   private List<Class<?>> classesDeEvento() throws IOException {
     final var raiz = Path.of("target", "classes");
@@ -147,6 +194,19 @@ class EventContractTest {
         .filter(t -> !TrustedEventPackages.class.equals(t))
         .toList();
     }
+  }
+
+  /**
+   * As classes que precisam de {@code eventId}: todas as de {@link #classesDeEvento()}, menos o
+   * payload aninhado {@link BookingRoomItemRepresentation}, que viaja dentro de {@code rooms} e
+   * não é uma mensagem. A exceção é nomeada, e não deduzida pela interface, pelo mesmo motivo
+   * descrito acima: um filtro por {@code Event} deixaria de fora justamente a classe que
+   * esqueceu de implementá-la.
+   */
+  private List<Class<?>> eventosComEventId() throws IOException {
+    return this.classesDeEvento().stream()
+      .filter(tipo -> !BookingRoomItemRepresentation.class.equals(tipo))
+      .toList();
   }
 
   private static Class<?> carregar(final String nome) {

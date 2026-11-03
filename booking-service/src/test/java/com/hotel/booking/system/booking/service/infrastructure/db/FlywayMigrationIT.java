@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009");
   }
 
   @Test
@@ -62,6 +62,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     "booking; id, customer_id, reservation_order_id, check_in, check_out, status, total_price, created_at, updated_at",
     "room; id, hotel_id, current_price, capacity, quantity",
     "booking_room; id, room_id, booking_id, price, quantity",
+    "processed_event; event_id, event_type, processed_at",
   })
   void criaTabelasComColunasEsperadas(final String tabela, final String colunas) {
     final var resultado = this.entityManager
@@ -236,6 +237,84 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     assertThat(precoDoItem)
       .as("o item precisa da mesma escala do total, sob pena de a soma deixar de bater")
       .isEqualByComparingTo("617.2839");
+  }
+
+  /**
+   * Rede de segurança da issue #7: o {@code findBookingByReservationOrderId} devolve um
+   * {@code Optional}, e duas linhas para o mesmo pedido o fariam estourar em
+   * {@code IncorrectResultSizeDataAccessException} em vez de falhar na gravação. O banco passa a
+   * recusar a segunda reserva do pedido, ainda que a camada de aplicação falhe em barrá-la.
+   */
+  @Test
+  @DisplayName("recusa uma segunda reserva para o mesmo pedido")
+  void recusaSegundaReservaParaOMesmoPedido() {
+    final var pedido = UUID.randomUUID().toString();
+    this.inserirReservaDoPedido(pedido);
+
+    assertThatThrownBy(() -> this.inserirReservaDoPedido(pedido))
+      .isInstanceOf(Exception.class)
+      .hasMessageContaining("booking_reservation_order_id_uk");
+  }
+
+  @Test
+  @DisplayName("aceita reservas de pedidos diferentes")
+  void aceitaReservasDePedidosDiferentes() {
+    this.inserirReservaDoPedido(UUID.randomUUID().toString());
+    this.inserirReservaDoPedido(UUID.randomUUID().toString());
+
+    final var total = this.entityManager
+      .createNativeQuery("select count(*) from booking")
+      .getSingleResult();
+
+    assertThat(((Number) total).longValue()).isEqualTo(5);
+  }
+
+  @Test
+  @DisplayName("usa event_id como chave primária de processed_event")
+  void usaEventIdComoChavePrimariaDeProcessedEvent() {
+    final var evento = UUID.randomUUID().toString();
+    this.inserirEventoProcessado(evento);
+
+    assertThatThrownBy(() -> this.inserirEventoProcessado(evento))
+      .isInstanceOf(Exception.class)
+      .hasMessageContaining("processed_event_pk");
+  }
+
+  @Test
+  @DisplayName("preenche processed_at por default quando o insert não informa")
+  void preencheProcessedAtPorDefault() {
+    final var evento = UUID.randomUUID().toString();
+    this.inserirEventoProcessado(evento);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    final var processadoEm = this.entityManager
+      .createNativeQuery("select processed_at from processed_event where event_id = :id")
+      .setParameter("id", evento)
+      .getSingleResult();
+
+    assertThat(processadoEm).isNotNull();
+  }
+
+  private void inserirReservaDoPedido(final String pedido) {
+    this.entityManager
+      .createNativeQuery("""
+        insert into booking (id, customer_id, reservation_order_id, check_in, check_out, status, total_price)
+        values (:id, :cliente, :pedido, '2026-04-10', '2026-04-15', 'PENDING', 500)
+        """)
+      .setParameter("id", UUID.randomUUID().toString())
+      .setParameter("cliente", UUID.randomUUID().toString())
+      .setParameter("pedido", pedido)
+      .executeUpdate();
+    this.entityManager.flush();
+  }
+
+  private void inserirEventoProcessado(final String evento) {
+    this.entityManager
+      .createNativeQuery("insert into processed_event (event_id, event_type) values (:id, 'com.exemplo.Evento')")
+      .setParameter("id", evento)
+      .executeUpdate();
+    this.entityManager.flush();
   }
 
   private UUID inserirReserva(final BigDecimal total) {

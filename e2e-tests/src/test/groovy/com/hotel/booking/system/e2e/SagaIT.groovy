@@ -28,16 +28,16 @@ import java.time.Duration
  * aparece.</p>
  *
  * <p>Os cenários rodam na ordem em que estão declarados — o Spock faz isso por padrão — porque o
- * {@code payment-service} sorteia o resultado no arranque: os três primeiros usam {@code 0}
+ * {@code payment-service} sorteia o resultado no arranque: os quatro primeiros usam {@code 0}
  * (sempre aprova) e o último {@code 100} (sempre recusa), o que custa um único reinício. Não há
  * {@code @Stepwise} de propósito: cada cenário usa um quarto próprio, então nenhum depende do
- * estado deixado pelo anterior, e se o primeiro falhar os outros dois ainda dizem se o resto da
- * saga funciona.</p>
+ * estado deixado pelo anterior, e se o primeiro falhar os outros ainda dizem se o resto da saga
+ * funciona.</p>
  *
  * <p>Os dados vêm das migrations de seed. A exceção é o quarto de uma unidade só dos cenários de
- * indisponibilidade e de morte do consumidor, que o teste cria, porque nenhum quarto semeado
- * permite esgotar o estoque com uma reserva e o segundo precisa de uma reserva que ninguém mais
- * toque.</p>
+ * indisponibilidade, de morte do consumidor e de reentrega, que o teste cria, porque nenhum quarto
+ * semeado permite esgotar o estoque com uma reserva e os outros dois precisam de uma reserva que
+ * ninguém mais toque.</p>
  */
 @Title("Saga de reserva ponta a ponta")
 class SagaIT extends Specification {
@@ -55,6 +55,16 @@ class SagaIT extends Specification {
   static final String CHECK_OUT = '13/01/2030'
 
   static final double SAGA_TIMEOUT_SECONDS = 90
+
+  static final String BOOKING_EXCHANGE = 'exchange.booking-room'
+
+  static final String REQUEST_ROUTING_KEY = 'routing-key.booking-room-requested'
+
+  static final String RESPONSE_ROUTING_KEY = 'routing-key.booking-room-confirmation'
+
+  static final String REQUEST_SPY_QUEUE = 'e2e.spy.booking-room-requested'
+
+  static final String RESPONSE_SPY_QUEUE = 'e2e.spy.booking-room-confirmation'
 
   static final HttpClient HTTP = HttpClient.newHttpClient()
 
@@ -114,7 +124,9 @@ class SagaIT extends Specification {
    * desfeita pelo banco, a mensagem volta à fila e, com o serviço de pé de novo, a saga termina
    * com uma única reserva. O lado inseguro — morrer depois do commit e antes do ack, o que
    * repetiria o efeito — não se provoca daqui, porque a janela é de microssegundos e não tem
-   * gancho; ele é coberto no {@code DeadLetterRetryIT} e depende da idempotência da issue #7.</p>
+   * gancho. A reentrega em si, porém, se simula, e o cenário seguinte o faz: a garantia crua do
+   * broker é coberta no {@code DeadLetterRetryIT}, a deduplicação (issue #7) no
+   * {@code BookingIdempotencyIT} do {@code booking-service} e, pela fila de verdade, aqui.</p>
    */
   def "serviço morto no meio da transação retoma a saga ao reiniciar, sem duplicar a reserva"() {
     given:
@@ -141,6 +153,51 @@ class SagaIT extends Specification {
     cleanup:
     releaseLock(bookingTableLock)
     environment.restartBookingService()
+  }
+
+  /**
+   * A reentrega de uma mensagem pelo broker de verdade, e não por uma chamada direta ao listener
+   * (que é o que o {@code BookingIdempotencyIT} faz): a mesma mensagem, byte a byte e com os mesmos
+   * headers, chega duas vezes à fila do {@code booking-service} depois de a saga ter fechado.
+   *
+   * <p>Duas filas-espiãs, ligadas ao exchange antes da reserva, guardam uma cópia do que o broker
+   * roteia: a do pedido, de onde sai a mensagem real que o {@code hotel-service} publicou (com o
+   * {@code eventId} e o {@code __TypeId__} dele, sem JSON escrito à mão), e a das respostas do
+   * booking, para provar que nenhuma resposta nova foi publicada. A prova de que foi o
+   * {@code eventId} que barrou a reentrega, e não a chave de negócio (que também impediria a
+   * segunda reserva), é a linha de log do {@code IdempotentEventConsumer}: só ela é emitida
+   * quando o consumidor descarta a mensagem. Como cada reentrega está confirmada nesse ponto, a
+   * checagem das filas não corre contra o processamento.</p>
+   */
+  def "mensagem reentregue pelo broker ao booking-service é descartada sem repetir reserva nem resposta"() {
+    given:
+    environment.usePaymentFailureChance(0)
+    def singleUnitRoomId = seedSingleUnitRoom()
+    declareSpyQueue(REQUEST_SPY_QUEUE, REQUEST_ROUTING_KEY)
+    declareSpyQueue(RESPONSE_SPY_QUEUE, RESPONSE_ROUTING_KEY)
+
+    when:
+    def reservationOrderId = bookRoom(singleUnitRoomId)
+    awaitStatus(reservationOrderId, 'RESERVED')
+    def original = takeMessage(REQUEST_SPY_QUEUE)
+    def eventId = new JsonSlurper().parseText(original['payload'] as String).eventId as String
+    def responsesBeforeRedelivery = peekMessages(RESPONSE_SPY_QUEUE).size()
+    republishToBooking(original)
+    republishToBooking(original)
+    def discardLog = "Event already processed, discarding redelivery | eventId=${eventId}".toString()
+    awaitBookingLog(discardLog, 2)
+
+    then:
+    eventId
+    environment.bookingLogCount(discardLog) == 2
+    scalar('select count(*) from booking.booking where reservation_order_id = ?', reservationOrderId) == '1'
+    scalar('select count(*) from booking.processed_event where event_id = ?', eventId) == '1'
+    peekMessages(RESPONSE_SPY_QUEUE).size() == responsesBeforeRedelivery
+    chronologicalStatuses(fetchOrder(reservationOrderId)) == ['AWAITING_RESERVATION', 'AWAITING_PAYMENT', 'PAYMENT_CONFIRMED', 'RESERVED']
+
+    cleanup:
+    deleteQueue(REQUEST_SPY_QUEUE)
+    deleteQueue(RESPONSE_SPY_QUEUE)
   }
 
   def "pagamento recusado cancela a reserva e fecha a timeline em PAYMENT_FAILED"() {
@@ -231,6 +288,91 @@ class SagaIT extends Specification {
 
   private String scalar(String sql) {
     withSql { Sql db -> db.firstRow(sql)?.getAt(0)?.toString() }
+  }
+
+  /**
+   * Chamada à API de gerenciamento do RabbitMQ, como o usuário dos serviços. Qualquer status que
+   * não seja 2xx derruba o teste com o corpo da resposta, exceto os listados em
+   * {@code tolerated}. Fixa o HTTP/1.1: o cliente do JDK tenta o upgrade para HTTP/2 por padrão e
+   * o gerenciamento fecha a conexão, o que chega como {@code EOF reached while reading}.
+   */
+  private Object brokerRequest(String method, String path, Object body = null, Set<Integer> tolerated = [] as Set) {
+    def credentials = 'root:root'.bytes.encodeBase64().toString()
+    def publisher = body == null
+      ? HttpRequest.BodyPublishers.noBody()
+      : HttpRequest.BodyPublishers.ofString(JsonOutput.toJson(body))
+    def request = HttpRequest.newBuilder(URI.create("${environment.brokerManagementUrl()}/api${path}"))
+      .version(HttpClient.Version.HTTP_1_1)
+      .timeout(Duration.ofSeconds(10))
+      .header('Authorization', "Basic ${credentials}".toString())
+      .header('Content-Type', 'application/json')
+      .method(method, publisher)
+      .build()
+    def response = HTTP.send(request, HttpResponse.BodyHandlers.ofString())
+
+    assert response.statusCode() in 200..299 || response.statusCode() in tolerated:
+      "${method} /api${path} -> ${response.statusCode()}: ${response.body()}"
+    response.body().isBlank() ? null : new JsonSlurper().parseText(response.body())
+  }
+
+  /**
+   * Fila descartável ligada ao exchange do booking, que recebe uma cópia de tudo o que o broker
+   * roteia com aquela chave sem competir com o consumidor real.
+   */
+  private void declareSpyQueue(String queue, String routingKey) {
+    brokerRequest('PUT', "/queues/%2F/${queue}", [durable: false, auto_delete: false])
+    brokerRequest('POST', "/bindings/%2F/e/${BOOKING_EXCHANGE}/q/${queue}", [routing_key: routingKey])
+  }
+
+  private void deleteQueue(String queue) {
+    brokerRequest('DELETE', "/queues/%2F/${queue}", null, [404] as Set)
+  }
+
+  /**
+   * Tira a única mensagem da fila-espiã. Falha se houver outra quantidade, porque então o teste
+   * não sabe qual mensagem reinjetar.
+   */
+  private Map takeMessage(String queue) {
+    def messages = brokerRequest('POST', "/queues/%2F/${queue}/get", [count: 10, ackmode: 'ack_requeue_false', encoding: 'auto']) as List
+    assert messages.size() == 1: "A fila ${queue} deveria ter exatamente 1 mensagem e tem ${messages.size()}"
+    messages.first() as Map
+  }
+
+  /**
+   * Lê o conteúdo da fila-espiã sem consumi-lo. A leitura é da fila, não das estatísticas do
+   * gerenciamento, que só são atualizadas a cada poucos segundos.
+   */
+  private List peekMessages(String queue) {
+    brokerRequest('POST', "/queues/%2F/${queue}/get", [count: 100, ackmode: 'ack_requeue_true', encoding: 'auto']) as List
+  }
+
+  /**
+   * Publica de novo, no exchange do booking, a mensagem tirada da fila-espiã, com as mesmas
+   * propriedades e o mesmo corpo. É a reentrega que o RabbitMQ faria depois de um ack perdido,
+   * vista pelo consumidor como uma mensagem qualquer.
+   */
+  private void republishToBooking(Map message) {
+    def result = brokerRequest('POST', "/exchanges/%2F/${BOOKING_EXCHANGE}/publish", [
+      properties      : message['properties'],
+      routing_key     : REQUEST_ROUTING_KEY,
+      payload         : message['payload'],
+      payload_encoding: 'string'
+    ]) as Map
+    assert result['routed'] == true: "O broker não roteou a mensagem reinjetada: ${result}"
+  }
+
+  private void awaitBookingLog(String fragment, int occurrences) {
+    try {
+      new PollingConditions(timeout: 30, delay: 0.25, initialDelay: 0).eventually {
+        assert environment.bookingLogCount(fragment) >= occurrences
+      }
+    }
+    catch (SpockTimeoutError e) {
+      throw new AssertionError(
+        "O booking-service não descartou ${occurrences} reentrega(s) em 30 s: ${fragment}\n${environment.diagnostics()}".toString(),
+        e
+      )
+    }
   }
 
   /**

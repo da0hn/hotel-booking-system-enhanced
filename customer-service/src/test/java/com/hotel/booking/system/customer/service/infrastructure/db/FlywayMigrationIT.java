@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009");
   }
 
   @Test

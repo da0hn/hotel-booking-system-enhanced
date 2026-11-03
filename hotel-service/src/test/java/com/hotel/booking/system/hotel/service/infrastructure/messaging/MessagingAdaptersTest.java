@@ -1,7 +1,9 @@
 package com.hotel.booking.system.hotel.service.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.core.domain.event.*;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.event.customer.*;
 import com.hotel.booking.system.hotel.service.core.ports.api.messaging.*;
 import com.hotel.booking.system.hotel.service.infrastructure.messaging.properties.*;
@@ -19,6 +21,7 @@ import static org.mockito.Mockito.*;
 @DisplayName("Adaptadores de mensageria do serviço de hotéis")
 class MessagingAdaptersTest {
   private final RabbitTemplate rabbit = mock(RabbitTemplate.class);
+  private final IdempotentEventConsumer consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
   private final ExchangeProperties exchanges = new ExchangeProperties("booking", "payment", "customer");
   private final RoutingKeyProperties routes = new RoutingKeyProperties("request", "confirmation", "status", "charge", "paid", "update");
 
@@ -73,25 +76,58 @@ class MessagingAdaptersTest {
   @DisplayName("encaminha a resposta de reserva e propaga falha do handler")
   void listenerDeReservaEncaminhaMesmaMensagemEPropagaFalhaDoHandler() {
     final var handler = mock(BookingRoomResponseHandler.class);
-    final var listener = new BookingRoomResponseListenerImpl(handler);
+    final var listener = new BookingRoomResponseListenerImpl(handler, this.consumer);
     final var event = BookingRoomConfirmedEvent.builder().reservationOrderId("order").build();
     listener.listen(event);
     verify(handler).handle(event);
     final var failure = new IllegalStateException("handler failed");
-    doThrow(failure).when(handler).handle(event);
-    assertThatThrownBy(() -> listener.listen(event)).isSameAs(failure);
+    final var other = BookingRoomConfirmedEvent.builder().reservationOrderId("other").build();
+    doThrow(failure).when(handler).handle(other);
+    assertThatThrownBy(() -> listener.listen(other)).isSameAs(failure);
+  }
+
+  /**
+   * A reentrega de uma resposta do booking ou do payment não pode gerar uma segunda mensagem
+   * adiante: o que o hotel publica leva um {@code eventId} novo, e o próximo serviço não teria
+   * como reconhecê-la como repetida.
+   */
+  @Test
+  @DisplayName("descarta a reentrega das respostas sem chamar o handler de novo")
+  void listenersDescartamReentrega() {
+    final var bookingHandler = mock(BookingRoomResponseHandler.class);
+    final var paymentHandler = mock(PaymentResponseHandler.class);
+    final var bookingListener = new BookingRoomResponseListenerImpl(bookingHandler, this.consumer);
+    final var paymentListener = new PaymentResponseListenerImpl(paymentHandler, this.consumer);
+    final var booking = BookingRoomConfirmedEvent.builder().reservationOrderId("order").build();
+    final var payment = PaymentCompletedEvent.builder().reservationOrderId("order").build();
+    bookingListener.listen(booking);
+    bookingListener.listen(booking);
+    paymentListener.listen(payment);
+    paymentListener.listen(payment);
+    verify(bookingHandler, times(1)).handle(booking);
+    verify(paymentHandler, times(1)).handle(payment);
+  }
+
+  @Test
+  @DisplayName("declara transação nos listeners para que o registro do eventId acompanhe o efeito")
+  void listenersDeclaramTransacao() throws NoSuchMethodException {
+    assertThat(BookingRoomResponseListenerImpl.class.getMethod("listen", BookingRoomResponseEvent.class)
+      .getAnnotation(org.springframework.transaction.annotation.Transactional.class)).isNotNull();
+    assertThat(PaymentResponseListenerImpl.class.getMethod("listen", PaymentResponseEvent.class)
+      .getAnnotation(org.springframework.transaction.annotation.Transactional.class)).isNotNull();
   }
 
   @Test
   @DisplayName("encaminha a resposta de pagamento e propaga falha do handler")
   void listenerDePagamentoEncaminhaMesmaMensagemEPropagaFalhaDoHandler() {
     final var handler = mock(PaymentResponseHandler.class);
-    final var listener = new PaymentResponseListenerImpl(handler);
+    final var listener = new PaymentResponseListenerImpl(handler, this.consumer);
     final var event = PaymentCompletedEvent.builder().reservationOrderId("order").build();
     listener.listen(event);
     verify(handler).handle(event);
     final var failure = new IllegalStateException("handler failed");
-    doThrow(failure).when(handler).handle(event);
-    assertThatThrownBy(() -> listener.listen(event)).isSameAs(failure);
+    final var other = PaymentCompletedEvent.builder().reservationOrderId("other").build();
+    doThrow(failure).when(handler).handle(other);
+    assertThatThrownBy(() -> listener.listen(other)).isSameAs(failure);
   }
 }
