@@ -75,6 +75,14 @@ rodar sem dizer nada, e a falha aparecia adiante como `cannot infer type argumen
 `annotationProcessorPaths` no pom raiz declara esse caminho — **não o remova**, sob pena
 de o erro voltar exatamente com essa cara.
 
+O reactor roda em paralelo por padrão: `.mvn/maven.config` fixa `-T 1C`, e o `mvn` local, o
+do CI e o do e2e herdam isso. O `Dockerfile` não, porque não copia o `.mvn`. Depois do
+`commons` os quatro serviços são independentes, e o `clean verify` caiu de 3 min 09 s para
+2 min 02 s numa máquina de 12 núcleos com Docker Desktop (medido em nov/2026, sem o e2e).
+O arquivo não aceita comentário, por isso o porquê mora aqui. O custo é que o log intercala
+os módulos: para lê-lo em ordem, ao investigar um teste que falha, passe `-T 1`, que a linha
+de comando sobrescreve o arquivo.
+
 | Objetivo | Comando |
 |---|---|
 | Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
