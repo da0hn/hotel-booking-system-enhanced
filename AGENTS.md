@@ -244,7 +244,8 @@ Regras que o código segue e que devem ser mantidas:
   o listener deve propagar a exceção para permitir o rollback.
 - **A disponibilidade do quarto depende de um lock, e o lock depende da transação do
   listener.** O `VerifyRoomAvailability` começa por `RoomRepository.lockAllByRoomId`
-  (`SELECT ... FOR UPDATE`, em ordem de id) e só então lê a ocupação; o lock dura até o commit do
+  (lock de escrita em ordem de id, que o Hibernate emite como `for no key update` no PostgreSQL)
+  e só então lê a ocupação; o lock dura até o commit do
   `BookingRoomRequestedRabbitMQListener`, que também grava a reserva. Transação sozinha não
   basta: no `READ COMMITTED` duas reservas do último quarto leem a mesma ocupação e passam as
   duas, e o `RoomAvailabilityConcurrencyIT` prova isso contra o PostgreSQL. Tirar o

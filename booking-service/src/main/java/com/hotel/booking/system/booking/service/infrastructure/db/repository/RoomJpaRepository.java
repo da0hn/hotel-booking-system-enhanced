@@ -15,8 +15,9 @@ import java.util.UUID;
 public interface RoomJpaRepository extends JpaRepository<RoomEntity, UUID> {
 
   /**
-   * Carrega os quartos e os trava para escrita ({@code SELECT ... FOR UPDATE}) até o fim da
-   * transação corrente.
+   * Carrega os quartos e os trava para escrita ({@code PESSIMISTIC_WRITE}, que o Hibernate emite
+   * como {@code for no key update} no PostgreSQL) até o fim da transação corrente. Esse modo
+   * conflita consigo mesmo, então dois pedidos sobre o mesmo quarto se serializam.
    *
    * <p>O {@code order by} não é enfeite: ele fixa a ordem em que os locks são tomados. Dois
    * pedidos que envolvam os quartos A e B, um na ordem {@code A, B} e o outro em {@code B, A},
