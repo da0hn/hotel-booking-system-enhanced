@@ -128,9 +128,13 @@ jobs:
       # já os rodou, e repeti-los aqui só gastaria o tempo que este workflow
       # existe para poupar. O `-Dit.test` casa o pacote do módulo, então um
       # teste novo em `e2e-tests` entra sem mexer neste arquivo.
+      #
+      # O cache de build fica desligado: um hit pularia exatamente os testes que
+      # este workflow existe para rodar.
       - name: Rodar os testes ponta a ponta
         run: >
           mvn -B verify -Pe2e -pl e2e-tests -am
+          -Dmaven.build.cache.enabled=false
           -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**'
           -Dsurefire.failIfNoSpecifiedTests=false
           -Dfailsafe.failIfNoSpecifiedTests=false

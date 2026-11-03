@@ -49,10 +49,10 @@ public class BookingRoomStatusChangedHandlerImpl implements BookingRoomStatusCha
   }
 
   private BookingRoomResponseEvent bookingRoomStatusOutputToBookingRoomConfirmedEvent(final UpdateBookingStatusOutput output) {
-    return new BookingRoomConfirmedEvent(
-      output.reservationOrderId(),
-      output.customerId(),
-      CustomerReservationStatus.RESERVED
-    );
+    return BookingRoomConfirmedEvent.builder()
+      .reservationOrderId(output.reservationOrderId())
+      .customerId(output.customerId())
+      .status(CustomerReservationStatus.RESERVED)
+      .build();
   }
 }

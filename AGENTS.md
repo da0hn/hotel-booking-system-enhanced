@@ -83,10 +83,37 @@ O arquivo não aceita comentário, por isso o porquê mora aqui. O custo é que 
 os módulos: para lê-lo em ordem, ao investigar um teste que falha, passe `-T 1`, que a linha
 de comando sobrescreve o arquivo.
 
+### Cache de build
+
+O build tem cache local: `.mvn/extensions.xml` carrega o Maven Build Cache Extension, que
+guarda em `~/.m2/build-cache` o resultado de cada módulo, indexado pelo **hash do conteúdo e
+não pelo caminho**. Por isso worktrees e agentes diferentes na mesma máquina compartilham as
+mesmas entradas, e o módulo (e as dependências dele) que não mudou volta do cache sem
+compilar nem rodar surefire e failsafe. Medido em nov/2026: `verify` sem mudança leva 8 s
+contra ~2 min; mudar só o `booking-service` reconstrói só ele (73 s); duas worktrees
+construindo ao mesmo tempo terminam sem erro e deixam o cache íntegro; um teste vermelho
+nunca é gravado, então falha de novo na execução seguinte. Mudar o `commons` reconstrói os
+quatro serviços, porque todos dependem dele.
+
+O que não se deduz do código:
+
+- **Um hit pula os testes, e isso inclui o filtro.** Uma execução filtrada (`-Dtest`,
+  `-Dit.test`) ou a prova do e2e, num módulo inalterado, é dada como cumprida sem rodar nada.
+  Para essas, e sempre que a pergunta for "isto realmente passa agora?", acrescente
+  `-Dmaven.build.cache.enabled=false`. O CI sempre o desliga: o runner começa sem cache.
+- **Arquivos fora do módulo que mudam o resultado têm de estar em
+  `.mvn/maven-build-cache-config.xml`.** Hoje são `docker/scripts` (montado pelos
+  `AbstractDatabaseIT`) e `lombok.config`. Mudar qualquer um invalida **todos** os módulos,
+  mais do que o estritamente necessário, de propósito: errar para mais só custa um build.
+  Um arquivo novo nessa situação entra ali, ou o teste que o usa passa a ser pulado.
+- **O hash não enxerga o ambiente.** A imagem `postgres:17-alpine` e a do RabbitMQ que o
+  Testcontainers baixa não são arquivos do repositório; para provar contra a versão atual
+  delas, rode com a flag acima.
+
 | Objetivo | Comando |
 |---|---|
-| Um teste de integração | `mvn -B verify -pl hotel-service -Dit.test=FlywayMigrationIT` |
-| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
+| Um teste de integração | `mvn -B verify -pl hotel-service -Dmaven.build.cache.enabled=false -Dit.test=FlywayMigrationIT` |
+| Só os testes ponta a ponta (profile `e2e`) | `mvn -B verify -Pe2e -pl e2e-tests -am -Dmaven.build.cache.enabled=false -Dtest=NoSuchTest -Dit.test='com.hotel.booking.system.e2e.**' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` |
 
 Não há linter, formatter nem gate de cobertura configurado.
 
@@ -118,7 +145,8 @@ uma quebra a busca; sem o contributor, o serviço nem sobe.
 
 O módulo `e2e-tests` (Spock) sobe PostgreSQL, RabbitMQ e os quatro serviços como processos
 filhos e prova que a saga fecha: o `SagaIT` cobre pagamento aprovado, último quarto já
-ocupado, `booking-service` derrubado no meio da transação e pagamento recusado; o
+ocupado, `booking-service` derrubado no meio da transação, mensagem reentregue pelo broker ao
+`booking-service` e pagamento recusado; o
 `ActuatorExposureIT` e o `HttpErrorContractIT` conferem a fronteira HTTP. **O `mvn verify`
 comum não os roda**: o módulo só entra no reactor com o profile `e2e` (comando na tabela de
 *Comandos*), por decisão do mantenedor para poupar tempo de CI. Quem mexe no contrato de
@@ -357,10 +385,64 @@ handler correspondente no `hotel-service`.
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
-  loop de reentrega, mas até a #7 (idempotência) uma reentrega repete o efeito já gravado.
+  loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
+  uma reentrega repita o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+### Idempotência no consumo
+
+O RabbitMQ entrega ao menos uma vez, então todo listener passa o evento e o efeito pelo
+`IdempotentEventConsumer` (`commons/core/application/idempotency`). Os detalhes do porquê de cada
+escolha estão nos Javadocs; o que não se deduz do código:
+
+- **Todo evento carrega `eventId`** (`Event.getEventId()`), gerado na construção pelo
+  `@Builder.Default`. Para o campo entrar no JSON, **toda classe de evento com `@Builder` ou
+  `@SuperBuilder` leva `@Jacksonized`**: sem ele o Jackson chama o construtor e o campo ausente
+  chega `null`. O `EventContractTest` varre o pacote e prova a ida e volta de cada evento; o
+  `BookingRoomItemRepresentation` é a única classe nomeada fora (é um item aninhado, não um evento).
+- **O registro do `eventId` entra na transação do listener**, antes do efeito: o commit leva os
+  dois, o rollback desfaz os dois. Por isso `booking`, `customer` e `hotel` têm `@Transactional` nos
+  listeners — o do `hotel` só por causa do registro. O registro é `INSERT ... ON CONFLICT DO NOTHING`
+  (uma violação de unicidade abortaria a transação do PostgreSQL) e a tabela `processed_event` é
+  criada por migration em cada schema. A classe do `commons` não qualifica o schema: o
+  `currentSchema` da URL de cada serviço o resolve.
+- **Cada serviço importa uma variante** em seu `RabbitMQConfiguration`:
+  `JdbcIdempotencyConfiguration` (hotel, booking, customer) ou `InMemoryIdempotencyConfiguration`
+  (payment, sem banco: protege contra reentrega sem reinício do processo, não contra a morte entre
+  o efeito e o ack). O `DeadLetterConfigurationTest` de cada serviço confere que o
+  `IdempotentEventConsumer` está no contexto.
+- **O hotel também deduplica**, embora só publique: o que ele publica leva `eventId` novo, e o
+  serviço seguinte não reconheceria a repetição.
+- **Mensagem legada, sem o campo `eventId`, é aceita**: o `@Builder.Default` gera um id na
+  leitura, então ela é registrada e processada como qualquer outra — nunca é reconhecida como
+  repetida e deixa uma linha órfã em `processed_event` até o expurgo —, em vez de ir para a DLQ:
+  recusá-la perderia reservas em voo no deploy. O `warn` do `IdempotentEventConsumer` cobre outro
+  caso, o campo presente e nulo ou em branco, que só um produtor com defeito gera.
+- **A chave de negócio é a segunda rede.** `BookingRoomUseCaseImpl` busca por `reservationOrderId`
+  *antes* de validar disponibilidade e, se já há reserva, devolve a saída marcada `duplicate` — o
+  handler não publica nada, porque a resposta da primeira vez foi confirmada pelo broker na mesma
+  transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
+  reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
+  falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
+- **No `customer-service`, a segunda rede é a própria timeline.** `ReservationOrder.updateStatus` e
+  `updateToFailureStatus` devolvem `false`, e o caso de uso não grava, quando a transição repete a
+  **entrada mais recente da timeline, escolhida pelo instante**: mesmo status e mesmo motivo, com
+  motivo nulo e em branco contando como ausência (`ReservationOrderTimeline.isSameTransitionAs`).
+  O `CustomerBookingInitiatedEvent` tem a mesma proteção: `InitializeCustomerBookingUseCaseImpl` não
+  regrava um pedido que já existe, o que (medido no IT) reescreveria o `current_status` para
+  `AWAITING_RESERVATION` e trocaria a timeline inteira pela de uma entrada só. Vale com `eventId`
+  novo e fora da janela de 7 dias, que a deduplicação por evento não cobre. **O critério olha só a última entrada**: a reentrega tardia de
+  um status *anterior* (o pedido já em `PAYMENT_CONFIRMED` e chega de novo um `AWAITING_PAYMENT`)
+  não é reconhecida, porque isso pede uma tabela de transições permitidas, e uma regra mais larga
+  barraria uma volta legítima, como uma nova tentativa de pagamento. A corrida de duas transações
+  que leem o pedido ao mesmo tempo também fica de fora: é a #53.
+- **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
+  `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
+- **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer
+  entre as duas reprocessa o evento e republica a resposta com `eventId` novo. Só o Outbox (#35)
+  fecha essa janela.
 
 ### Falha no consumidor: retry e DLQ
 

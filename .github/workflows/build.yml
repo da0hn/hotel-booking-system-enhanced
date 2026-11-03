@@ -272,8 +272,12 @@ jobs:
       # O reactor inteiro roda mesmo quando um só serviço muda, e isso é
       # deliberado: `commons` é dependência dos quatro, e provar só o módulo
       # tocado deixaria passar a quebra que ele causa nos outros três.
+      #
+      # O cache de build fica desligado: o runner começa sem o `~/.m2/build-cache`,
+      # então não haveria hit a aproveitar, e um hit pularia os testes que este
+      # job existe para rodar.
       - name: Verificar o reactor Maven
-        run: mvn -B verify
+        run: mvn -B verify -Dmaven.build.cache.enabled=false
 
   imagem:
     name: Publicar no GHCR

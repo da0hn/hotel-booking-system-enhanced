@@ -56,6 +56,12 @@ app:
   payment:
     mock:
       failure-chance-percentage: ${FAILURE_CHANCE_PERCENTAGE:90}
+  idempotency:
+    # Este serviço não tem banco: os eventId processados ficam na memória da JVM, e a retenção
+    # curta (o padrão do commons é 7 dias) limita o quanto ela cresce. Cobre a reentrega sem
+    # reinício do processo; quem morre entre o efeito e o ack repete o efeito, e é aceitável
+    # porque a cobrança aqui é fake.
+    retention: 1h
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
     # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.

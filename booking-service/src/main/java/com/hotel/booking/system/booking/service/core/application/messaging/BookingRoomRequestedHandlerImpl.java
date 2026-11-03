@@ -29,6 +29,9 @@ public class BookingRoomRequestedHandlerImpl implements BookingRoomRequestedHand
     final var input = this.mapper.bookingRoomRequestedEventToBookingRoomInput(event);
 
     final var output = this.bookingRoomUseCase.execute(input);
+    if (output.duplicate()) {
+      return;
+    }
 
     final var bookingRoomResponseEvent = this.mapOutputToEvent(output);
 

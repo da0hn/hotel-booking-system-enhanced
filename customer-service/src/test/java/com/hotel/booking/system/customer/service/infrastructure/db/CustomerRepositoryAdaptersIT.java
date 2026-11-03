@@ -1,6 +1,13 @@
 package com.hotel.booking.system.customer.service.infrastructure.db;
 
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
+import com.hotel.booking.system.customer.service.core.application.dto.InitializeReservationOrderInput;
+import com.hotel.booking.system.customer.service.core.application.dto.UpdateCustomerBookingFailureStatusInput;
+import com.hotel.booking.system.customer.service.core.application.dto.UpdateCustomerBookingStatusInput;
+import com.hotel.booking.system.customer.service.core.application.mapper.CustomerUseCaseMapperImpl;
+import com.hotel.booking.system.customer.service.core.application.usecase.InitializeCustomerBookingUseCaseImpl;
+import com.hotel.booking.system.customer.service.core.application.usecase.UpdateCustomerBookingFailureStatusUseCaseImpl;
+import com.hotel.booking.system.customer.service.core.application.usecase.UpdateCustomerBookingStatusUseCaseImpl;
 import com.hotel.booking.system.customer.service.core.domain.entity.*;
 import com.hotel.booking.system.customer.service.core.domain.exception.*;
 import com.hotel.booking.system.customer.service.infrastructure.db.entity.ReservationOrderEntity;
@@ -66,6 +73,62 @@ class CustomerRepositoryAdaptersIT extends AbstractDatabaseIT {
     assertThat(failed.getCurrentStatus()).isEqualTo(CustomerReservationStatus.RESERVATION_FAILED);
     assertThat(failed.getTimeline()).hasSize(2).extracting(ReservationOrderTimeline::getReason)
       .contains("Quarto indisponível\nReserva concorrente");
+  }
+
+  /**
+   * Regra 3 da issue #7 contra o PostgreSQL de verdade, pelos adaptadores e casos de uso reais: a
+   * mesma transição aplicada de novo — com {@code eventId} novo, que é o que a deduplicação por
+   * evento não enxerga — não deixa uma segunda linha em {@code reservation_order_history}. A
+   * última chamada é a reentrega tardia do evento inicial, que sem a regra reescreveria o pedido
+   * de volta para {@code AWAITING_RESERVATION}.
+   */
+  @Test
+  @DisplayName("deixa uma só linha no histórico quando a mesma transição é aplicada de novo")
+  void mesmaTransicaoAplicadaDeNovoDeixaUmaSoLinhaNoHistorico() {
+    final var orderId = ReservationOrderId.newInstance();
+    final var initialize = new InitializeCustomerBookingUseCaseImpl(
+      this.customers, this.orders, new CustomerUseCaseMapperImpl());
+    final var update = new UpdateCustomerBookingStatusUseCaseImpl(this.orders);
+    final var fail = new UpdateCustomerBookingFailureStatusUseCaseImpl(this.orders);
+    final var initial = new InitializeReservationOrderInput(orderId.toString(), CLIENTE.toString(),
+      HotelId.newInstance().toString(), new BigDecimal("100"), 2,
+      LocalDate.of(2030, 1, 10), LocalDate.of(2030, 1, 13), CustomerReservationStatus.AWAITING_RESERVATION);
+    final var awaitingPayment = new UpdateCustomerBookingStatusInput(
+      CLIENTE.toString(), orderId.toString(), CustomerReservationStatus.AWAITING_PAYMENT);
+    final var refused = new UpdateCustomerBookingFailureStatusInput(CLIENTE.toString(), orderId.toString(),
+      CustomerReservationStatus.PAYMENT_FAILED, FailureMessages.newInstance(List.of("Cartão recusado")));
+
+    initialize.execute(initial);
+    this.sync();
+    update.execute(awaitingPayment);
+    this.sync();
+    update.execute(awaitingPayment);
+    this.sync();
+    initialize.execute(initial);
+    this.sync();
+    assertThat(this.historyRows(orderId)).as("inicial + AWAITING_PAYMENT, sem repetição").isEqualTo(2);
+    assertThat(this.orders.findById(orderId).getCurrentStatus())
+      .as("a reentrega do evento inicial não pode desfazer o andamento do pedido")
+      .isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+
+    fail.execute(refused);
+    this.sync();
+    fail.execute(refused);
+    this.sync();
+    assertThat(this.historyRows(orderId)).as("a falha repetida também entra uma vez só").isEqualTo(3);
+    assertThat(this.orders.findById(orderId).getCurrentStatus()).isEqualTo(CustomerReservationStatus.PAYMENT_FAILED);
+  }
+
+  private void sync() {
+    this.entityManager.flush();
+    this.entityManager.clear();
+  }
+
+  private long historyRows(final ReservationOrderId orderId) {
+    return ((Number) this.entityManager
+      .createNativeQuery("select count(*) from reservation_order_history where reservation_order_id = :id")
+      .setParameter("id", orderId.toString())
+      .getSingleResult()).longValue();
   }
 
   @Test

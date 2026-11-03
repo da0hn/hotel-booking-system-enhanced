@@ -6,6 +6,7 @@ import com.hotel.booking.system.customer.service.core.domain.entity.ReservationO
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
 public class Timeline extends AbstractDomainList<ReservationOrderTimeline> {
@@ -19,6 +20,15 @@ public class Timeline extends AbstractDomainList<ReservationOrderTimeline> {
 
   public static Timeline of(final List<ReservationOrderTimeline> items) {
     return new Timeline(items);
+  }
+
+  /**
+   * A entrada mais recente pelo instante em que ocorreu, e não pela posição na lista: a lista vem
+   * do banco sem ordem garantida. No empate de instantes vale a que está depois na lista.
+   */
+  public Optional<ReservationOrderTimeline> latest() {
+    return this.data().stream()
+      .reduce((left, right) -> right.getOccurredAt().isBefore(left.getOccurredAt()) ? left : right);
   }
 
   public <R> List<R> mapToListOf(final Function<? super ReservationOrderTimeline, R> mapper) {

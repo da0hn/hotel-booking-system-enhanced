@@ -20,6 +20,13 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
         </dependency>
+        <!-- `optional` para que o payment-service, que nao tem banco, nao herde o JDBC: quem usa
+             o JdbcProcessedEventRepository ja traz o spring-jdbc pelo starter de JPA. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-rabbitmq</artifactId>

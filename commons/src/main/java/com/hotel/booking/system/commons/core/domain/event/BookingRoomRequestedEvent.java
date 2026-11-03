@@ -3,6 +3,7 @@ package com.hotel.booking.system.commons.core.domain.event;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.extern.jackson.Jacksonized;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
@@ -13,9 +14,12 @@ import java.util.List;
 
 @Getter
 @Builder
+@Jacksonized
 @AllArgsConstructor
 public class BookingRoomRequestedEvent implements Event {
 
+  @Builder.Default
+  private final String eventId = Event.newEventId();
   @Builder.Default
   private final Instant createdAt = Instant.now();
   private final String reservationOrderId;
