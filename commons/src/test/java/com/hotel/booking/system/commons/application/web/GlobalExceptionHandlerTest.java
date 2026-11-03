@@ -11,6 +11,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpMethod;
@@ -36,6 +38,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -164,6 +167,42 @@ class GlobalExceptionHandlerTest {
       .andExpect(jsonPath("$.success").value(false))
       .andExpect(jsonPath("$.message").value("request.invalid"))
       .andExpect(jsonPath("$.data").doesNotExist());
+  }
+
+  @ParameterizedTest(name = "{0}= (vazio)")
+  @CsvSource({"page,page.number.invalid", "size,page.size.invalid"})
+  @DisplayName("responde 400 com a chave da restrição quando page ou size vem presente e vazio")
+  void pageOuSizeVazioResponde400(
+    final String parameter,
+    final String message
+  ) throws Exception {
+    this.mockMvc.perform(get("/constrained").param(parameter, ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value(parameter))
+      .andExpect(jsonPath("$.data[0].message").value(message));
+  }
+
+  @Test
+  @DisplayName("lista os dois parâmetros quando page e size vêm vazios juntos")
+  void pageESizeVaziosJuntosListamOsDois() throws Exception {
+    this.mockMvc.perform(get("/constrained").param("page", "").param("size", ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data.length()").value(2))
+      .andExpect(jsonPath("$.data[0].field").value("page"))
+      .andExpect(jsonPath("$.data[1].field").value("size"));
+  }
+
+  @Test
+  @DisplayName("um Integer que não se chama page nem size continua recebendo null quando vem vazio")
+  void outroInteiroVazioContinuaNulo() throws Exception {
+    this.mockMvc.perform(get("/unconstrained").param("count", ""))
+      .andExpect(status().isOk())
+      .andExpect(content().string("count=null"));
+    this.mockMvc.perform(get("/unconstrained").param("count", "7"))
+      .andExpect(content().string("count=7"));
   }
 
   @Test
@@ -321,6 +360,11 @@ class GlobalExceptionHandlerTest {
       @Max(value = 100, message = "page.size.invalid") final Integer size
     ) {
       return "ok";
+    }
+
+    @GetMapping("/unconstrained")
+    String unconstrained(@RequestParam(value = "count", required = false) final Integer count) {
+      return "count=" + count;
     }
 
     @GetMapping("/missing-resource")

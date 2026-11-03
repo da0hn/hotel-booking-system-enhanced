@@ -453,11 +453,16 @@ acrescenta ao `*ArchitectureTest` dele. No HTTP, o envelope de página é o de l
 - **`?page=` e `?size=` vazios são 400, com `page.number.invalid` e `page.size.invalid`**, a mesma
   forma de `page=-1`. O Spring converte `""` em `null` para um `Integer` antes de a validação rodar, e
   a validação não avalia `null`, então sem tratamento o vazio valeria como ausente e devolveria a
-  lista inteira. Um `@InitBinder` do `HotelController`, restrito a `page` e `size`, registra um
-  `PropertyEditor` que troca o vazio por `Integer.MIN_VALUE`, valor que o `@Min` recusa; assim a
-  violação sai pelo mesmo caminho das outras e junto com elas (`?page=&size=` lista os dois). Valor
-  que não é inteiro (`?page=abc`) segue outro caminho, o do tipo incompatível: 400 `request.invalid`,
-  sem `data`.
+  lista inteira. Um `@InitBinder` do `GlobalExceptionHandler`, a base dos advices, registra um
+  `PropertyEditor` (`EmptyIsInvalidIntegerEditor`) que troca o vazio por `Integer.MIN_VALUE`, valor
+  que o `@Min` recusa; assim a violação sai pelo mesmo caminho das outras e junto com elas
+  (`?page=&size=` lista os dois). Por estar na base, vale para todo controller de todo serviço que
+  a estende, sem registro nem cópia por serviço; o advice de um serviço novo o herda.
+  **O binder casa por nome (`page` e `size`), não por tipo**: valer para todo `Integer` faria um
+  parâmetro futuro sem restrição receber `Integer.MIN_VALUE` no lugar de `null`. O custo é que
+  qualquer parâmetro `Integer` com um desses nomes **precisa** de `@Min`, ou o vazio passa por um
+  valor legítimo. Valor que não é inteiro (`?page=abc`) segue outro caminho, o do tipo
+  incompatível: 400 `request.invalid`, sem `data`.
 - **Página além do fim é 200 com `data` vazio**, pelo mesmo motivo da busca sem resultado: zero
   itens é resposta válida, não ausência de recurso. Vale também para o `page` que não cabe no
   `int` do Spring Data JPA (`page × size` acima de `Integer.MAX_VALUE`, como `?page=2147483647`

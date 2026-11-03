@@ -10,7 +10,9 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.InitBinder;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -68,6 +70,24 @@ public abstract class GlobalExceptionHandler extends ResponseEntityExceptionHand
     return ResponseEntity
       .status(status)
       .body(ApiErrorResponse.of(exception.getMessage()));
+  }
+
+  /**
+   * Faz um {@code page} ou {@code size} presente e vazio ser recusado pela validação, em vez de valer
+   * como ausente: o Spring converte {@code ?page=} em {@code null}, e a validação não avalia
+   * {@code null}. É a outra metade do {@link #handleHandlerMethodValidationException}, que lista a
+   * violação que este binder provoca (ver {@link EmptyIsInvalidIntegerEditor}).
+   *
+   * <p>Como um {@code @InitBinder} de {@code @ControllerAdvice}, vale para todos os controllers de
+   * quem estende esta base, sem registro nem repetição por serviço. Casa por <strong>nome</strong>
+   * ({@code page} e {@code size}) e não por tipo, de propósito: valer para todo {@code Integer}
+   * faria um parâmetro futuro sem restrição receber {@code Integer.MIN_VALUE} no lugar de
+   * {@code null}. Em contrapartida, um parâmetro com um desses nomes precisa declarar uma restrição,
+   * ou o vazio passará por um valor legítimo.</p>
+   */
+  @InitBinder({"page", "size"})
+  protected void rejectEmptyPageParameters(final WebDataBinder binder) {
+    binder.registerCustomEditor(Integer.class, new EmptyIsInvalidIntegerEditor());
   }
 
   /**

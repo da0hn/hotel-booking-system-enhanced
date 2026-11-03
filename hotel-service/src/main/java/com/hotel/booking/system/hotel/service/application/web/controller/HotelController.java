@@ -15,11 +15,8 @@ import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAv
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
-import org.springframework.beans.propertyeditors.CustomNumberEditor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.InitBinder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,26 +35,7 @@ public class HotelController {
   private static final int MIN_PAGE_SIZE = 1;
   private static final int MAX_PAGE_SIZE = 100;
 
-  /**
-   * O que um {@code page} ou {@code size} presente e vazio vira antes da validação. Nenhuma
-   * restrição de {@code page} ou {@code size} aceita este valor, que não tem outra função.
-   */
-  private static final int EMPTY_PARAMETER = Integer.MIN_VALUE;
-
   private final HotelApplicationService hotelApplicationService;
-
-  /**
-   * O Spring converte a string vazia em {@code null} para um {@code Integer}, e a validação não
-   * avalia {@code null}: sem este editor, {@code ?page=} valeria como parâmetro ausente e devolveria
-   * a lista inteira. Ele troca o vazio por {@link #EMPTY_PARAMETER}, que o {@code @Min} recusa com a
-   * mesma chave de qualquer valor fora da faixa, e a violação sai junto com as dos outros parâmetros.
-   * Vale só para {@code page} e {@code size}: os filtros de texto vazios continuam contando como
-   * ausentes.
-   */
-  @InitBinder({"page", "size"})
-  void rejectEmptyPageParameters(final WebDataBinder binder) {
-    binder.registerCustomEditor(Integer.class, new EmptyIsInvalidIntegerEditor());
-  }
 
   @PostMapping
   public ResponseEntity<Response<RegisterHotelOutput>> register(@RequestBody final RegisterHotelInput input) {
@@ -74,7 +52,9 @@ public class HotelController {
    * Spring só aplica a restrição sozinho quando a anotação está no próprio parâmetro; num
    * {@code Optional<@Min Integer>} ela deixaria de ser avaliada sem aviso. A ausência é tratada
    * como {@link Optional} logo na entrada. Valor fora da faixa, vazio ({@code ?page=}) ou que não
-   * é um inteiro responde {@code 400} no envelope de erro do sistema; ausente, não.</p>
+   * é um inteiro responde {@code 400} no envelope de erro do sistema; ausente, não. O vazio só é
+   * recusado porque o {@code GlobalExceptionHandler} registra o binder de {@code page} e
+   * {@code size}: sem ele o Spring o converteria em {@code null}.</p>
    */
   @GetMapping
   public ResponseEntity<? extends CollectionResponse<SearchHotelAvailableOutput>> searchHotelAvailableBy(
@@ -113,23 +93,5 @@ public class HotelController {
     return ResponseEntityAdapter.of(output);
   }
 
-  /**
-   * Converte texto em {@code Integer} como o Spring faz por padrão, exceto o texto vazio, que vira
-   * {@link #EMPTY_PARAMETER} em vez de {@code null}.
-   */
-  private static final class EmptyIsInvalidIntegerEditor extends CustomNumberEditor {
 
-    EmptyIsInvalidIntegerEditor() {
-      super(Integer.class, false);
-    }
-
-    @Override
-    public void setAsText(final String text) {
-      if (text.isEmpty()) {
-        this.setValue(EMPTY_PARAMETER);
-        return;
-      }
-      super.setAsText(text);
-    }
-  }
 }
