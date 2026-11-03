@@ -162,11 +162,15 @@ São quatro travessias, e cada uma se sustenta em algo diferente:
 | 3 | `booking.booking.reservation_order_id` ≡ `customer.reservation_order.id` | O evento. É a chave de correlação da saga, gerada uma vez no `hotel-service` |
 | 4 | `hotel.hotel.id` → `hotel_id` nos outros dois schemas | O evento, como texto. Remover um hotel deixa órfãos silenciosos |
 
-O `reservation_order_id` é, na prática, a chave primária global do sistema — mas **nenhum schema a declara
-como tal**. No `customer` ela é a PK de `reservation_order`; no `booking` é uma coluna comum, sem
-índice único, o que significa que reprocessar a mesma mensagem grava uma segunda reserva para a mesma
-ordem. O `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é
-sorteado em memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa.
+O `reservation_order_id` é, na prática, a chave global do sistema. No `customer` ela é a PK de
+`reservation_order`; no `booking` tem a constraint única `booking_reservation_order_id_uk`, a rede de
+segurança que impede uma segunda reserva para a mesma ordem se uma mensagem for reprocessada. Os
+três schemas têm ainda a tabela `processed_event` (`event_id`, `event_type`, `processed_at`), onde o
+listener registra, na mesma transação do efeito, cada `eventId` consumido — é como uma reentrega do
+RabbitMQ é reconhecida e descartada. Ela não aparece no diagrama e é expurgada após 7 dias. O
+`payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é sorteado em
+memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa; os `eventId` já
+processados também ficam só na memória da JVM.
 
 As colunas monetárias são `numeric(19, 4)`. Até a migração para o PostgreSQL elas eram `decimal` sem
 precisão declarada, o que o MySQL resolve como `DECIMAL(10,0)` — centavos eram arredondados na gravação.

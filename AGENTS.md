@@ -339,10 +339,49 @@ handler correspondente no `hotel-service`.
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
-  loop de reentrega, mas até a #7 (idempotência) uma reentrega repete o efeito já gravado.
+  loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
+  uma reentrega repita o efeito já gravado.
 - Exchanges, routing keys e filas são declarados em cada serviço via
   `RabbitMQConfiguration` + `@ConfigurationProperties` (`ExchangeProperties`,
   `RoutingKeyProperties`, `QueueProperties`), lidos de `app.rabbitmq.*` no `application.yml`.
+
+### Idempotência no consumo
+
+O RabbitMQ entrega ao menos uma vez, então todo listener passa o evento e o efeito pelo
+`IdempotentEventConsumer` (`commons/core/application/idempotency`). Os detalhes do porquê de cada
+escolha estão nos Javadocs; o que não se deduz do código:
+
+- **Todo evento carrega `eventId`** (`Event.getEventId()`), gerado na construção pelo
+  `@Builder.Default`. Para o campo entrar no JSON, **toda classe de evento com `@Builder` ou
+  `@SuperBuilder` leva `@Jacksonized`**: sem ele o Jackson chama o construtor e o campo ausente
+  chega `null`. O `EventContractTest` varre o pacote e prova a ida e volta de cada evento; o
+  `BookingRoomItemRepresentation` é a única classe nomeada fora (é um item aninhado, não um evento).
+- **O registro do `eventId` entra na transação do listener**, antes do efeito: o commit leva os
+  dois, o rollback desfaz os dois. Por isso `booking`, `customer` e `hotel` têm `@Transactional` nos
+  listeners — o do `hotel` só por causa do registro. O registro é `INSERT ... ON CONFLICT DO NOTHING`
+  (uma violação de unicidade abortaria a transação do PostgreSQL) e a tabela `processed_event` é
+  criada por migration em cada schema. A classe do `commons` não qualifica o schema: o
+  `currentSchema` da URL de cada serviço o resolve.
+- **Cada serviço importa uma variante** em seu `RabbitMQConfiguration`:
+  `JdbcIdempotencyConfiguration` (hotel, booking, customer) ou `InMemoryIdempotencyConfiguration`
+  (payment, sem banco: protege contra reentrega sem reinício do processo, não contra a morte entre
+  o efeito e o ack). O `DeadLetterConfigurationTest` de cada serviço confere que o
+  `IdempotentEventConsumer` está no contexto.
+- **O hotel também deduplica**, embora só publique: o que ele publica leva `eventId` novo, e o
+  serviço seguinte não reconheceria a repetição.
+- **Mensagem legada, sem `eventId`, é processada sem deduplicação** (recebe um id gerado na
+  leitura), em vez de ir para a DLQ: recusá-la perderia reservas em voo no deploy.
+- **A chave de negócio é a segunda rede.** `BookingRoomUseCaseImpl` busca por `reservationOrderId`
+  *antes* de validar disponibilidade e, se já há reserva, devolve a saída marcada `duplicate` — o
+  handler não publica nada, porque a resposta da primeira vez foi confirmada pelo broker na mesma
+  transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
+  reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
+  falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
+- **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
+  `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
+- **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer
+  entre as duas reprocessa o evento e republica a resposta com `eventId` novo. Só o Outbox (#35)
+  fecha essa janela.
 
 ### Falha no consumidor: retry e DLQ
 

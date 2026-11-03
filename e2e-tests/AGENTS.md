@@ -65,7 +65,8 @@ O que não se deduz do código:
   só então a mensagem está recebida, sem ack e dentro da transação, e o `kill` é seguro. O
   `ServiceProcess.kill()` encerra sem aviso (`destroyForcibly`); o `stop()` pede o
   encerramento e espera. A janela entre o commit e o ack, que repetiria o efeito, não tem
-  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` e depende da #7.
+  gancho para ser provocada daqui: ela é coberta no `DeadLetterRetryIT` (a garantia crua do broker) e no `BookingIdempotencyIT` (a
+  deduplicação, #7).
 - **Spock em Groovy; os helpers em Java.** Os testes são `Specification`s em
   `src/test/groovy`; `E2eEnvironment` e `ServiceProcess` ficam em `src/test/java`, e o
   `gmavenplus-plugin` compila o Groovy depois do Java, então um enxerga o outro. O BOM do

@@ -321,9 +321,10 @@ class DeadLetterRetryIT {
 
   /**
    * Fixa a garantia que o broker dá — entrega ao menos uma vez — e a que ele não dá: o efeito
-   * gravado antes do ack se repete quando o consumidor morre antes de confirmar. O {@code commons}
-   * não deduplica; quem consome é que precisa tratar a reentrega (issue #7). Se a deduplicação
-   * um dia morar aqui, este teste passa a afirmar o contrário e deve ser invertido.
+   * gravado antes do ack se repete quando o consumidor morre antes de confirmar. O listener-sonda
+   * daqui não usa o {@code IdempotentEventConsumer} (issue #7), que é opt-in de cada listener dos
+   * serviços — por isso o teste segue afirmando a garantia crua do broker. A prova de que o
+   * consumidor deduplicado não repete o efeito está no {@code BookingIdempotencyIT}.
    * <p>
    * A conexão é derrubada com o listener no meio do método, depois de o efeito ser contado. A
    * thread antiga só é liberada depois, porque o container não reinicia o consumidor enquanto

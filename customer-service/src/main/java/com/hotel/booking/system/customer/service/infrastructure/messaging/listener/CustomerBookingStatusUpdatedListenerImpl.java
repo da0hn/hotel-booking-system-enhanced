@@ -1,6 +1,7 @@
 package com.hotel.booking.system.customer.service.infrastructure.messaging.listener;
 
 import com.hotel.booking.system.commons.core.application.annotation.Listener;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingStatusUpdatedEvent;
 import com.hotel.booking.system.customer.service.core.ports.api.messaging.CustomerBookingStatusUpdatedHandler;
 import com.hotel.booking.system.customer.service.core.ports.spi.messaging.listener.CustomerBookingStatusUpdatedListener;
@@ -18,6 +19,12 @@ public class CustomerBookingStatusUpdatedListenerImpl implements CustomerBooking
 
   private final CustomerBookingStatusUpdatedHandler handler;
 
+  private final IdempotentEventConsumer idempotentEventConsumer;
+
+  /**
+   * Cada evento do lote passa pelo consumidor idempotente, e todos na mesma transação: uma
+   * reentrega do lote inteiro, ou de parte dele, descarta só o que já foi registrado.
+   */
   @Override
   @RabbitListener(queues = "${app.rabbitmq.queue.customer-booking-update}")
   @Transactional
@@ -25,7 +32,7 @@ public class CustomerBookingStatusUpdatedListenerImpl implements CustomerBooking
     log.info("CustomerBookingStatusUpdatedEvent received: {}", events.size());
     try {
       for (final var event : events) {
-        this.handler.handle(event);
+        this.idempotentEventConsumer.consume(event, () -> this.handler.handle(event));
       }
     } catch (final Exception e) {
       log.error("An error occurred while trying processing CustomerBookingStatusUpdatedEvent", e);

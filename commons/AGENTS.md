@@ -17,8 +17,11 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
   A chave é de lista — com `=` no lugar de `+=` ela é ignorada em silêncio. O Lombok erra
   o palpite sozinho porque o Jackson 3 usa o `jackson-annotations` 2.x, e ver
   `com.fasterxml.jackson.annotation` no classpath o convence de que o Jackson 2 está lá.
+- O mesmo vale para `@Builder` + `@AllArgsConstructor`: sem `@Jacksonized` o Jackson chama o
+  construtor direto, e o `@Builder.Default` do `eventId` não se aplica — o campo ausente (mensagem
+  legada) chega `null` em vez de gerado. Todo evento declara `eventId` com `@Builder.Default`.
 - `EventContractTest`, no `commons`, varre o pacote e prova que cada classe concreta de
-  evento é construível. Foi escrito depois que essa falha passou por um `mvn verify` verde:
+  evento é construível e que o `eventId` sobrevive à conversão AMQP. Foi escrito depois que essa falha passou por um `mvn verify` verde:
   ela não aparece no arranque nem nos testes de domínio, só no listener — serviços
   saudáveis, `POST /hotel/booking` respondendo 200 e a saga parada. Evento novo entra na
   cobertura sozinho; não há lista para manter.
@@ -65,8 +68,10 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
   reentrega fora da DLQ, e o `SagaIT` derruba o `booking-service` com `kill` dentro da
   transação e confere que a saga retoma com uma única reserva. O lado inseguro — morrer depois
   do commit e antes do ack — repete o efeito, e o `DeadLetterRetryIT` o fixa de propósito:
-  deduplicar é papel do consumidor (#7), e um dia que a deduplicação morar no `commons` esse
-  teste deve ser invertido.
+  deduplicar é papel do consumidor (#7): o `IdempotentEventConsumer` mora no `commons`, mas cada
+  listener opta por usá-lo, e o listener-sonda do `DeadLetterRetryIT` não usa — por isso o teste
+  continua afirmando a garantia crua do broker. A prova de que a reentrega não repete o efeito
+  está no `BookingIdempotencyIT` (`booking-service`).
 - **Desligamento gracioso (SIGTERM) não está configurado nem provado (#41).** Nenhum
   `application.yml` define o prazo de desligamento; vale o padrão do container (5 s), que o
   Boot 4.1 não expõe. Lido no código do Spring AMQP, sem teste: passado o prazo, o container

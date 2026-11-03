@@ -3,6 +3,7 @@ package com.hotel.booking.system.booking.service.infrastructure.configuration;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.QueueProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterRetryConfiguration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterTopology;
 import com.hotel.booking.system.commons.infrastructure.messaging.EventMessageConverter;
@@ -19,6 +20,7 @@ import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
@@ -69,7 +71,7 @@ class DeadLetterConfigurationTest {
   }
 
   @Test
-  @DisplayName("registra a DLQ, o recoverer e o classificador de retry no contexto")
+  @DisplayName("registra a DLQ, o recoverer, o classificador de retry e o consumidor idempotente no contexto")
   void registraDlqRecovererEClassificadorNoContexto() {
     new ApplicationContextRunner()
       .withUserConfiguration(RabbitMQConfiguration.class)
@@ -78,10 +80,12 @@ class DeadLetterConfigurationTest {
       .withBean(ExchangeProperties.class, () -> EXCHANGES)
       .withBean(JsonMapper.class, () -> JsonMapper.builder().build())
       .withBean(RabbitTemplate.class, () -> mock(RabbitTemplate.class))
+      .withBean(JdbcClient.class, () -> mock(JdbcClient.class))
       .run(context -> assertThat(context)
         .hasSingleBean(Declarables.class)
         .hasSingleBean(MessageRecoverer.class)
-        .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class));
+        .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class)
+        .hasSingleBean(IdempotentEventConsumer.class));
   }
 
   @Test

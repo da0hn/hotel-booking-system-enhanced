@@ -1,5 +1,6 @@
 package com.hotel.booking.system.payment.service.infrastructure.configuration;
 
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterRetryConfiguration;
 import com.hotel.booking.system.commons.infrastructure.messaging.DeadLetterTopology;
 import com.hotel.booking.system.commons.infrastructure.messaging.EventMessageConverter;
@@ -77,7 +78,8 @@ class DeadLetterConfigurationTest {
       .run(context -> assertThat(context)
         .hasSingleBean(Declarables.class)
         .hasSingleBean(MessageRecoverer.class)
-        .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class));
+        .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class)
+        .hasSingleBean(IdempotentEventConsumer.class));
   }
 
   @Test

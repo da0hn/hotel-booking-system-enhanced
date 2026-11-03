@@ -6,6 +6,8 @@ import com.hotel.booking.system.booking.service.infrastructure.messaging.listene
 import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.*;
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
+import com.hotel.booking.system.commons.core.application.idempotency.ProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import org.junit.jupiter.api.DisplayName;
@@ -41,10 +43,58 @@ class BookingMessagingTest {
     final var changeHandler = mock(BookingRoomStatusChangedHandler.class);
     final var request = BookingRoomRequestedEvent.builder().build();
     final var change = BookingRoomPaymentCompleted.builder().build();
-    new BookingRoomRequestedRabbitMQListener(requestHandler).listen(request);
-    new BookingRoomStatusChangedRabbitMQListener(changeHandler).listen(change);
+    final var consumer = new IdempotentEventConsumer(registroQueAceitaTudo());
+    new BookingRoomRequestedRabbitMQListener(requestHandler, consumer).listen(request);
+    new BookingRoomStatusChangedRabbitMQListener(changeHandler, consumer).listen(change);
     verify(requestHandler).handle(request);
     verify(changeHandler).handle(change);
+  }
+
+  /**
+   * Cenário 1 da issue #7: o mesmo evento entregue duas vezes é processado uma só. A segunda
+   * entrega retorna normalmente — é isso que confirma a mensagem no broker — sem chamar o handler.
+   */
+  @Test
+  @DisplayName("descarta a reentrega do mesmo eventId sem chamar o handler")
+  void listenersDescartamReentregaSemChamarOHandler() {
+    final var requestHandler = mock(BookingRoomRequestedHandler.class);
+    final var changeHandler = mock(BookingRoomStatusChangedHandler.class);
+    final var registro = mock(ProcessedEventRepository.class);
+    when(registro.register(anyString(), anyString())).thenReturn(true, false, true, false);
+    final var consumer = new IdempotentEventConsumer(registro);
+    final var requestListener = new BookingRoomRequestedRabbitMQListener(requestHandler, consumer);
+    final var changeListener = new BookingRoomStatusChangedRabbitMQListener(changeHandler, consumer);
+    final var request = BookingRoomRequestedEvent.builder().build();
+    final var change = BookingRoomPaymentCompleted.builder().build();
+
+    requestListener.listen(request);
+    requestListener.listen(request);
+    changeListener.listen(change);
+    changeListener.listen(change);
+
+    verify(requestHandler, times(1)).handle(request);
+    verify(changeHandler, times(1)).handle(change);
+  }
+
+  /**
+   * A falha do handler precisa subir pelo listener: é a exceção que desfaz a transação, e com ela
+   * o registro do {@code eventId}. Engoli-la confirmaria uma mensagem cujo efeito foi perdido.
+   */
+  @Test
+  @DisplayName("propaga a falha do handler para o rollback da transação")
+  void listenerPropagaAFalhaDoHandler() {
+    final var requestHandler = mock(BookingRoomRequestedHandler.class);
+    final var falha = new IllegalStateException("banco indisponível");
+    doThrow(falha).when(requestHandler).handle(any());
+    final var listener = new BookingRoomRequestedRabbitMQListener(requestHandler, new IdempotentEventConsumer(registroQueAceitaTudo()));
+
+    assertThatThrownBy(() -> listener.listen(BookingRoomRequestedEvent.builder().build())).isSameAs(falha);
+  }
+
+  private static ProcessedEventRepository registroQueAceitaTudo() {
+    final var registro = mock(ProcessedEventRepository.class);
+    when(registro.register(anyString(), anyString())).thenReturn(true);
+    return registro;
   }
 
   /**
@@ -57,7 +107,11 @@ class BookingMessagingTest {
     final var template = mock(RabbitTemplate.class);
     final var publisher = new BookingRoomResponsePublisherImpl(template,
       new RoutingKeyProperties("request", "response", "change"), new ExchangeProperties("booking"));
-    final var event = new BookingRoomConfirmedEvent(UUID.randomUUID().toString(), UUID.randomUUID().toString(), CustomerReservationStatus.RESERVED);
+    final var event = BookingRoomConfirmedEvent.builder()
+      .reservationOrderId(UUID.randomUUID().toString())
+      .customerId(UUID.randomUUID().toString())
+      .status(CustomerReservationStatus.RESERVED)
+      .build();
     doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
       .complete(new CorrelationData.Confirm(true, null)))
       .when(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
@@ -98,7 +152,11 @@ class BookingMessagingTest {
     final var mapper = new JsonMapperConfiguration().jsonMapper();
     assertThat(mapper.writeValueAsString(new Object())).isEqualTo("{}");
     final var converter = config.jsonMessageConverter(mapper);
-    final var event = new BookingRoomConfirmedEvent("order", "customer", CustomerReservationStatus.RESERVED);
+    final var event = BookingRoomConfirmedEvent.builder()
+      .reservationOrderId("order")
+      .customerId("customer")
+      .status(CustomerReservationStatus.RESERVED)
+      .build();
     final var message = converter.toMessage(event, new MessageProperties());
     assertThat(message.getMessageProperties().getHeader("__TypeId__").toString()).isEqualTo(BookingRoomConfirmedEvent.class.getName());
     assertThat(converter.fromMessage(message)).isInstanceOfSatisfying(BookingRoomConfirmedEvent.class, value -> {

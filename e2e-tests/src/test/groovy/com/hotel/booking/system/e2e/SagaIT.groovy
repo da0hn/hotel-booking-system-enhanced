@@ -114,7 +114,8 @@ class SagaIT extends Specification {
    * desfeita pelo banco, a mensagem volta à fila e, com o serviço de pé de novo, a saga termina
    * com uma única reserva. O lado inseguro — morrer depois do commit e antes do ack, o que
    * repetiria o efeito — não se provoca daqui, porque a janela é de microssegundos e não tem
-   * gancho; ele é coberto no {@code DeadLetterRetryIT} e depende da idempotência da issue #7.</p>
+   * gancho; a garantia crua do broker é coberta no {@code DeadLetterRetryIT} e a deduplicação
+   * (issue #7), no {@code BookingIdempotencyIT} do {@code booking-service}.</p>
    */
   def "serviço morto no meio da transação retoma a saga ao reiniciar, sem duplicar a reserva"() {
     given:
