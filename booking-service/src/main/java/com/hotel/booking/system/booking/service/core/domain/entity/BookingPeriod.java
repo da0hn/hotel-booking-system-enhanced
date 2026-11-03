@@ -21,7 +21,6 @@ public class BookingPeriod {
   ) {
     this.checkIn = checkIn;
     this.checkOut = checkOut;
-    this.validate();
   }
 
   public static BookingPeriod of(final LocalDate checkIn, final LocalDate checkOut) {
@@ -36,9 +35,19 @@ public class BookingPeriod {
     return new BookingPeriod(checkIn, checkOut);
   }
 
+  /**
+   * Recusa o período em que o check-out não cai depois do check-in: a estadia precisa de pelo
+   * menos uma noite.
+   *
+   * <p>A regra vive aqui e não no construtor, de propósito. {@code Booking.validate()} chama este
+   * método, e o {@code BookingInitializer} converte a exceção em uma falha limpa
+   * ({@code BookingRoomFailedEvent}); uma exceção do construtor sairia do mapper e iria para o
+   * retry e a DLQ. O construtor também reidrata reservas do banco, e uma linha antiga de zero
+   * noites não pode fazer toda checagem de disponibilidade do quarto dela lançar exceção.</p>
+   */
   public void validate() {
-    if (this.checkIn.isAfter(this.checkOut)) {
-      throw new BookingDomainException(ApplicationMessage.BOOKING_PERIOD_CHECK_IN_AFTER_CHECK_OUT);
+    if (!this.checkOut.isAfter(this.checkIn)) {
+      throw new BookingDomainException(ApplicationMessage.BOOKING_PERIOD_CHECK_OUT_NOT_AFTER_CHECK_IN);
     }
   }
 

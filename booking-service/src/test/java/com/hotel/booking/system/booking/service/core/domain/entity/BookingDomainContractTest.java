@@ -20,8 +20,8 @@ class BookingDomainContractTest {
     final var period = BookingPeriod.of(this.start, this.start.plusDays(3));
     assertThatThrownBy(() -> BookingPeriod.of(null, this.start)).isInstanceOf(NullPointerException.class);
     assertThatThrownBy(() -> BookingPeriod.of(this.start, null)).isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(() -> BookingPeriod.of(this.start.plusDays(1), this.start)).isInstanceOf(BookingDomainException.class);
-    assertThat(BookingPeriod.of(this.start, this.start).getCheckOut()).isEqualTo(this.start);
+    assertThatThrownBy(() -> BookingPeriod.of(this.start.plusDays(1), this.start).validate()).isInstanceOf(BookingDomainException.class);
+    assertThatThrownBy(() -> BookingPeriod.of(this.start, this.start).validate()).isInstanceOf(BookingDomainException.class);
     assertThat(period).isEqualTo(period).isEqualTo(BookingPeriod.of(this.start, this.start.plusDays(3)))
       .isNotEqualTo(null).isNotEqualTo("period")
       .isNotEqualTo(BookingPeriod.of(this.start.plusDays(1), this.start.plusDays(3)))
@@ -76,7 +76,7 @@ class BookingDomainContractTest {
       Money.of(new BigDecimal("2.1234")));
     final var items = new ArrayList<>(List.of(room));
     final var booking = new Booking(BookingId.newInstance(), ReservationOrderId.newInstance(), CustomerId.newInstance(),
-      BookingPeriod.of(this.start, this.start), Money.of(new BigDecimal("6.3702")), items, 1, BookingStatus.PENDING);
+      BookingPeriod.of(this.start, this.start.plusDays(1)), Money.of(new BigDecimal("6.3702")), items, 1, BookingStatus.PENDING);
     items.clear();
     assertThat(booking.getBookingRooms()).containsExactly(room);
     assertThat(room.getTotalPrice().getValue()).isEqualByComparingTo("6.3702");

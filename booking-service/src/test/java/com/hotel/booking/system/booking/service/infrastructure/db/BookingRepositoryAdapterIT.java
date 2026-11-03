@@ -63,6 +63,29 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
     });
   }
 
+  /**
+   * A regra de "check-out depois do check-in" vale para o pedido novo, e não para o que o banco
+   * já tem: se a reidratação recusasse uma reserva antiga de zero noites, toda checagem de
+   * disponibilidade do quarto dela e toda atualização de status daquele pedido lançariam
+   * exceção.
+   */
+  @Test
+  @DisplayName("reidrata uma reserva antiga de zero noites sem recusá-la")
+  void reidrataReservaDeZeroNoites() {
+    final var order = ReservationOrderId.of(UUID.randomUUID());
+    final var period = BookingPeriod.of(LocalDate.of(2035, 4, 1), LocalDate.of(2035, 4, 1));
+    final var booking = Booking.builder().reservationOrderId(order).customerId(CustomerId.of(UUID.randomUUID()))
+      .bookingPeriod(period).totalPrice(Money.of(new BigDecimal("10.1234")))
+      .bookingRooms(List.of(BookingRoom.builder().roomId(ROOM).quantity(1).price(Money.of(new BigDecimal("10.1234"))).build())).build();
+    booking.initialize();
+    this.bookings.save(booking);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    assertThat(this.bookings.findBookingByReservationOrderId(order)).hasValueSatisfying(found -> assertThat(found.getBookingPeriod()).isEqualTo(period));
+    assertThat(this.bookings.findBookingByRoomIdAndPeriod(ROOM, BookingPeriod.of(LocalDate.of(2035, 3, 30), LocalDate.of(2035, 4, 3)))).extracting(Booking::getId).containsExactly(booking.getId());
+  }
+
   @Test
   @DisplayName("mapeia quartos encontrados e traduz identificador ausente")
   void buscaQuartosMapeiaCamposERejeitaIdentificadorAusente() {

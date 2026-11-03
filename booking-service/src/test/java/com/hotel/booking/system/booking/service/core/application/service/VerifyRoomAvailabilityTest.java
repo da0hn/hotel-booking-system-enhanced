@@ -168,6 +168,25 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
+  @DisplayName("soma as unidades de duas linhas do mesmo quarto no pedido")
+  void somaAsLinhasDoMesmoQuartoNoPedido() {
+    this.givenRoomWithQuantity(5);
+    this.givenExisting();
+    final var duasLinhas = Booking.builder()
+      .bookingPeriod(period(10, 13))
+      .status(BookingStatus.PENDING)
+      .bookingRooms(List.of(
+        BookingRoom.builder().roomId(this.roomId).quantity(3).price(Money.of(100)).build(),
+        BookingRoom.builder().roomId(this.roomId).quantity(3).price(Money.of(100)).build()
+      ))
+      .build();
+
+    final var failures = this.service.execute(duasLinhas);
+
+    assertThat(failures.data()).containsExactly(unavailable(this.roomId, "10/01/2030 - 13/01/2030"));
+  }
+
+  @Test
   @DisplayName("não quebra com linha sem quantidade: quem a recusa é o BookingInitializer")
   void naoQuebraComLinhaSemQuantidade() {
     this.givenRoomWithQuantity(1);

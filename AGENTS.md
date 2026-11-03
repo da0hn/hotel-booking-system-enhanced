@@ -252,7 +252,20 @@ Regras que o código segue e que devem ser mantidas:
   `TransactionRequiredException`. A ocupação **soma `booking_room.quantity`**; contar linhas
   trata 3 unidades como 1. Como todo listener roda com no mínimo 3 consumidores (seção
   *Falha no consumidor*), a corrida existe mesmo com uma só réplica; o e2e não a reproduz
-  porque o `SagaIT` envia um pedido por vez.
+  porque o `SagaIT` envia um pedido por vez. Como a soma decide a vaga, `BookingRoom.validate()`
+  recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
+  vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
+  **O lock tem custo**: só é solto no commit do listener, que inclui o publish com espera do
+  confirm do broker (5 s por tentativa, até 3 tentativas) e não tem `lock_timeout`. Com o broker
+  lento, cada pedido do mesmo quarto espera o anterior. O remédio estrutural é o Outbox (#35).
+- **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
+  anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
+  `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
+  propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
+  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
+  disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
+  toda checagem do quarto dela lançar exceção. O `hotel-service` não valida período, então este
+  é o único ponto que barra o pedido.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
@@ -368,11 +381,16 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   no `application.yml` de cada serviço, e o `ListenerConcurrencyTest` de cada um o guarda lendo o
   arquivo real. Sem a chave o Spring AMQP usa 1 consumidor por listener. A convenção tem um
   preço que quem escreve um handler precisa conhecer: **a fila deixa de ser processada em
-  ordem**, e o retry deixa de segurar as mensagens seguintes — enquanto uma espera o backoff, as
-  outras andam. Todo handler que lê, altera e grava o mesmo agregado tem de ser seguro sob
-  concorrência. O `booking-service` já é, pelo lock do quarto; o `customer-service` ainda não
-  (`UpdateCustomerBookingStatusUseCaseImpl` lê o pedido e grava sem lock nem `@Version`, e o
-  `current_status` fica com o de quem commita por último: issue #53).
+  ordem**, e o retry deixa de parar a fila inteira: enquanto uma mensagem espera o backoff, os
+  outros consumidores seguem. Só as mensagens que o broker já entregou ao consumidor em backoff
+  (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
+  lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
+  protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
+  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
+  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
+  leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
+  por último (issue #53).
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real

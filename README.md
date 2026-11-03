@@ -127,8 +127,10 @@ devolve mais a mensagem ao início da fila:
   `x-exception-message`, `x-exception-stacktrace`, `x-original-exchange` e `x-original-routingKey`. Para
   inspecionar, abra a fila `<fila>.dlq` no painel do RabbitMQ (<http://localhost:15672>, `root`/`root`).
 
-Durante o backoff a thread do consumidor fica ocupada: uma mensagem que falha por erro transitório segura a
-fila por 2 a 4,5 segundos (a soma das duas esperas, com o jitter) antes de ir para a DLQ. Não há reprocessamento automático a partir da DLQ — quem
+Durante o backoff a thread do consumidor fica ocupada: uma mensagem que falha por erro transitório ocupa um dos
+consumidores por 2 a 4,5 segundos (a soma das duas esperas, com o jitter) antes de ir para a DLQ. Cada serviço
+consome com no mínimo 3 consumidores por fila, então os outros seguem, e a ordem de processamento da fila não é
+garantida. Não há reprocessamento automático a partir da DLQ — quem
 decide se a mensagem volta para a fila de origem é uma pessoa.
 
 O contrato de serialização também merece atenção: o tipo concreto do evento viaja no header `__TypeId__`

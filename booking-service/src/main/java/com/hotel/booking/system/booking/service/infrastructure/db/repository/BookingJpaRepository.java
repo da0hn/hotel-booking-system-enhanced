@@ -21,12 +21,20 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, UUID>
    * no mesmo dia não conflitam. O {@code between} que havia antes só testava se uma das duas
    * pontas do período pedido caía dentro da reserva existente, e por isso não achava a reserva
    * que o período pedido envolve por inteiro.</p>
+   *
+   * <p>Estadia de zero noites não é pedido válido ({@code BookingPeriod.validate()}), então a
+   * condição estrita não precisa tratá-la.</p>
+   *
+   * <p>Reserva cancelada não entra: ela não ocupa unidade nenhuma, e como o pagamento recusado
+   * cancela, elas só se acumulam. A consulta roda com o lock do quarto aberto, e cada reserva
+   * devolvida custa mais uma ida ao banco para carregar as linhas dela.</p>
    */
   @Query("""
       SELECT booking FROM BookingEntity booking
       JOIN booking.bookingRooms bookingRooms
       WHERE
         bookingRooms.room.id = :roomId and
+        booking.status <> com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus.CANCELED and
         booking.checkIn < :checkOut and
         booking.checkOut > :checkIn
     """)

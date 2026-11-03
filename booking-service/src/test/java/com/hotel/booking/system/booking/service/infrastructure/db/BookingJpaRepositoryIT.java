@@ -1,11 +1,18 @@
 package com.hotel.booking.system.booking.service.infrastructure.db;
 
+import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingEntity;
+import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingRoomEntity;
+import com.hotel.booking.system.booking.service.infrastructure.db.entity.RoomEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.repository.BookingJpaRepository;
+import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +36,9 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
 
   @Autowired
   private BookingJpaRepository repository;
+
+  @Autowired
+  private EntityManager entityManager;
 
   @Test
   @DisplayName("acha a reserva quando o check-in cai dentro do período ocupado")
@@ -128,6 +138,50 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
     assertThat(encontradas)
       .as("o período engloba a reserva: o quarto está ocupado nesse intervalo")
       .hasSize(1);
+  }
+
+  /**
+   * A consulta roda com o lock do quarto aberto, e cada reserva que ela devolve vira mais uma
+   * ida ao banco para carregar as linhas dela. Reserva cancelada não ocupa unidade nenhuma, e
+   * elas só se acumulam (o pagamento recusado cancela), então não deve nem ser carregada.
+   */
+  @Test
+  @DisplayName("não devolve reserva cancelada, mas devolve a ativa do mesmo período")
+  void naoDevolveReservaCancelada() {
+    final var ativa = this.gravaReserva(BookingStatus.PENDING);
+    this.gravaReserva(BookingStatus.CANCELED);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    final var encontradas = this.repository.findByRoomIdAndPeriod(
+      QUARTO_TRIPLO_DELUXE,
+      LocalDate.of(2035, 3, 2),
+      LocalDate.of(2035, 3, 4)
+    );
+
+    assertThat(encontradas).extracting(BookingEntity::getId).containsExactly(ativa);
+  }
+
+  private UUID gravaReserva(final BookingStatus status) {
+    final var reserva = BookingEntity.builder()
+      .id(UUID.randomUUID())
+      .customerId(UUID.randomUUID())
+      .reservationOrderId(UUID.randomUUID())
+      .checkIn(LocalDate.of(2035, 3, 1))
+      .checkOut(LocalDate.of(2035, 3, 5))
+      .status(status)
+      .totalPrice(new BigDecimal("456.0000"))
+      .build();
+    final var linha = BookingRoomEntity.builder()
+      .id(UUID.randomUUID())
+      .room(this.entityManager.getReference(RoomEntity.class, QUARTO_TRIPLO_DELUXE))
+      .booking(reserva)
+      .price(new BigDecimal("456.0000"))
+      .quantity(1)
+      .build();
+    reserva.setBookingRooms(Set.of(linha));
+    this.entityManager.persist(reserva);
+    return reserva.getId();
   }
 
   @Test

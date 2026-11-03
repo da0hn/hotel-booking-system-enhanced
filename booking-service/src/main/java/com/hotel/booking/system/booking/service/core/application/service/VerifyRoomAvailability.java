@@ -28,6 +28,13 @@ import java.util.stream.Collectors;
  * ocupação e passam as duas. A primeira coisa que {@link #execute} faz é travar os quartos
  * ({@link RoomRepository#lockAllByRoomId}); o lock dura até o commit de quem chamou, que também
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
+ *
+ * <p><strong>O lock tem custo, e o teto dele não está no nosso código.</strong> Ele só é solto no
+ * commit do listener, e até lá a mesma transação ainda grava a reserva e publica o evento de
+ * resposta esperando o confirm do broker: até 5 s por tentativa, em até 3 tentativas, cada uma
+ * numa transação própria. Com o broker saudável isso leva milissegundos; com ele lento, cada
+ * pedido do mesmo quarto espera o anterior, e não há {@code lock_timeout} que limite a espera.
+ * Publicar só depois do commit, que encurtaria a seção crítica, depende do Outbox (#35).</p>
  */
 @Slf4j
 @DomainService
@@ -87,10 +94,12 @@ public class VerifyRoomAvailability {
   }
 
   /**
-   * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} já recusa
-   * esse pedido por dados inconsistentes, mas o caso de uso verifica a disponibilidade mesmo
-   * assim, e um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem
-   * indo para a DLQ.
+   * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} recusa o
+   * pedido cuja linha tem quantidade nula, zero ou negativa ({@code BookingRoom.validate()}),
+   * mas o caso de uso verifica a disponibilidade mesmo assim, antes de olhar esse resultado.
+   * Um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem indo para a
+   * DLQ. Uma quantidade negativa também passa por esta soma, sem efeito: o pedido já saiu da
+   * validação com falha e não chega a ser gravado.
    */
   private static int unitsOf(final BookingRoom bookingRoom) {
     return Optional.ofNullable(bookingRoom.getQuantity()).orElse(0);
