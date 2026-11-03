@@ -149,9 +149,50 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
       .containsExactlyInAnyOrder(CustomerReservationStatus.AWAITING_PAYMENT, CustomerReservationStatus.RESERVATION_FAILED);
   }
 
+  /**
+   * A idempotência da issue #7 convive com o lock da #5. Duas entregas do mesmo pedido, com
+   * {@code eventId} diferentes, passam pela busca da reserva existente antes de qualquer uma
+   * gravar: as duas enxergam "nenhuma". Se o lock do quarto vier depois dessa busca, a segunda
+   * acorda com a reserva da primeira já comitada, conta as unidades dela como ocupação e responde
+   * "indisponível" para um pedido que está reservado.
+   *
+   * <p>O ponto de encontro fica logo depois da busca por pedido, para garantir que as duas
+   * threads a façam antes de qualquer lock.</p>
+   */
+  @Test
+  @DisplayName("não responde indisponível à repetição de um pedido que levou o último quarto")
+  void doesNotFailTheRepetitionOfAnOrderThatTookTheLastRoom() throws Exception {
+    final var rendezvous = new Rendezvous(this.bookings, RENDEZVOUS_TIMEOUT_MILLIS, Rendezvous.Meeting.ORDER_LOOKUP);
+    final var useCase = new BookingRoomUseCaseImpl(
+      rendezvous,
+      new BookingUseCaseMapperImpl(),
+      new VerifyRoomAvailability(rendezvous, this.rooms),
+      new BookingInitializer()
+    );
+    final var order = UUID.randomUUID().toString();
+
+    final var outputs = this.runConcurrently(
+      useCase,
+      this.requestForTheSingleUnit(order),
+      this.requestForTheSingleUnit(order)
+    );
+
+    assertThat(this.unitsPersisted())
+      .as("o pedido repetido não grava outra reserva")
+      .isEqualTo(1);
+    assertThat(outputs)
+      .extracting(BookingRoomOutput::status)
+      .as("a repetição devolve a reserva existente; virar falha derruba na saga um pedido reservado")
+      .doesNotContain(CustomerReservationStatus.RESERVATION_FAILED);
+  }
+
   private BookingRoomInput requestForTheSingleUnit() {
+    return this.requestForTheSingleUnit(UUID.randomUUID().toString());
+  }
+
+  private BookingRoomInput requestForTheSingleUnit(final String reservationOrderId) {
     return BookingRoomInput.builder()
-      .reservationOrderId(UUID.randomUUID().toString())
+      .reservationOrderId(reservationOrderId)
       .customerId(UUID.randomUUID().toString())
       .price(PRICE)
       .guests(2)
@@ -203,21 +244,36 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
    */
   private static final class Rendezvous implements BookingRepository {
 
+    /** Em qual leitura as duas threads se encontram. */
+    private enum Meeting {
+      OCCUPANCY_READ,
+      ORDER_LOOKUP
+    }
+
     private final BookingRepository delegate;
 
     private final CyclicBarrier barrier = new CyclicBarrier(2);
 
     private final long timeoutMillis;
 
+    private final Meeting meeting;
+
     private Rendezvous(final BookingRepository delegate, final long timeoutMillis) {
+      this(delegate, timeoutMillis, Meeting.OCCUPANCY_READ);
+    }
+
+    private Rendezvous(final BookingRepository delegate, final long timeoutMillis, final Meeting meeting) {
       this.delegate = delegate;
       this.timeoutMillis = timeoutMillis;
+      this.meeting = meeting;
     }
 
     @Override
     public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
       final var found = this.delegate.findBookingByRoomIdAndPeriod(roomId, bookingPeriod);
-      this.waitForTheOtherThread();
+      if (this.meeting == Meeting.OCCUPANCY_READ) {
+        this.waitForTheOtherThread();
+      }
       return found;
     }
 
@@ -228,7 +284,11 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
 
     @Override
     public Optional<Booking> findBookingByReservationOrderId(final ReservationOrderId reservationOrderId) {
-      return this.delegate.findBookingByReservationOrderId(reservationOrderId);
+      final var found = this.delegate.findBookingByReservationOrderId(reservationOrderId);
+      if (this.meeting == Meeting.ORDER_LOOKUP) {
+        this.waitForTheOtherThread();
+      }
+      return found;
     }
 
     private void waitForTheOtherThread() {

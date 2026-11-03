@@ -50,6 +50,17 @@ public class VerifyRoomAvailability {
     this.roomRepository = roomRepository;
   }
 
+  /**
+   * Trava os quartos do pedido sem ler a ocupação. Quem precisa decidir algo que depende do estado
+   * da reserva antes de verificar a disponibilidade, como reconhecer um pedido repetido, chama
+   * isto primeiro: sem o lock, essa decisão olha um estado que a transação concorrente do mesmo
+   * quarto está prestes a mudar. Tomar o lock de novo em {@link #execute}, na mesma transação, é
+   * imediato.
+   */
+  public void lockRooms(final Booking booking) {
+    this.roomRepository.lockAllByRoomId(booking.getRoomsId());
+  }
+
   public FailureMessages execute(final Booking booking) {
     final var failureMessages = FailureMessages.empty();
 

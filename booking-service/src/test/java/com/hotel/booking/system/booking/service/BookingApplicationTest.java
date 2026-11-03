@@ -200,6 +200,26 @@ class BookingApplicationTest {
   }
 
   /**
+   * O lock do quarto vem antes da busca por pedido repetido. Com a busca antes, duas entregas do
+   * mesmo pedido passam por ela sem ver nada, e a segunda acorda do lock contando a reserva da
+   * primeira como ocupação: responde "indisponível" para um pedido que está reservado. O
+   * {@code RoomAvailabilityConcurrencyIT} prova o efeito contra o PostgreSQL; este teste prova a
+   * ordem sem depender de temporização.
+   */
+  @Test
+  @DisplayName("trava os quartos antes de procurar a reserva do pedido")
+  void travaOsQuartosAntesDeProcurarAReservaDoPedido() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+
+    usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+
+    final var inOrder = inOrder(this.rooms, this.repository);
+    inOrder.verify(this.rooms).lockAllByRoomId(any());
+    inOrder.verify(this.repository).findBookingByReservationOrderId(any());
+  }
+
+  /**
    * O que o caso de uso deve informar para cada status da reserva existente. Fica escrito aqui, e
    * não derivado do código, para que trocar duas entradas do mapa de produção deixe o teste
    * vermelho.

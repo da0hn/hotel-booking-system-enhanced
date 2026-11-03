@@ -426,6 +426,11 @@ escolha estão nos Javadocs; o que não se deduz do código:
   transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
   reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
   falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
+  **A busca vem depois do lock dos quartos** (`VerifyRoomAvailability.lockRooms`), e a ordem não é
+  enfeite: com as duas entregas do mesmo pedido em paralelo, sem o lock antes a segunda passa pela
+  busca sem ver nada, acorda do lock com a reserva da primeira já comitada e a conta como ocupação
+  — no último quarto, responde "indisponível" para um pedido reservado. O
+  `RoomAvailabilityConcurrencyIT` prova o efeito e o `BookingApplicationTest` crava a ordem.
 - **No `customer-service`, a segunda rede é a própria timeline.** `ReservationOrder.updateStatus` e
   `updateToFailureStatus` devolvem `false`, e o caso de uso não grava, quando a transição repete a
   **entrada mais recente da timeline, escolhida pelo instante**: mesmo status e mesmo motivo, com

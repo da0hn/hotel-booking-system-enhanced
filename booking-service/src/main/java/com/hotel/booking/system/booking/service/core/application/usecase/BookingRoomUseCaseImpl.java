@@ -59,12 +59,18 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
    * como repetida, em vez de gravar outra. A busca vem <em>antes</em> da verificação de
    * disponibilidade de propósito — depois dela, a reserva do primeiro pedido contaria como
    * ocupação do quarto e a repetição seria respondida como "indisponível", derrubando na saga
-   * um pedido que está reservado. A constraint {@code booking_reservation_order_id_uk} é a rede
-   * de segurança do banco caso duas entregas passem por aqui ao mesmo tempo.
+   * um pedido que está reservado.
+   *
+   * <p>E vem <em>depois</em> do lock dos quartos, também de propósito. Sem o lock, duas entregas
+   * do mesmo pedido passam pela busca sem ver nada, e a segunda, ao acordar do lock que a
+   * verificação toma, enxerga a reserva da primeira como ocupação e cai no mesmo "indisponível".
+   * Com o lock antes, a segunda espera a primeira comitar e então a encontra. A constraint
+   * {@code booking_reservation_order_id_uk} segue como rede de segurança do banco.</p>
    */
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
     final var booking = this.mapper.bookingRoomInputToBooking(input);
+    this.verifyRoomAvailability.lockRooms(booking);
     return this.bookingRepository.findBookingByReservationOrderId(booking.getReservationOrderId())
       .map(this::duplicateOf)
       .orElseGet(() -> this.create(booking));
