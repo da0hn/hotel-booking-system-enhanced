@@ -164,10 +164,10 @@ São quatro travessias, e cada uma se sustenta em algo diferente:
 
 O `reservation_order_id` é, na prática, a chave global do sistema. No `customer` ela é a PK de
 `reservation_order`; no `booking` tem a constraint única `booking_reservation_order_id_uk`, a rede de
-segurança que impede uma segunda reserva para a mesma ordem se uma mensagem for reprocessada. Os
-três schemas têm ainda a tabela `processed_event` (`event_id`, `event_type`, `processed_at`), onde o
-listener registra, na mesma transação do efeito, cada `eventId` consumido — é como uma reentrega do
-RabbitMQ é reconhecida e descartada. Ela não aparece no diagrama e é expurgada após 7 dias. O
+segurança que impede uma segunda reserva para a mesma ordem se uma mensagem for reprocessada. Os três
+schemas têm ainda a tabela `processed_event` (`event_id`, `event_type`, `processed_at`), onde o listener
+registra, na mesma transação do efeito, cada `eventId` consumido — é como uma reentrega do RabbitMQ é
+reconhecida e descartada. Ela é a última tabela de cada schema no diagrama e é expurgada após 7 dias. O
 `payment-service` não aparece no diagrama porque não tem banco: o resultado do pagamento é sorteado em
 memória e descartado, sem registro de tentativa, valor cobrado ou motivo de recusa; os `eventId` já
 processados também ficam só na memória da JVM.
