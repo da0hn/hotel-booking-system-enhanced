@@ -195,8 +195,10 @@ class HttpErrorContractIT extends Specification {
     where:
     parameter | value | message
     'page'    | '-1'  | 'page.number.invalid'
+    'page'    | ''    | 'page.number.invalid'
     'size'    | '0'   | 'page.size.invalid'
     'size'    | '101' | 'page.size.invalid'
+    'size'    | ''    | 'page.size.invalid'
   }
 
   def "page que não é um inteiro responde 400 com o envelope de erro"() {

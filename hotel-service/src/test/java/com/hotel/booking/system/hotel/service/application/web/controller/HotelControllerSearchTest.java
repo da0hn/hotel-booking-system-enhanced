@@ -228,12 +228,56 @@ class HotelControllerSearchTest {
     verifyNoInteractions(this.search);
   }
 
+  @ParameterizedTest(name = "{0}= (vazio)")
+  @CsvSource({"page,page.number.invalid", "size,page.size.invalid"})
+  @DisplayName("responde 400 com a chave da restrição quando page ou size vem presente e vazio")
+  void pageOuSizeVazioResponde400(
+    final String parameter,
+    final String message
+  ) throws Exception {
+    this.mockMvc.perform(get("/hotel").param(parameter, ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value(parameter))
+      .andExpect(jsonPath("$.data[0].message").value(message))
+      .andExpect(jsonPath("$.time").isString());
+
+    verifyNoInteractions(this.search);
+  }
+
   @Test
-  @DisplayName("trata page e size vazios como ausentes, do mesmo modo que os filtros vazios")
-  void parametrosVaziosContamComoAusentes() throws Exception {
+  @DisplayName("lista os dois parâmetros quando page e size vêm vazios juntos")
+  void pageESizeVaziosJuntosListamOsDois() throws Exception {
+    this.mockMvc.perform(get("/hotel").param("page", "").param("size", ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data.length()").value(2))
+      .andExpect(jsonPath("$.data[0].field").value("page"))
+      .andExpect(jsonPath("$.data[0].message").value("page.number.invalid"))
+      .andExpect(jsonPath("$.data[1].field").value("size"))
+      .andExpect(jsonPath("$.data[1].message").value("page.size.invalid"));
+
+    verifyNoInteractions(this.search);
+  }
+
+  @Test
+  @DisplayName("recusa só o parâmetro vazio quando o outro é válido")
+  void recusaApenasOParametroVazio() throws Exception {
+    this.mockMvc.perform(get("/hotel").param("page", "2").param("size", ""))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value("size"));
+
+    verifyNoInteractions(this.search);
+  }
+
+  @Test
+  @DisplayName("os filtros de texto vazios continuam contando como ausentes")
+  void filtrosDeTextoVaziosContamComoAusentes() throws Exception {
     when(this.search.execute(any(SearchHotelAvailableInput.class))).thenReturn(List.of());
 
-    this.mockMvc.perform(get("/hotel").param("page", "").param("size", ""))
+    this.mockMvc.perform(get("/hotel").param("name", "").param("city", "").param("state", "").param("category", ""))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.page").doesNotExist());
 

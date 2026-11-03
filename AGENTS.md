@@ -433,8 +433,9 @@ acrescenta ao `*ArchitectureTest` dele. No HTTP, o envelope de página é o de l
 
 - **`GET /hotel` tem dois modos, e é a requisição que escolhe.** Sem `page` nem `size`, responde a
   lista de sempre: sem ordem garantida e sem `page`. Com qualquer um dos dois, responde a página, e
-  o outro assume o padrão (`page` 0, `size` 20). `size` vai de 1 a 100. `?page=` vazio conta como
-  ausente, como os filtros de texto vazios; um `?page=` sozinho, portanto, devolve a lista.
+  o outro assume o padrão (`page` 0, `size` 20). `size` vai de 1 a 100. Ausente é diferente de
+  presente e vazio: `?page=` e `?size=` são 400 (ver abaixo), e não valem como se o parâmetro não
+  tivesse vindo. Os filtros de texto vazios (`?name=`) continuam contando como ausentes.
 - **A página é sem contagem total.** O `Slice` pede `size + 1` linhas e `hasNext` sai da sobra,
   sem `COUNT` por requisição (conferido no SQL: `order by ... offset ? rows fetch first ? rows only`).
   `Page.withTotal` e `totalElements`/`totalPages` existem no envelope e ainda não têm consumidor;
@@ -449,6 +450,14 @@ acrescenta ao `*ArchitectureTest` dele. No HTTP, o envelope de página é o de l
   Spring só avalia sozinho a anotação posta no parâmetro, e num `Optional<@Min Integer>` ela deixaria
   de valer sem aviso. O teto de 100 é do `GET /hotel` (`HotelController`), não do `PageRequest`, que
   só recusa o que não faz sentido (página negativa, tamanho menor que 1).
+- **`?page=` e `?size=` vazios são 400, com `page.number.invalid` e `page.size.invalid`**, a mesma
+  forma de `page=-1`. O Spring converte `""` em `null` para um `Integer` antes de a validação rodar, e
+  a validação não avalia `null`, então sem tratamento o vazio valeria como ausente e devolveria a
+  lista inteira. Um `@InitBinder` do `HotelController`, restrito a `page` e `size`, registra um
+  `PropertyEditor` que troca o vazio por `Integer.MIN_VALUE`, valor que o `@Min` recusa; assim a
+  violação sai pelo mesmo caminho das outras e junto com elas (`?page=&size=` lista os dois). Valor
+  que não é inteiro (`?page=abc`) segue outro caminho, o do tipo incompatível: 400 `request.invalid`,
+  sem `data`.
 - **Página além do fim é 200 com `data` vazio**, pelo mesmo motivo da busca sem resultado: zero
   itens é resposta válida, não ausência de recurso. Vale também para o `page` que não cabe no
   `int` do Spring Data JPA (`page × size` acima de `Integer.MAX_VALUE`, como `?page=2147483647`
