@@ -250,9 +250,9 @@ Regras que o código segue e que devem ser mantidas:
   duas, e o `RoomAvailabilityConcurrencyIT` prova isso contra o PostgreSQL. Tirar o
   `@Transactional` do listener não passa em silêncio — a consulta com `@Lock` lança
   `TransactionRequiredException`. A ocupação **soma `booking_room.quantity`**; contar linhas
-  trata 3 unidades como 1. O `application.yml` não define `concurrency`, e o Spring AMQP usa 1
-  consumidor por listener: a corrida só aparece com mais de uma réplica do `booking-service` ou
-  com a concorrência elevada, e é por isso que o e2e, que roda uma réplica, não a reproduz.
+  trata 3 unidades como 1. Como todo listener roda com no mínimo 3 consumidores (seção
+  *Falha no consumidor*), a corrida existe mesmo com uma só réplica; o e2e não a reproduz
+  porque o `SagaIT` envia um pedido por vez.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
@@ -364,6 +364,14 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   fila com `x-dead-letter-*` diferente dos que ela já tem (`PRECONDITION_FAILED`); o remédio
   é apagar a fila antes, e as mensagens em voo se perdem. Por isso o README documenta a
   remoção das seis filas no deploy que introduziu as DLQs.
+- **Todo listener consome com no mínimo 3 threads**: `spring.rabbitmq.listener.simple.concurrency: 3`
+  no `application.yml` de cada serviço, e o `ListenerConcurrencyTest` de cada um o guarda lendo o
+  arquivo real. Sem a chave o Spring AMQP usa 1 consumidor por listener. A convenção tem um
+  preço que quem escreve um handler precisa conhecer: **a fila deixa de ser processada em
+  ordem**, e o retry deixa de segurar as mensagens seguintes — enquanto uma espera o backoff, as
+  outras andam. Todo handler que lê, altera e grava o mesmo agregado tem de ser seguro sob
+  concorrência. O `booking-service` já é, pelo lock do quarto; o `customer-service` ainda não
+  (`UpdateCustomerBookingStatusUseCaseImpl` lê o pedido e grava sem lock nem `@Version`).
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real
