@@ -61,6 +61,9 @@ três seções, tabela de arquivos a modificar, passos de implementação e "Cen
 O padrão atual tem exatamente duas seções, `Critérios de Aceite` e `Nota Técnica`, e a #39
 o segue. Copiar uma issue antiga reproduz o formato que a skill existe para substituir.
 
+Tipo, área, prioridade, serviço, o prefixo do título e o milestone de épico seguem
+`docs/classificacao-de-issues.md`. A label `e2e` tem efeito sobre o CI e está lá também.
+
 ## Comandos
 
 O projeto fixa o `JDK 25.0.2` e o `Maven 3.9.11` em `mise.toml`. Execute `mise install`
