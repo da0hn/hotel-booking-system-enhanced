@@ -75,10 +75,13 @@ a faria aparecer em todo filtro e esconderia o que é específico de cada um. Is
 
 ## Épico, bloqueio e relações
 
-- **Épico = milestone.** O nome é o do épico, sem número de versão e sem data. A descrição
-  tem uma linha com o objetivo e o link da issue de design. O GitHub não o fecha sozinho: encerre-o
-  à mão quando todas as issues dele estiverem fechadas. Uma issue pertence a no máximo um milestone, o que combina com épico e é o motivo
-  de não usá-lo como tema.
+- **Épico = milestone.** Épico é o conjunto de issues que, fechadas, encerram uma entrega ou
+  um problema: a gestão de hotéis e quartos (com issue de design), a robustez da saga e o
+  contrato HTTP (sem ela). O nome é o do épico, sem número de versão e sem data. A descrição
+  tem uma linha com o objetivo e, havendo, o link da issue de design. O GitHub não o fecha
+  sozinho: encerre-o à mão quando todas as issues dele estiverem fechadas. Uma issue pertence
+  a no máximo um milestone, o que combina com épico e é o motivo de não usá-lo como balde de
+  tema sem fim (infra, qualidade): a issue avulsa fica sem milestone.
 - **Milestone não é release.** As versões `X.Y.Z` são branches e tags geradas pela
   pipeline (`.github/AGENTS.md`).
 - **A issue de design do épico** (guarda-chuva) continua como pai das filhas, por
