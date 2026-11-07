@@ -8,7 +8,9 @@ Monorepo Maven multi-módulo que simula o fluxo de reserva de quartos de hotel (
 `booking.com`) com 4 microsserviços Spring Boot + 1 módulo compartilhado. Origem: TCC de
 Engenharia da Computação (IFMT). Está em fase de **refatoração incremental**: as pendências
 conhecidas estão registradas como issues no GitHub, cada uma com critérios de aceite e nota
-técnica. Consulte-as antes de propor mudanças estruturais (`gh issue list`).
+técnica. Consulte-as antes de propor mudanças estruturais (`gh issue list`). Para ler as
+labels, o prefixo do título e o milestone delas, ou para classificar uma issue, consulte
+`docs/classificacao-de-issues.md`.
 
 O `README.md` documenta setup, portas, credenciais e a tabela de exchanges/filas. Não
 duplique esse conteúdo aqui.
@@ -60,6 +62,11 @@ existente: as mais antigas (como a #3, a #7, a #33 e a #35) seguem um formato le
 três seções, tabela de arquivos a modificar, passos de implementação e "Cenários de Teste".
 O padrão atual tem exatamente duas seções, `Critérios de Aceite` e `Nota Técnica`, e a #39
 o segue. Copiar uma issue antiga reproduz o formato que a skill existe para substituir.
+
+**Consulte `docs/classificacao-de-issues.md` sempre que criar, rotular, triar ou reclassificar
+uma issue**, e ao decidir se ela leva a label `e2e`. Tipo, área, prioridade, serviço, o
+prefixo do título e o milestone de épico seguem esse documento. A `e2e` tem efeito sobre o
+CI e está lá também.
 
 ## Comandos
 
