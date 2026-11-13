@@ -535,16 +535,27 @@ O que não se deduz do código:
 - **4xx loga em WARN, sem stacktrace; 5xx loga em ERROR, com stacktrace.** O stacktrace vai só
   para o log, nunca para o corpo. A consulta repetida de uma ordem que o `customer-service` ainda
   não processou gera 404 em sequência, e um stacktrace por tentativa enterraria o log.
-- **Um limite conhecido.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
-  declare `@NotEmpty` e `@Min`: as restrições existem e nunca são avaliadas na fronteira HTTP.
-  O 400 com lista de campos **de corpo** é, por isso, preventivo, provado por uma
-  `MethodArgumentNotValidException` construída e não por um request real, até a #10 ligar o
-  `@Valid`. O de **parâmetro de query** já é real: o `@Min`/`@Max` posto direto no
-  `@RequestParam` (ver *Paginação*) é avaliado pelo Spring e chega ao
-  `handleHandlerMethodValidationException` da base. Quem implementar a #10 encontra o item do
-  erro como `{field, message}`, em que
-  `message` é a chave declarada na restrição, e não o `{field, detail}` com texto livre do
-  exemplo daquela issue.
+- **O corpo de `POST /hotel/booking` e de `POST /hotel` é validado por Bean Validation.** Os dois
+  `@RequestBody` do `HotelController` levam `@Valid`, e as restrições dos DTOs (`BookingRoomInput`,
+  `BookRoomItemInput`, `RegisterHotelInput`, `RegisterHotelRoomInput`) respondem 400 `request.invalid`
+  com `data` = lista de `{field, message}`, em que `message` é uma chave de `ApplicationMessage`, e
+  **a mesma chave que o domínio usa para o mesmo campo** (`hotel.name.must.not.be.null-or-empty`, …):
+  o cliente vê a chave igual nas duas camadas e só o status muda (400 na entrada, 422 no domínio). As
+  restrições só exigem presença e faixa; o formato do CEP e as demais regras ficam no domínio, que
+  continua validando atrás delas. O 400 de parâmetro de query segue o mesmo caminho, pelo
+  `handleHandlerMethodValidationException` da base.
+- **Ordem das camadas num mesmo corpo:** primeiro a Bean Validation, que lista **todos** os campos
+  recusados (`request.invalid`); só se ela passa o caso de uso confere o formato dos ids
+  (`request.id.invalid`, um campo). Um corpo com `guests: 0` e `roomId` malformado responde,
+  portanto, `request.invalid`.
+- **A ordem dos itens de `data` não é garantida**: o Hibernate Validator devolve as violações num
+  `Set`, e o handler as lista como vêm. Teste e cliente comparam como conjunto. O campo de item de
+  `Set` é `rooms[].roomId`, sem índice; o de `List` leva o índice (`rooms[0].capacity`).
+- **A validação cruzada do período é a propriedade `checkOutAfterCheckIn`**, um `@AssertTrue` em
+  `BookingRoomInput.isCheckOutAfterCheckIn()` com `@JsonIgnore`. Ela é um erro de **campo**, de
+  propósito: o handler só lista `getFieldErrors()`, então uma constraint de classe (erro global)
+  sumiria da resposta sem aviso. Check-out igual ao check-in é recusado (estadia de 0 noites), e
+  `checkIn` aceita hoje (`@FutureOrPresent`).
 - **O formato do id é conferido no início do caso de uso HTTP, não nos value objects.** O
   `UuidFormat.requireValid(campo, valor)` lança `InvalidIdException`, que o `GlobalExceptionHandler`
   traduz em 400. Os value objects de id (`CustomerId.of(String)` e os outros) não servem para isso:
