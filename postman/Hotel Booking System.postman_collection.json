@@ -57,6 +57,36 @@
               ],
               "cookie": [],
               "body": "{\n  \"success\": false,\n  \"message\": \"customer.reservation-order.not.found\",\n  \"data\": null,\n  \"time\": \"16/10/2026 10:15:30\"\n}"
+            },
+            {
+              "name": "Id que não é UUID (400)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{customer_service}}/customers/abc/reservation-order/0ce32689-fd60-4af9-a857-9ec6cdf47cb1",
+                  "host": [
+                    "{{customer_service}}"
+                  ],
+                  "path": [
+                    "customers",
+                    "abc",
+                    "reservation-order",
+                    "0ce32689-fd60-4af9-a857-9ec6cdf47cb1"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"request.id.invalid\",\n  \"data\": [\n    {\n      \"field\": \"customerId\",\n      \"message\": \"request.id.invalid\"\n    }\n  ],\n  \"time\": \"05/11/2026 09:12:44\"\n}"
             }
           ]
         }

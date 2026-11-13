@@ -1,5 +1,6 @@
 package com.hotel.booking.system.hotel.service.core.domain.application.usecase;
 
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelOutput;
@@ -209,6 +210,60 @@ class RegisterHotelUseCaseImplTest {
       .existsLocalityById(Mockito.any(LocalityId.class));
     Mockito.verify(this.hotelRepository, Mockito.never())
       .register(Mockito.any(Hotel.class));
+  }
+
+  @Test
+  @DisplayName("Should refuse a categoryId that is not a UUID without querying any repository")
+  void test4() {
+    final var input = this.inputWith("abc", LOCALITY_ID);
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("categoryId"));
+
+    Mockito.verifyNoInteractions(this.hotelRepository, this.localityRepository);
+  }
+
+  @Test
+  @DisplayName("Should refuse a localityId that is not a UUID without querying any repository")
+  void test5() {
+    final var input = this.inputWith(CATEGORY_ID, "abc");
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("localityId"));
+
+    Mockito.verifyNoInteractions(this.hotelRepository, this.localityRepository);
+  }
+
+  @Test
+  @DisplayName("Should report only the first refused field when both ids are malformed")
+  void test6() {
+    final var input = this.inputWith("abc", "xyz");
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("categoryId"));
+  }
+
+  private RegisterHotelInput inputWith(final String categoryId, final String localityId) {
+    return RegisterHotelInput.builder()
+      .name("Pousada Portal")
+      .description("Pousada a 600 m do centro da cidade, com café-da-manhã e recepção 24 horas.")
+      .categoryId(categoryId)
+      .localityId(localityId)
+      .street("Av Perimetral, 766")
+      .cep("78195-000")
+      .rooms(List.of(
+        RegisterHotelRoomInput.builder()
+          .name("Quarto Duplo Superior")
+          .capacity(2)
+          .description("This double room has a tile/marble floor and air conditioning.")
+          .currentPrice(BigDecimal.valueOf(350))
+          .quantity(2)
+          .build()
+      ))
+      .build();
   }
 
 }

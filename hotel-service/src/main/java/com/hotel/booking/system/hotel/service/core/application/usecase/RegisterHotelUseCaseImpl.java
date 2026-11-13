@@ -1,6 +1,7 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
 import com.hotel.booking.system.commons.core.application.annotation.UseCase;
+import com.hotel.booking.system.commons.core.domain.valueobject.UuidFormat;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelOutput;
@@ -30,6 +31,8 @@ public class RegisterHotelUseCaseImpl implements RegisterHotelUseCase {
 
   @Override
   public RegisterHotelOutput execute(final RegisterHotelInput input) {
+    UuidFormat.requireValid("categoryId", input.categoryId());
+    UuidFormat.requireValid("localityId", input.localityId());
     final var hotel = this.hotelUseCaseMapper.registerHotelInputToHotel(input);
     this.validateCategoryId(hotel);
     this.validateLocality(hotel);

@@ -3,6 +3,7 @@ package com.hotel.booking.system.hotel.service.core.application.usecase;
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingInitiatedEvent;
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
@@ -538,6 +539,37 @@ class BookingRoomRequestUseCaseTest {
 
     Mockito.verify(this.bookingRoomRequestedPublisher, Mockito.times(1))
       .publish(Mockito.any(BookingRoomRequestedEvent.class));
+  }
+
+  @Test
+  @DisplayName("Should refuse a roomId that is not a UUID before querying rooms or publishing any event")
+  void test11() {
+    final var input = BookingRoomInput.builder()
+      .customerId(CUSTOMER_ID)
+      .checkIn(LocalDate.now().plusDays(1))
+      .checkOut(LocalDate.now().plusDays(5))
+      .guests(TOTAL_GUESTS)
+      .rooms(Set.of(
+        BookRoomItemInput.builder()
+          .roomId(ROOM_ID_1)
+          .roomQuantity(1)
+          .build(),
+        BookRoomItemInput.builder()
+          .roomId("abc")
+          .roomQuantity(1)
+          .build()
+      ))
+      .build();
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("rooms[].roomId"));
+
+    Mockito.verifyNoInteractions(
+      this.hotelRepository,
+      this.bookingRoomRequestedPublisher,
+      this.customerBookingRoomUpdatePublisher
+    );
   }
 
   private void stubAvailableRooms() {

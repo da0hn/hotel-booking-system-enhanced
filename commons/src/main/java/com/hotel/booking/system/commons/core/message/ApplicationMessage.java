@@ -46,6 +46,7 @@ public final class ApplicationMessage {
   public static final String PAGE_NUMBER_INVALID = "page.number.invalid";
   public static final String PAGE_SIZE_INVALID = "page.size.invalid";
   public static final String REQUEST_INVALID = "request.invalid";
+  public static final String REQUEST_ID_INVALID = "request.id.invalid";
   public static final String INTERNAL_SERVER_ERROR = "internal.server.error";
 
 
