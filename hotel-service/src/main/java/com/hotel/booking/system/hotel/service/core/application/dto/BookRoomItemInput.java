@@ -10,8 +10,8 @@ import lombok.Builder;
 public record BookRoomItemInput(
   @NotBlank(message = ApplicationMessage.HOTEL_ROOM_NOT_NULL)
   String roomId,
-  @NotNull(message = ApplicationMessage.HOTEL_ROOM_QUANTITY_NOT_NULL)
-  @Min(value = 1, message = ApplicationMessage.HOTEL_ROOM_QUANTITY_INVALID)
+  @NotNull(message = ApplicationMessage.BOOKING_ROOM_QUANTITY_INVALID)
+  @Min(value = 1, message = ApplicationMessage.BOOKING_ROOM_QUANTITY_INVALID)
   Integer roomQuantity
 ) {
 }

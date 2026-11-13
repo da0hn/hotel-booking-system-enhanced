@@ -551,6 +551,10 @@ O que não se deduz do código:
 - **A ordem dos itens de `data` não é garantida**: o Hibernate Validator devolve as violações num
   `Set`, e o handler as lista como vêm. Teste e cliente comparam como conjunto. O campo de item de
   `Set` é `rooms[].roomId`, sem índice; o de `List` leva o índice (`rooms[0].capacity`).
+- **`@Valid` não avalia elemento `null` de coleção.** `{"rooms":[null]}` passaria pela validação e
+  terminaria em NPE e 500, então o tipo do elemento leva `@NotNull` (`Set<@NotNull … BookRoomItemInput>`).
+  Coleção nova num DTO de entrada precisa dos dois: `@Valid` para validar o conteúdo e `@NotNull` no
+  elemento para barrar o `null`.
 - **A validação cruzada do período é a propriedade `checkOutAfterCheckIn`**, um `@AssertTrue` em
   `BookingRoomInput.isCheckOutAfterCheckIn()` com `@JsonIgnore`. Ela é um erro de **campo**, de
   propósito: o handler só lista `getFieldErrors()`, então uma constraint de classe (erro global)

@@ -41,7 +41,7 @@ public record BookingRoomInput(
   LocalDate checkOut,
   @Valid
   @NotEmpty(message = ApplicationMessage.HOTEL_BOOKING_ROOMS_INVALID)
-  Set<BookRoomItemInput> rooms
+  Set<@NotNull(message = ApplicationMessage.HOTEL_ROOM_NOT_NULL) BookRoomItemInput> rooms
 ) {
 
   /**

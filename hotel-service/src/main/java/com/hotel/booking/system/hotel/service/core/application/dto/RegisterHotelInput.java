@@ -4,6 +4,7 @@ import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
 
 import java.util.List;
@@ -29,6 +30,6 @@ public record RegisterHotelInput(
   String localityId,
   @Valid
   @NotEmpty(message = ApplicationMessage.HOTEL_ROOMS_INVALID)
-  List<RegisterHotelRoomInput> rooms
+  List<@NotNull(message = ApplicationMessage.HOTEL_ROOM_NOT_NULL) RegisterHotelRoomInput> rooms
 ) {
 }

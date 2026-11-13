@@ -217,6 +217,34 @@ class HttpErrorContractIT extends Specification {
     (body.data*.field as Set) == ['rooms[].roomId', 'rooms[].roomQuantity'] as Set
   }
 
+  def "elemento nulo em rooms responde 400, e não 500, porque @Valid não avalia null (issue #10)"() {
+    when:
+    def booking = post("${environment.hotelUrl()}/hotel/booking", JsonOutput.toJson([
+      customerId: CUSTOMER_ID,
+      hotelId   : HOTEL_ID,
+      guests    : 1,
+      checkIn   : '10/01/2030',
+      checkOut  : '13/01/2030',
+      rooms     : [null]
+    ]))
+    def register = post("${environment.hotelUrl()}/hotel", JsonOutput.toJson([
+      name       : 'Pousada Portal',
+      description: 'Pousada no centro da cidade',
+      categoryId : UUID.randomUUID(),
+      localityId : UUID.randomUUID(),
+      street     : 'Av Perimetral, 766',
+      cep        : '78195-000',
+      rooms      : [null]
+    ]))
+
+    then:
+    [booking, register].every {
+      def body = new JsonSlurper().parseText(it.body()) as Map
+      it.statusCode() == 400 && body.message == 'request.invalid' &&
+        body.data*.message == ['hotel.room.must.not.be.null']
+    }
+  }
+
   def "cadastro de hotel sem campos responde 400 listando os obrigatórios (issue #10)"() {
     when:
     def response = post("${environment.hotelUrl()}/hotel", '{}')

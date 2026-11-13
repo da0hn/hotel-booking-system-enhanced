@@ -116,9 +116,42 @@ class HotelControllerValidationTest {
       .andExpect(jsonPath("$.data[*].field", containsInAnyOrder("rooms[].roomId", "rooms[].roomQuantity")))
       .andExpect(jsonPath("$.data[?(@.field == 'rooms[].roomId')].message").value("hotel.room.must.not.be.null"))
       .andExpect(jsonPath("$.data[?(@.field == 'rooms[].roomQuantity')].message")
-        .value("hotel.room.quantity.must.not.be.zero-or-negative"));
+        .value("booking.room.quantity.invalid"));
 
     verifyNoInteractions(this.book);
+  }
+
+  @Test
+  @DisplayName("quantidade ausente no item da reserva usa a mesma chave da quantidade não positiva, como o domínio")
+  void quantidadeAusenteNoItemDaReserva() throws Exception {
+    this.booking(this.bookingWithRooms("""
+      [{"roomId":"%s"}]
+      """.formatted(ROOM_ID)))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.data[?(@.field == 'rooms[].roomQuantity')].message")
+        .value("booking.room.quantity.invalid"));
+  }
+
+  @Test
+  @DisplayName("elemento nulo em rooms da reserva é recusado, porque @Valid não avalia null")
+  void elementoNuloEmRoomsDaReserva() throws Exception {
+    this.booking(this.bookingWithRooms("[null]"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data[*].message", containsInAnyOrder("hotel.room.must.not.be.null")));
+
+    verifyNoInteractions(this.book);
+  }
+
+  @Test
+  @DisplayName("elemento nulo em rooms do cadastro é recusado, porque @Valid não avalia null")
+  void elementoNuloEmRoomsDoCadastro() throws Exception {
+    this.registerHotel(VALID_REGISTER.replaceFirst("\"rooms\":\\[.*]", "\"rooms\":[null]"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.message").value("request.invalid"))
+      .andExpect(jsonPath("$.data[*].message", containsInAnyOrder("hotel.room.must.not.be.null")));
+
+    verifyNoInteractions(this.register);
   }
 
   @Test
