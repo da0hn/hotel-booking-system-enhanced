@@ -8,6 +8,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservat
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
 import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
+import com.hotel.booking.system.commons.core.domain.valueobject.UuidFormat;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookRoomItemInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.BookingRoomInput;
@@ -56,6 +57,7 @@ public class BookingRoomRequestUseCaseImpl implements BookingRoomRequestUseCase 
 
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
+    input.rooms().forEach(room -> UuidFormat.requireValid("rooms[].roomId", room.roomId()));
     final var rooms = this.hotelRepository.findAllRoomsById(this.mapToRoomIds(input));
     this.validateRooms(input.rooms(), rooms);
     this.validateGuest(input, rooms);

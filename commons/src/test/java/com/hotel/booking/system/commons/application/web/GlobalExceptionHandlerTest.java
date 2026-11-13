@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.hotel.booking.system.commons.application.dto.ErrorResponse;
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.junit.jupiter.api.AfterEach;
@@ -281,6 +282,41 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  @DisplayName("responde 400 com request.id.invalid e o nome do campo quando um id não é um UUID")
+  void idMalformadoResponde400ComOCampoRecusado() throws Exception {
+    this.mockMvc.perform(get("/malformed-id"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.id.invalid"))
+      .andExpect(jsonPath("$.data.length()").value(1))
+      .andExpect(jsonPath("$.data[0].field").value("customerId"))
+      .andExpect(jsonPath("$.data[0].message").value("request.id.invalid"))
+      .andExpect(jsonPath("$.time").isString());
+  }
+
+  @Test
+  @DisplayName("registra o id malformado em WARN, sem stacktrace")
+  void idMalformadoVaiParaOLogEmWarnSemStacktrace() throws Exception {
+    this.mockMvc.perform(get("/malformed-id"));
+
+    assertThat(this.logs.list)
+      .singleElement()
+      .satisfies(event -> {
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getFormattedMessage()).contains("customerId");
+        assertThat(event.getThrowableProxy()).isNull();
+      });
+  }
+
+  @Test
+  @DisplayName("não promove a 400 uma IllegalArgumentException que não vem de id malformado")
+  void illegalArgumentInesperadaContinua500() throws Exception {
+    this.mockMvc.perform(get("/illegal-argument"))
+      .andExpect(status().isInternalServerError())
+      .andExpect(jsonPath("$.message").value("internal.server.error"));
+  }
+
+  @Test
   @DisplayName("responde 500 genérico, e não a mensagem do Spring, quando o framework falha do lado do servidor")
   void falhaDoFrameworkDoLadoDoServidorResponde500ComEnvelope() throws Exception {
     final var body = this.mockMvc.perform(get("/missing-path-variable"))
@@ -345,6 +381,16 @@ class GlobalExceptionHandlerTest {
     @GetMapping("/rule")
     String rule() {
       throw new RuleViolation("test.rule.violated");
+    }
+
+    @GetMapping("/malformed-id")
+    String malformedId() {
+      throw new InvalidIdException("customerId");
+    }
+
+    @GetMapping("/illegal-argument")
+    String illegalArgument() {
+      throw new IllegalArgumentException("Invalid UUID string: abc");
     }
 
     @GetMapping("/missing-path-variable")

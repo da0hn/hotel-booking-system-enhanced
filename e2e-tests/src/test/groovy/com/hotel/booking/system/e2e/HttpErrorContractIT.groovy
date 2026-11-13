@@ -112,6 +112,50 @@ class HttpErrorContractIT extends Specification {
     isErrorEnvelope(response, 'request.invalid')
   }
 
+  def "id do path que não é UUID responde 400 com request.id.invalid e só o primeiro campo recusado (issue #51)"() {
+    when:
+    def response = get("${environment.customerUrl()}/customers/${customerId}/reservation-order/${reservationOrderId}")
+
+    then:
+    isIdInvalidEnvelope(response, field)
+    !response.body().contains('not-a-uuid')
+
+    where:
+    customerId                | reservationOrderId        | field
+    'not-a-uuid'              | UUID.randomUUID()         | 'customerId'
+    UUID.randomUUID()         | 'not-a-uuid'              | 'reservationOrderId'
+    'not-a-uuid'              | 'not-a-uuid'              | 'customerId'
+  }
+
+  def "quarto do corpo que não é UUID responde 400, e não 500 (issue #51)"() {
+    when:
+    def response = bookRoom('not-a-uuid', 1)
+
+    then:
+    isIdInvalidEnvelope(response, 'rooms[].roomId')
+  }
+
+  def "categoria ou localidade do cadastro de hotel que não é UUID responde 400 (issue #51)"() {
+    when:
+    def response = post("${environment.hotelUrl()}/hotel", JsonOutput.toJson([
+      name       : 'Pousada Portal',
+      description: 'Pousada no centro da cidade',
+      categoryId : categoryId,
+      localityId : localityId,
+      street     : 'Av Perimetral, 766',
+      cep        : '78195-000',
+      rooms      : []
+    ]))
+
+    then:
+    isIdInvalidEnvelope(response, field)
+
+    where:
+    categoryId        | localityId        | field
+    'not-a-uuid'      | UUID.randomUUID() | 'categoryId'
+    UUID.randomUUID() | 'not-a-uuid'      | 'localityId'
+  }
+
   def "rota inexistente continua respondendo 404, e não 500, agora com o envelope"() {
     when:
     def response = get("${environment.hotelUrl()}/actuator/env")
@@ -220,6 +264,15 @@ class HttpErrorContractIT extends Specification {
     body.success == false &&
       body.message == message &&
       body.data == null &&
+      (body.time as String) ==~ /\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}/
+  }
+
+  private boolean isIdInvalidEnvelope(HttpResponse<String> response, String field) {
+    def body = new JsonSlurper().parseText(response.body()) as Map
+    response.statusCode() == 400 &&
+      body.success == false &&
+      body.message == 'request.id.invalid' &&
+      body.data == [[field: field, message: 'request.id.invalid']] &&
       (body.time as String) ==~ /\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}/
   }
 

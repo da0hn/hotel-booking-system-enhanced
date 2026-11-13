@@ -514,6 +514,7 @@ domínio do serviço, por `this.reject(status, exception)`.
 | Cliente ou ordem de reserva da URL não existem | 404 | a chave da exceção |
 | Regra de domínio violada (`HotelDomainException`, `CustomerDomainException`) | 422 | a chave da exceção |
 | Campos de entrada (corpo ou parâmetro de query) recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
+| Id (path ou corpo) que não é UUID | 400 | `request.id.invalid`, com `data` = `[{field, message}]` só do primeiro campo recusado |
 | Corpo ilegível, método não suportado, rota inexistente | o do Spring (400, 405, 404) | `request.invalid` |
 | Falha ao publicar o evento (`MessagePublishException`) | 503 | `hotel.booking.temporarily.unavailable` |
 | Qualquer outra exceção | 500 | `internal.server.error`, sem detalhe |
@@ -534,7 +535,7 @@ O que não se deduz do código:
 - **4xx loga em WARN, sem stacktrace; 5xx loga em ERROR, com stacktrace.** O stacktrace vai só
   para o log, nunca para o corpo. A consulta repetida de uma ordem que o `customer-service` ainda
   não processou gera 404 em sequência, e um stacktrace por tentativa enterraria o log.
-- **Dois limites conhecidos.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
+- **Um limite conhecido.** Nenhum controller usa `@Valid`, embora o `BookingRoomInput`
   declare `@NotEmpty` e `@Min`: as restrições existem e nunca são avaliadas na fronteira HTTP.
   O 400 com lista de campos **de corpo** é, por isso, preventivo, provado por uma
   `MethodArgumentNotValidException` construída e não por um request real, até a #10 ligar o
@@ -543,8 +544,20 @@ O que não se deduz do código:
   `handleHandlerMethodValidationException` da base. Quem implementar a #10 encontra o item do
   erro como `{field, message}`, em que
   `message` é a chave declarada na restrição, e não o `{field, detail}` com texto livre do
-  exemplo daquela issue. E um id malformado no path (`UUID.fromString` lança
-  `IllegalArgumentException`) continua respondendo 500.
+  exemplo daquela issue.
+- **O formato do id é conferido no início do caso de uso HTTP, não nos value objects.** O
+  `UuidFormat.requireValid(campo, valor)` lança `InvalidIdException`, que o `GlobalExceptionHandler`
+  traduz em 400. Os value objects de id (`CustomerId.of(String)` e os outros) não servem para isso:
+  os listeners também os usam, e eles não sabem o nome do campo que o `data` precisa listar. O caso de
+  uso confere seus ids **antes** de qualquer consulta ou publicação, então um `customerId` válido e
+  inexistente com um `reservationOrderId` malformado responde 400, e não 404. O `customerId` e o
+  `hotelId` do `POST /hotel/booking` ainda não são conferidos (#52). **Um endpoint novo que
+  receba id como texto precisa chamar o `UuidFormat`**: sem isso o `UUID.fromString` lança
+  `IllegalArgumentException` mais adiante e a resposta é 500. O handler não trata
+  `IllegalArgumentException` em geral, de propósito: uma inesperada continua 500.
+- **O campo de um id dentro de `rooms` é `rooms[].roomId`, sem índice**, porque `rooms` é um `Set` e a
+  ordem do cliente se perde na desserialização; um `rooms[0]` apontaria para o item errado. Com mais
+  de um id inválido na lista, o campo é o mesmo.
 
 ### Paginação
 

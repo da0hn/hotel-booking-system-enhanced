@@ -1,6 +1,7 @@
 package com.hotel.booking.system.hotel.service.application.web.advice;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.application.service.impl.HotelApplicationServiceImpl;
 import com.hotel.booking.system.hotel.service.application.web.controller.HotelController;
@@ -125,6 +126,20 @@ class HotelExceptionHandlerTest {
     this.mockMvc.perform(post("/hotel").contentType(MediaType.APPLICATION_JSON).content("{}"))
       .andExpect(status().isUnprocessableContent())
       .andExpect(jsonPath("$.message").value("hotel.category.not.found"));
+  }
+
+  @Test
+  @DisplayName("responde 400 com request.id.invalid e o campo recusado quando um id do corpo não é UUID")
+  void idMalformadoResponde400ComOCampoRecusado() throws Exception {
+    when(this.book.execute(any(BookingRoomInput.class)))
+      .thenThrow(new InvalidIdException("rooms[].roomId"));
+
+    this.mockMvc.perform(post("/hotel/booking").contentType(MediaType.APPLICATION_JSON).content(BOOKING_BODY))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.id.invalid"))
+      .andExpect(jsonPath("$.data[0].field").value("rooms[].roomId"))
+      .andExpect(jsonPath("$.data[0].message").value("request.id.invalid"));
   }
 
   @Test

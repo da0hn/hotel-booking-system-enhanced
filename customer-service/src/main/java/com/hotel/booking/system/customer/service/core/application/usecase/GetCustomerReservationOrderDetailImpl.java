@@ -3,6 +3,7 @@ package com.hotel.booking.system.customer.service.core.application.usecase;
 import com.hotel.booking.system.commons.core.application.annotation.UseCase;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerId;
 import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
+import com.hotel.booking.system.commons.core.domain.valueobject.UuidFormat;
 import com.hotel.booking.system.customer.service.core.application.dto.ReservationOrderDetailInput;
 import com.hotel.booking.system.customer.service.core.application.dto.ReservationOrderDetailOutput;
 import com.hotel.booking.system.customer.service.core.ports.api.mapper.CustomerUseCaseMapper;
@@ -29,6 +30,8 @@ public class GetCustomerReservationOrderDetailImpl implements GetCustomerReserva
 
   @Override
   public ReservationOrderDetailOutput execute(final ReservationOrderDetailInput input) {
+    UuidFormat.requireValid("customerId", input.customerId());
+    UuidFormat.requireValid("reservationOrderId", input.reservationOrderId());
     final var customer = this.customerRepository.findById(CustomerId.of(input.customerId()));
     final var reservationOrder = this.reservationOrderRepository.findById(ReservationOrderId.of(input.reservationOrderId()));
     return this.customerUseCaseMapper.reservationOrderToReservationOrderDetailOutput(reservationOrder, customer);

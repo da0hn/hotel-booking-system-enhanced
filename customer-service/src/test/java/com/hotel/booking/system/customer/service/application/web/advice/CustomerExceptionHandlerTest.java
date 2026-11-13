@@ -1,5 +1,6 @@
 package com.hotel.booking.system.customer.service.application.web.advice;
 
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.customer.service.application.service.CustomerApplicationService;
@@ -79,6 +80,20 @@ class CustomerExceptionHandlerTest {
       .andExpect(status().isUnprocessableContent())
       .andExpect(jsonPath("$.success").value(false))
       .andExpect(jsonPath("$.message").value("customer.reservation-order.status.invalid-state"));
+  }
+
+  @Test
+  @DisplayName("responde 400 com request.id.invalid e o campo recusado quando um id do path não é UUID")
+  void idMalformadoResponde400() throws Exception {
+    when(this.service.getCustomerReservationOrderDetail("abc", "xyz"))
+      .thenThrow(new InvalidIdException("customerId"));
+
+    this.mockMvc.perform(get(URL, "abc", "xyz"))
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.success").value(false))
+      .andExpect(jsonPath("$.message").value("request.id.invalid"))
+      .andExpect(jsonPath("$.data[0].field").value("customerId"))
+      .andExpect(jsonPath("$.data[0].message").value("request.id.invalid"));
   }
 
   @Test

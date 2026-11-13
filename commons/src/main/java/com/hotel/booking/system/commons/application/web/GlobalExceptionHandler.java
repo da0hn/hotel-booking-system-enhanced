@@ -2,6 +2,7 @@ package com.hotel.booking.system.commons.application.web;
 
 import com.hotel.booking.system.commons.application.dto.ErrorResponse;
 import com.hotel.booking.system.commons.application.dto.impl.ApiErrorResponse;
+import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -17,6 +18,7 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -70,6 +72,27 @@ public abstract class GlobalExceptionHandler extends ResponseEntityExceptionHand
     return ResponseEntity
       .status(status)
       .body(ApiErrorResponse.of(exception.getMessage()));
+  }
+
+  /**
+   * Responde {@code 400} ao id que não tem o formato de UUID. A {@code message} e o item do
+   * {@code data} levam a chave {@link ApplicationMessage#REQUEST_ID_INVALID}, e o {@code data} nomeia só
+   * o primeiro campo recusado: quem valida para no primeiro.
+   *
+   * <p>Fica separado do {@link #handleUnexpected} porque uma {@code IllegalArgumentException} qualquer
+   * continua sendo {@code 500}. O log não leva o valor enviado, só o campo, nem o stacktrace.</p>
+   */
+  @ExceptionHandler(InvalidIdException.class)
+  public ResponseEntity<ErrorResponse<List<ApiErrorResponse.FieldViolation>>> handleInvalidId(
+    final InvalidIdException exception
+  ) {
+    log.warn("Request rejected with status {}: malformed id in field {}", HttpStatus.BAD_REQUEST.value(), exception.getField());
+    return ResponseEntity
+      .status(HttpStatus.BAD_REQUEST)
+      .body(ApiErrorResponse.of(
+        List.of(new ApiErrorResponse.FieldViolation(exception.getField(), ApplicationMessage.REQUEST_ID_INVALID)),
+        ApplicationMessage.REQUEST_ID_INVALID
+      ));
   }
 
   /**
