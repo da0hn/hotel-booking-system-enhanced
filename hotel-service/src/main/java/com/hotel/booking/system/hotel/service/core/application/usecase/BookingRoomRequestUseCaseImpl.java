@@ -57,6 +57,8 @@ public class BookingRoomRequestUseCaseImpl implements BookingRoomRequestUseCase 
 
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
+    UuidFormat.requireValid("customerId", input.customerId());
+    UuidFormat.requireValid("hotelId", input.hotelId());
     input.rooms().forEach(room -> UuidFormat.requireValid("rooms[].roomId", room.roomId()));
     final var rooms = this.hotelRepository.findAllRoomsById(this.mapToRoomIds(input));
     this.validateRooms(input.rooms(), rooms);

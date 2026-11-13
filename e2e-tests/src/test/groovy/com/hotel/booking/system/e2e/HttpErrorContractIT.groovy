@@ -135,6 +135,28 @@ class HttpErrorContractIT extends Specification {
     isIdInvalidEnvelope(response, 'rooms[].roomId')
   }
 
+  def "cliente ou hotel do corpo da reserva que não é UUID responde 400, e não 200 com a mensagem na DLQ (issue #52)"() {
+    when:
+    def response = post("${environment.hotelUrl()}/hotel/booking", JsonOutput.toJson([
+      customerId: customerId,
+      hotelId   : hotelId,
+      guests    : 1,
+      checkIn   : '10/01/2030',
+      checkOut  : '13/01/2030',
+      rooms     : [[roomId: KING_ROOM_ID, roomQuantity: 1]]
+    ]))
+
+    then:
+    isIdInvalidEnvelope(response, field)
+    !response.body().contains('not-a-uuid')
+
+    where:
+    customerId    | hotelId       | field
+    'not-a-uuid'  | HOTEL_ID      | 'customerId'
+    CUSTOMER_ID   | 'not-a-uuid'  | 'hotelId'
+    'not-a-uuid'  | 'not-a-uuid'  | 'customerId'
+  }
+
   def "categoria ou localidade do cadastro de hotel que não é UUID responde 400 (issue #51)"() {
     when:
     def response = post("${environment.hotelUrl()}/hotel", JsonOutput.toJson([
