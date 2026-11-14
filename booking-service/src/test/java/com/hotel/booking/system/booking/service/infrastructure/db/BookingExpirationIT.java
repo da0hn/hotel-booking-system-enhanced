@@ -130,7 +130,7 @@ class BookingExpirationIT extends AbstractDatabaseIT {
       .contains("BookingRoomExpiredEvent")
       .contains(BookingExpirationScheduler.EXPIRED_MESSAGE)
       .contains(order.toString());
-    assertThat(this.jpa.findByRoomIdAndPeriod(ROOM.getValue(), CHECK_IN, CHECK_OUT)).isEmpty();
+    assertThat(this.jpa.sumOccupiedUnits(java.util.List.of(ROOM.getValue()), CHECK_IN, CHECK_OUT)).isEmpty();
 
     final var novo = this.novaReserva();
     final var falhas = this.transaction.execute(status ->

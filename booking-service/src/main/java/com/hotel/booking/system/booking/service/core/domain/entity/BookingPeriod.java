@@ -51,19 +51,17 @@ public class BookingPeriod {
     }
   }
 
+  /**
+   * Sobreposição estrita, a única definição do sistema: o check-out de um período no mesmo dia
+   * do check-in do outro não conflita. A consulta de ocupação repete estas duas comparações e
+   * não pode usar outra.
+   */
+  public boolean overlaps(final BookingPeriod other) {
+    return this.checkIn.isBefore(other.checkOut) && this.checkOut.isAfter(other.checkIn);
+  }
+
   public boolean isContainedIn(final BookingPeriod other) {
-    final var containsOtherPeriod = this.checkIn.isBefore(other.checkIn) && this.checkOut.isAfter(other.checkOut);
-    final var isTotallyContained = this.checkIn.isAfter(other.checkIn) && this.checkOut.isBefore(other.checkOut);
-    final var isEqualCheckOut = this.checkOut.isEqual(other.checkOut);
-    final var isEqualCheckIn = this.checkIn.isEqual(other.checkIn);
-    final var isPartiallyContainedByCheckIn = this.checkIn.isAfter(other.checkIn) && this.checkIn.isBefore(other.checkOut);
-    final var isPartiallyContainedByCheckOut = this.checkOut.isAfter(other.checkIn) && this.checkOut.isBefore(other.checkOut);
-    return containsOtherPeriod
-      || isTotallyContained
-      || isPartiallyContainedByCheckIn
-      || isPartiallyContainedByCheckOut
-      || isEqualCheckIn
-      || isEqualCheckOut;
+    return this.overlaps(other);
   }
 
 

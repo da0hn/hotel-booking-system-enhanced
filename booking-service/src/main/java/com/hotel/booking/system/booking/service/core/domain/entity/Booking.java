@@ -106,10 +106,6 @@ public class Booking extends AbstractDomainEntity<BookingId> {
     return this.bookingPeriod;
   }
 
-  public boolean isBookingPeriodContainedIn(final BookingPeriod period) {
-    return this.bookingPeriod.isContainedIn(period);
-  }
-
   public CustomerId getCustomerId() {
     return this.customerId;
   }

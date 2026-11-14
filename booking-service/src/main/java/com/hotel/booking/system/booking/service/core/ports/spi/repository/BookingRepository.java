@@ -6,12 +6,19 @@ import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrder
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public interface BookingRepository {
 
-  List<Booking> findBookingByRoomIdAndPeriod(RoomId roomId, BookingPeriod bookingPeriod);
+  /**
+   * Soma das unidades ocupadas de cada quarto, numa consulta só. Quarto sem linha não entra no
+   * mapa e vale zero. A sobreposição é a de {@code BookingPeriod.overlaps}: check-out no dia do
+   * check-in seguinte não conta.
+   */
+  Map<RoomId, Integer> sumOccupiedUnits(Collection<RoomId> roomIds, BookingPeriod bookingPeriod);
 
   /**
    * Reservas {@code PENDING} criadas antes de {@code deadline}, travadas com

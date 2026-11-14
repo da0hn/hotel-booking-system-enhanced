@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -72,15 +71,19 @@ class VerifyRoomAvailabilityTest {
     when(this.rooms.lockAllByRoomId(any())).thenReturn(List.of(this.roomWithQuantity(this.roomId, quantity)));
   }
 
-  private void givenExisting(final Booking... existing) {
-    when(this.bookings.findBookingByRoomIdAndPeriod(any(), any())).thenReturn(List.of(existing));
+  private void givenOccupied(final int units) {
+    if (units == 0) {
+      when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of());
+      return;
+    }
+    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of(this.roomId, units));
   }
 
   @Test
   @DisplayName("aceita quando ainda sobra quarto no período")
   void aceitaQuandoSobraQuarto() {
     this.givenRoomWithQuantity(5);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 1));
+    this.givenOccupied(1);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
@@ -91,7 +94,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("aceita quando o check-in novo é o check-out de outra reserva")
   void aceitaQuandoCheckInNovoEOCheckOutDeOutraReserva() {
     this.givenRoomWithQuantity(1);
-    this.givenExisting(this.booking(this.roomId, period(10, 12), BookingStatus.CONFIRMED, 1));
+    this.givenOccupied(0);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(12, 14), BookingStatus.PENDING, 1));
 
@@ -102,7 +105,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("ignora reservas canceladas")
   void ignoraReservasCanceladas() {
     this.givenRoomWithQuantity(1);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.CANCELED, 1));
+    this.givenOccupied(0);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
@@ -113,7 +116,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("aceita 3 + 2 unidades num quarto de 5")
   void aceitaQuandoAsUnidadesSomamExatamenteOTotal() {
     this.givenRoomWithQuantity(5);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 3));
+    this.givenOccupied(3);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 2));
 
@@ -124,7 +127,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("rejeita quando o último quarto já está ocupado")
   void rejeitaQuandoUltimoQuartoEstaOcupado() {
     this.givenRoomWithQuantity(1);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
+    this.givenOccupied(1);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
@@ -135,7 +138,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("reconhece a reserva existente inteiramente contida no período pedido")
   void reconheceReservaExistenteContidaNoPeriodoPedido() {
     this.givenRoomWithQuantity(1);
-    this.givenExisting(this.booking(this.roomId, period(11, 12), BookingStatus.CONFIRMED, 1));
+    this.givenOccupied(1);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
@@ -150,9 +153,7 @@ class VerifyRoomAvailabilityTest {
       this.roomWithQuantity(this.roomId, 1),
       this.roomWithQuantity(free, 1)
     ));
-    when(this.bookings.findBookingByRoomIdAndPeriod(this.roomId, period(10, 13)))
-      .thenReturn(List.of(this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 1)));
-    when(this.bookings.findBookingByRoomIdAndPeriod(free, period(10, 13))).thenReturn(List.of());
+    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of(this.roomId, 1));
     final var requested = Booking.builder()
       .bookingPeriod(period(10, 13))
       .status(BookingStatus.PENDING)
@@ -171,7 +172,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("soma as unidades de duas linhas do mesmo quarto no pedido")
   void somaAsLinhasDoMesmoQuartoNoPedido() {
     this.givenRoomWithQuantity(5);
-    this.givenExisting();
+    this.givenOccupied(0);
     final var duasLinhas = Booking.builder()
       .bookingPeriod(period(10, 13))
       .status(BookingStatus.PENDING)
@@ -190,7 +191,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("não quebra com linha sem quantidade: quem a recusa é o BookingInitializer")
   void naoQuebraComLinhaSemQuantidade() {
     this.givenRoomWithQuantity(1);
-    this.givenExisting();
+    this.givenOccupied(0);
     final var semQuantidade = Booking.builder()
       .bookingPeriod(period(10, 13))
       .status(BookingStatus.PENDING)
@@ -206,7 +207,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("rejeita pedido maior que o total de unidades do quarto")
   void rejeitaPedidoMaiorQueOTotalDoQuarto() {
     this.givenRoomWithQuantity(5);
-    this.givenExisting();
+    this.givenOccupied(0);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 6));
 
@@ -217,7 +218,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("soma as unidades de cada reserva ao contar a ocupação")
   void somaAsUnidadesDeCadaReserva() {
     this.givenRoomWithQuantity(3);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 3));
+    this.givenOccupied(3);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
@@ -228,7 +229,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("rejeita pedido que ultrapassa o que sobrou do quarto")
   void rejeitaPedidoQueUltrapassaOQueSobrou() {
     this.givenRoomWithQuantity(5);
-    this.givenExisting(this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 3));
+    this.givenOccupied(3);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 3));
 
@@ -239,10 +240,7 @@ class VerifyRoomAvailabilityTest {
   @DisplayName("continua rejeitando quando o quarto já está em overbooking")
   void continuaRejeitandoQuandoJaHaOverbooking() {
     this.givenRoomWithQuantity(5);
-    final var overbooked = IntStream.range(0, 6)
-      .mapToObj(i -> this.booking(this.roomId, period(10, 13), BookingStatus.CONFIRMED, 1))
-      .toArray(Booking[]::new);
-    this.givenExisting(overbooked);
+    this.givenOccupied(6);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 

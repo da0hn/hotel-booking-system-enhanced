@@ -11,7 +11,10 @@ import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -24,15 +27,20 @@ public class BookingRepositoryAdapter implements BookingRepository {
   private final BookingDatabaseMapper bookingDatabaseMapper;
 
   @Override
-  public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
-    final var bookings = this.bookingJpaRepository.findByRoomIdAndPeriod(
-      roomId.getValue(),
+  public Map<RoomId, Integer> sumOccupiedUnits(final Collection<RoomId> roomIds, final BookingPeriod bookingPeriod) {
+    if (roomIds.isEmpty()) {
+      return Map.of();
+    }
+    final var rows = this.bookingJpaRepository.sumOccupiedUnits(
+      roomIds.stream().map(RoomId::getValue).toList(),
       bookingPeriod.getCheckIn(),
       bookingPeriod.getCheckOut()
     );
-    return bookings.stream()
-      .map(this.bookingDatabaseMapper::bookingEntityToBooking)
-      .collect(Collectors.toList());
+    final var occupied = new HashMap<RoomId, Integer>();
+    for (final var row : rows) {
+      occupied.put(RoomId.of((UUID) row[0]), ((Number) row[1]).intValue());
+    }
+    return occupied;
   }
 
   @Override

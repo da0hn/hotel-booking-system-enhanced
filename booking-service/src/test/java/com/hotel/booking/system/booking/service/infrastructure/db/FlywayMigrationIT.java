@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012");
   }
 
   @Test
@@ -295,6 +295,59 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(processadoEm).isNotNull();
+  }
+
+  @Test
+  @DisplayName("indexa a linha de reserva pelo quarto")
+  void indexaLinhaDeReservaPeloQuarto() {
+    final var total = this.entityManager
+      .createNativeQuery("select count(*) from pg_indexes where indexname = 'booking_room_room_id_idx'")
+      .getSingleResult();
+
+    assertThat(((Number) total).longValue()).isEqualTo(1L);
+  }
+
+  @ParameterizedTest(name = "quantity = {0}")
+  @DisplayName("recusa quantidade zero ou negativa na linha de reserva")
+  @org.junit.jupiter.params.provider.ValueSource(ints = {0, -1})
+  void recusaQuantidadeInvalida(final int quantity) {
+    final var bookingId = UUID.randomUUID().toString();
+    this.entityManager.createNativeQuery("""
+      insert into booking (id, customer_id, reservation_order_id, check_in, check_out, status, total_price)
+      values (:id, :cliente, :pedido, '2044-06-01', '2044-06-03', 'PENDING', 10)
+      """)
+      .setParameter("id", bookingId)
+      .setParameter("cliente", UUID.randomUUID().toString())
+      .setParameter("pedido", UUID.randomUUID().toString())
+      .executeUpdate();
+
+    assertThatThrownBy(() -> this.entityManager.createNativeQuery("""
+      insert into booking_room (id, room_id, booking_id, price, quantity)
+      values (:id, :room, :booking, 10, :quantity)
+      """)
+      .setParameter("id", UUID.randomUUID().toString())
+      .setParameter("room", QUARTO_TRIPLO_DELUXE)
+      .setParameter("booking", bookingId)
+      .setParameter("quantity", quantity)
+      .executeUpdate())
+      .hasStackTraceContaining("booking_room_quantity_ck");
+  }
+
+  @ParameterizedTest(name = "check-out {0}")
+  @DisplayName("recusa check-out igual ou anterior ao check-in")
+  @org.junit.jupiter.params.provider.CsvSource({"2044-07-01,2044-07-01", "2044-07-02,2044-07-01"})
+  void recusaPeriodoInvalido(final String checkIn, final String checkOut) {
+    assertThatThrownBy(() -> this.entityManager.createNativeQuery("""
+      insert into booking (id, customer_id, reservation_order_id, check_in, check_out, status, total_price)
+      values (:id, :cliente, :pedido, cast(:checkIn as date), cast(:checkOut as date), 'PENDING', 10)
+      """)
+      .setParameter("id", UUID.randomUUID().toString())
+      .setParameter("cliente", UUID.randomUUID().toString())
+      .setParameter("pedido", UUID.randomUUID().toString())
+      .setParameter("checkIn", checkIn)
+      .setParameter("checkOut", checkOut)
+      .executeUpdate())
+      .hasStackTraceContaining("booking_period_ck");
   }
 
   private void inserirReservaDoPedido(final String pedido) {

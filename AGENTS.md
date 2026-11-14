@@ -293,6 +293,8 @@ Regras que o código segue e que devem ser mantidas:
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
   **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
   transação; o confirm do broker é do relay, depois do commit. Ainda não há `lock_timeout`.
+  A ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
+  `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
