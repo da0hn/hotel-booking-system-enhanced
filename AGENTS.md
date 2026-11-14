@@ -550,8 +550,10 @@ O que não se deduz do código:
   traduz em 400. Os value objects de id (`CustomerId.of(String)` e os outros) não servem para isso:
   os listeners também os usam, e eles não sabem o nome do campo que o `data` precisa listar. O caso de
   uso confere seus ids **antes** de qualquer consulta ou publicação, então um `customerId` válido e
-  inexistente com um `reservationOrderId` malformado responde 400, e não 404. O `customerId` e o
-  `hotelId` do `POST /hotel/booking` ainda não são conferidos (#52). **Um endpoint novo que
+  inexistente com um `reservationOrderId` malformado responde 400, e não 404. No
+  `POST /hotel/booking` isso inclui o `customerId` e o `hotelId`: antes eles seguiam como texto para os
+  eventos, a resposta era 200 e os consumidores mandavam a mensagem para a DLQ. Um `hotelId` ausente
+  também é recusado. **Um endpoint novo que
   receba id como texto precisa chamar o `UuidFormat`**: sem isso o `UUID.fromString` lança
   `IllegalArgumentException` mais adiante e a resposta é 500. O handler não trata
   `IllegalArgumentException` em geral, de propósito: uma inesperada continua 500.

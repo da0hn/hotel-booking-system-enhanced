@@ -84,7 +84,7 @@ class HotelRepositoryAdapterIT extends AbstractDatabaseIT {
     final var customer = mock(CustomerBookingRoomStatusUpdatedPublisher.class);
     final var booking = mock(BookingRoomRequestedPublisher.class);
     final var reservation = new BookingRoomRequestUseCaseImpl(this.hotels, customer, booking).execute(
-      BookingRoomInput.builder().customerId("customer").hotelId(output.hotelId()).guests(2)
+      BookingRoomInput.builder().customerId(java.util.UUID.randomUUID().toString()).hotelId(output.hotelId()).guests(2)
         .rooms(java.util.Set.of(new BookRoomItemInput(output.roomsId().getFirst(), 1))).build());
     assertThat(reservation.reservationOrderId()).isNotNull();
     verify(booking).publish(any());

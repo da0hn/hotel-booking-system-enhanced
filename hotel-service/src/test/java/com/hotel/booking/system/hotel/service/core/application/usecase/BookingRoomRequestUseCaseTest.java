@@ -56,6 +56,8 @@ class BookingRoomRequestUseCaseTest {
 
   private static final String CUSTOMER_ID = "4daa2569-3012-455c-9ded-291b45118810";
 
+  private static final String HOTEL_ID = "b69b768f-32d8-4c70-a3ef-b5ace438c5e7";
+
   private BookingRoomRequestUseCase sut;
 
   @Mock
@@ -100,6 +102,7 @@ class BookingRoomRequestUseCaseTest {
     final var output = this.sut.execute(
       BookingRoomInput.builder()
         .customerId(CUSTOMER_ID)
+        .hotelId(HOTEL_ID)
         .checkIn(LocalDate.now().minusDays(10))
         .checkOut(LocalDate.now().plusDays(5))
         .guests(TOTAL_GUESTS)
@@ -148,6 +151,7 @@ class BookingRoomRequestUseCaseTest {
 
     final var input = BookingRoomInput.builder()
       .customerId(CUSTOMER_ID)
+      .hotelId(HOTEL_ID)
       .checkIn(LocalDate.now().minusDays(10))
       .checkOut(LocalDate.now().plusDays(5))
       .guests(5)
@@ -190,6 +194,7 @@ class BookingRoomRequestUseCaseTest {
 
     final var input = BookingRoomInput.builder()
       .customerId(CUSTOMER_ID)
+      .hotelId(HOTEL_ID)
       .checkIn(LocalDate.now().minusDays(10))
       .checkOut(LocalDate.now().plusDays(5))
       .guests(TOTAL_GUESTS)
@@ -239,6 +244,7 @@ class BookingRoomRequestUseCaseTest {
     final var output = this.sut.execute(
       BookingRoomInput.builder()
         .customerId(CUSTOMER_ID)
+        .hotelId(HOTEL_ID)
         .checkIn(LocalDate.now().minusDays(10))
         .checkOut(LocalDate.now().plusDays(5))
         .guests(TOTAL_GUESTS)
@@ -295,6 +301,7 @@ class BookingRoomRequestUseCaseTest {
 
     final var input = BookingRoomInput.builder()
       .customerId(CUSTOMER_ID)
+      .hotelId(HOTEL_ID)
       .checkIn(LocalDate.now().minusDays(10))
       .checkOut(LocalDate.now().plusDays(5))
       .guests(5)
@@ -345,6 +352,7 @@ class BookingRoomRequestUseCaseTest {
     final var output = this.sut.execute(
       BookingRoomInput.builder()
         .customerId(CUSTOMER_ID)
+        .hotelId(HOTEL_ID)
         .checkIn(LocalDate.now().minusDays(10))
         .checkOut(LocalDate.now().plusDays(5))
         .guests(TOTAL_GUESTS)
@@ -402,6 +410,7 @@ class BookingRoomRequestUseCaseTest {
     this.sut.execute(
       BookingRoomInput.builder()
         .customerId(CUSTOMER_ID)
+        .hotelId(HOTEL_ID)
         .checkIn(LocalDate.now().minusDays(10))
         .checkOut(LocalDate.now().plusDays(5))
         .guests(TOTAL_GUESTS)
@@ -464,6 +473,7 @@ class BookingRoomRequestUseCaseTest {
     this.sut.execute(
       BookingRoomInput.builder()
         .customerId(CUSTOMER_ID)
+        .hotelId(HOTEL_ID)
         .checkIn(LocalDate.now().minusDays(10))
         .checkOut(LocalDate.now().plusDays(5))
         .guests(TOTAL_GUESTS)
@@ -546,6 +556,7 @@ class BookingRoomRequestUseCaseTest {
   void test11() {
     final var input = BookingRoomInput.builder()
       .customerId(CUSTOMER_ID)
+      .hotelId(HOTEL_ID)
       .checkIn(LocalDate.now().plusDays(1))
       .checkOut(LocalDate.now().plusDays(5))
       .guests(TOTAL_GUESTS)
@@ -572,6 +583,74 @@ class BookingRoomRequestUseCaseTest {
     );
   }
 
+  @Test
+  @DisplayName("Should refuse a customerId that is not a UUID without publishing any event")
+  void test12() {
+    final var input = this.inputWithIds("abc", HOTEL_ID);
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("customerId"));
+
+    Mockito.verifyNoInteractions(
+      this.hotelRepository,
+      this.bookingRoomRequestedPublisher,
+      this.customerBookingRoomUpdatePublisher
+    );
+  }
+
+  @Test
+  @DisplayName("Should refuse a hotelId that is not a UUID without publishing any event")
+  void test13() {
+    final var input = this.inputWithIds(CUSTOMER_ID, "abc");
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("hotelId"));
+
+    Mockito.verifyNoInteractions(
+      this.hotelRepository,
+      this.bookingRoomRequestedPublisher,
+      this.customerBookingRoomUpdatePublisher
+    );
+  }
+
+  @Test
+  @DisplayName("Should refuse a missing hotelId, which used to be published as null")
+  void test14() {
+    final var input = this.inputWithIds(CUSTOMER_ID, null);
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("hotelId"));
+  }
+
+  @Test
+  @DisplayName("Should report only the first refused field, in the order of the request body")
+  void test15() {
+    final var input = this.inputWithIds("abc", "xyz");
+
+    Assertions.assertThatThrownBy(() -> this.sut.execute(input))
+      .isInstanceOfSatisfying(InvalidIdException.class, exception ->
+        Assertions.assertThat(exception.getField()).isEqualTo("customerId"));
+  }
+
+  private BookingRoomInput inputWithIds(final String customerId, final String hotelId) {
+    return BookingRoomInput.builder()
+      .customerId(customerId)
+      .hotelId(hotelId)
+      .checkIn(LocalDate.now().plusDays(1))
+      .checkOut(LocalDate.now().plusDays(5))
+      .guests(TOTAL_GUESTS)
+      .rooms(Set.of(
+        BookRoomItemInput.builder()
+          .roomId(ROOM_ID_1)
+          .roomQuantity(1)
+          .build()
+      ))
+      .build();
+  }
+
   private void stubAvailableRooms() {
     Mockito.doReturn(Rooms.of(
         Room.builder()
@@ -594,6 +673,7 @@ class BookingRoomRequestUseCaseTest {
   private BookingRoomInput validInput() {
     return BookingRoomInput.builder()
       .customerId(CUSTOMER_ID)
+      .hotelId(HOTEL_ID)
       .checkIn(LocalDate.now().minusDays(10))
       .checkOut(LocalDate.now().plusDays(5))
       .guests(TOTAL_GUESTS)
