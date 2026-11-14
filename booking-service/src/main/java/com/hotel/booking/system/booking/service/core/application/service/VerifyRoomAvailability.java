@@ -30,11 +30,9 @@ import java.util.stream.Collectors;
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
  *
  * <p><strong>O lock tem custo, e o teto dele não está no nosso código.</strong> Ele só é solto no
- * commit do listener, e até lá a mesma transação ainda grava a reserva e publica o evento de
- * resposta esperando o confirm do broker: até 5 s por tentativa, em até 3 tentativas, cada uma
- * numa transação própria. Com o broker saudável isso leva milissegundos; com ele lento, cada
- * pedido do mesmo quarto espera o anterior, e não há {@code lock_timeout} que limite a espera.
- * Publicar só depois do commit, que encurtaria a seção crítica, depende do Outbox (#35).</p>
+ * commit do listener. A resposta da reserva entra no outbox nessa mesma transação; o confirm do
+ * broker acontece no relay, depois do commit, então o lock não espera o broker. Ainda não há
+ * {@code lock_timeout}: com outro pedido segurando o quarto, a espera segue sem limite.</p>
  */
 @Slf4j
 @DomainService

@@ -81,6 +81,7 @@ class DeadLetterConfigurationTest {
       .withBean(JsonMapper.class, () -> JsonMapper.builder().build())
       .withBean(RabbitTemplate.class, () -> mock(RabbitTemplate.class))
       .withBean(JdbcClient.class, () -> mock(JdbcClient.class))
+      .withBean(org.springframework.transaction.PlatformTransactionManager.class, () -> mock(org.springframework.transaction.PlatformTransactionManager.class))
       .run(context -> assertThat(context)
         .hasSingleBean(Declarables.class)
         .hasSingleBean(MessageRecoverer.class)

@@ -20,9 +20,9 @@ public class PaymentResponseListenerImpl implements PaymentResponseListener {
   private final IdempotentEventConsumer idempotentEventConsumer;
 
   /**
-   * Transacional só por causa do registro do {@code eventId}. A reentrega de uma resposta de
-   * pagamento mandaria ao booking um segundo {@code BookingRoomStatusUpdatedEvent}, e uma
-   * aprovação seguida de uma recusa levaria a reserva de {@code CONFIRMED} a {@code CANCELED}.
+   * Transacional por causa do registro do {@code eventId} e das linhas do outbox. A reentrega de
+   * uma resposta de pagamento mandaria ao booking um segundo {@code BookingRoomStatusUpdatedEvent},
+   * e uma aprovação seguida de uma recusa levaria a reserva de {@code CONFIRMED} a {@code CANCELED}.
    */
   @Override
   @RabbitListener(queues = "${app.rabbitmq.queue.payment-confirmation}")

@@ -101,4 +101,11 @@ app:
       payment-request: payment-request
       payment-confirmation: payment-confirmation
       customer-booking-update: customer-booking-update
+  # O relay publica o que a transação de negócio gravou. O intervalo curto encurta a espera da
+  # saga; a retenção é a mesma janela do processed_event.
+  outbox:
+    relay-interval: PT1S
+    batch-size: 50
+    retention: P7D
+    purge-interval: PT1H
 

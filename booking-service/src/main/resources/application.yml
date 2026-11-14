@@ -93,3 +93,10 @@ app:
       booking-room-requested: booking-room-requested
       booking-room-confirmation: booking-room-confirmation
       booking-room-status-changed: booking-room-status-changed
+  # O relay publica o que a transação de negócio gravou. O intervalo curto encurta a espera da
+  # saga; a retenção é a mesma janela do processed_event.
+  outbox:
+    relay-interval: PT1S
+    batch-size: 50
+    retention: P7D
+    purge-interval: PT1H
