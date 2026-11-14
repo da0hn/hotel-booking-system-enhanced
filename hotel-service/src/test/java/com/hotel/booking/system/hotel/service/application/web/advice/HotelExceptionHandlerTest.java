@@ -33,7 +33,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class HotelExceptionHandlerTest {
 
   private static final String BOOKING_BODY = """
-    {"customerId":"customer","hotelId":"hotel","guests":1,"rooms":[]}
+    {"customerId":"f1e28a47-8852-45e8-b8e1-e6701633dd56","hotelId":"b69b768f-32d8-4c70-a3ef-b5ace438c5e7",
+     "guests":1,"checkIn":"10/01/2030","checkOut":"13/01/2030",
+     "rooms":[{"roomId":"e86ff4c5-6f20-419e-8ce8-3140db9bd7a7","roomQuantity":1}]}
+    """;
+
+  private static final String REGISTER_BODY = """
+    {"name":"Pousada Portal","description":"Pousada no centro",
+     "categoryId":"e1bf8402-9441-4774-8061-9444fc8bdb28","street":"Av Perimetral, 766","cep":"78195-000",
+     "localityId":"9898b2f1-9861-42c5-a84f-42bba41fbe00",
+     "rooms":[{"name":"Duplo","description":"Quarto duplo","capacity":2,"currentPrice":350,"quantity":2}]}
     """;
 
   private final BookingRoomRequestUseCase book = mock(BookingRoomRequestUseCase.class);
@@ -123,7 +132,7 @@ class HotelExceptionHandlerTest {
     when(this.register.execute(any(RegisterHotelInput.class)))
       .thenThrow(new HotelDomainException(ApplicationMessage.HOTEL_CATEGORY_NOT_FOUND));
 
-    this.mockMvc.perform(post("/hotel").contentType(MediaType.APPLICATION_JSON).content("{}"))
+    this.mockMvc.perform(post("/hotel").contentType(MediaType.APPLICATION_JSON).content(REGISTER_BODY))
       .andExpect(status().isUnprocessableContent())
       .andExpect(jsonPath("$.message").value("hotel.category.not.found"));
   }

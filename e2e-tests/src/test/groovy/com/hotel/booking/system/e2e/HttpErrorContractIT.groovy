@@ -166,7 +166,7 @@ class HttpErrorContractIT extends Specification {
       localityId : localityId,
       street     : 'Av Perimetral, 766',
       cep        : '78195-000',
-      rooms      : []
+      rooms      : [[name: 'Duplo', description: 'Quarto duplo', capacity: 2, currentPrice: 350, quantity: 2]]
     ]))
 
     then:
@@ -176,6 +176,85 @@ class HttpErrorContractIT extends Specification {
     categoryId        | localityId        | field
     'not-a-uuid'      | UUID.randomUUID() | 'categoryId'
     UUID.randomUUID() | 'not-a-uuid'      | 'localityId'
+  }
+
+  def "reserva inválida responde 400 com a lista de campos, e não 200 (issue #10)"() {
+    when:
+    def response = post("${environment.hotelUrl()}/hotel/booking", JsonOutput.toJson([
+      customerId: '',
+      hotelId   : HOTEL_ID,
+      guests    : 0,
+      checkIn   : '10/09/2020',
+      checkOut  : '08/09/2020',
+      rooms     : []
+    ]))
+    def body = new JsonSlurper().parseText(response.body()) as Map
+
+    then:
+    response.statusCode() == 400
+    body.success == false
+    body.message == 'request.invalid'
+    (body.data*.field as Set) == ['customerId', 'guests', 'checkIn', 'rooms', 'checkOutAfterCheckIn'] as Set
+    body.data.find { it.field == 'guests' }.message == 'hotel.booking.guests.must.not.be.zero-or-negative'
+    body.data.find { it.field == 'checkOutAfterCheckIn' }.message == 'booking.period.check-out.must.be.after.check-in'
+  }
+
+  def "item de quarto inválido na reserva é recusado com o campo rooms[].roomId (issue #10)"() {
+    when:
+    def response = post("${environment.hotelUrl()}/hotel/booking", JsonOutput.toJson([
+      customerId: CUSTOMER_ID,
+      hotelId   : HOTEL_ID,
+      guests    : 1,
+      checkIn   : '10/01/2030',
+      checkOut  : '13/01/2030',
+      rooms     : [[roomId: '', roomQuantity: -1]]
+    ]))
+    def body = new JsonSlurper().parseText(response.body()) as Map
+
+    then:
+    response.statusCode() == 400
+    body.message == 'request.invalid'
+    (body.data*.field as Set) == ['rooms[].roomId', 'rooms[].roomQuantity'] as Set
+  }
+
+  def "elemento nulo em rooms responde 400, e não 500, porque @Valid não avalia null (issue #10)"() {
+    when:
+    def booking = post("${environment.hotelUrl()}/hotel/booking", JsonOutput.toJson([
+      customerId: CUSTOMER_ID,
+      hotelId   : HOTEL_ID,
+      guests    : 1,
+      checkIn   : '10/01/2030',
+      checkOut  : '13/01/2030',
+      rooms     : [null]
+    ]))
+    def register = post("${environment.hotelUrl()}/hotel", JsonOutput.toJson([
+      name       : 'Pousada Portal',
+      description: 'Pousada no centro da cidade',
+      categoryId : UUID.randomUUID(),
+      localityId : UUID.randomUUID(),
+      street     : 'Av Perimetral, 766',
+      cep        : '78195-000',
+      rooms      : [null]
+    ]))
+
+    then:
+    [booking, register].every {
+      def body = new JsonSlurper().parseText(it.body()) as Map
+      it.statusCode() == 400 && body.message == 'request.invalid' &&
+        body.data*.message == ['hotel.room.must.not.be.null']
+    }
+  }
+
+  def "cadastro de hotel sem campos responde 400 listando os obrigatórios (issue #10)"() {
+    when:
+    def response = post("${environment.hotelUrl()}/hotel", '{}')
+    def body = new JsonSlurper().parseText(response.body()) as Map
+
+    then:
+    response.statusCode() == 400
+    body.message == 'request.invalid'
+    (body.data*.field as Set) ==
+      ['name', 'description', 'categoryId', 'street', 'cep', 'localityId', 'rooms'] as Set
   }
 
   def "rota inexistente continua respondendo 404, e não 500, agora com o envelope"() {

@@ -12,6 +12,7 @@ import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotel
 import com.hotel.booking.system.hotel.service.core.application.dto.RegisterHotelOutput;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableInput;
 import com.hotel.booking.system.hotel.service.core.application.dto.SearchHotelAvailableOutput;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.AllArgsConstructor;
@@ -38,7 +39,9 @@ public class HotelController {
   private final HotelApplicationService hotelApplicationService;
 
   @PostMapping
-  public ResponseEntity<Response<RegisterHotelOutput>> register(@RequestBody final RegisterHotelInput input) {
+  public ResponseEntity<Response<RegisterHotelOutput>> register(
+    @Valid @RequestBody final RegisterHotelInput input
+  ) {
     final var output = this.hotelApplicationService.register(input);
     return ResponseEntityAdapter.of(output);
   }
@@ -88,7 +91,9 @@ public class HotelController {
   }
 
   @PostMapping("/booking")
-  public ResponseEntity<Response<BookingRoomOutput>> bookingRoom(@RequestBody final BookingRoomInput input) {
+  public ResponseEntity<Response<BookingRoomOutput>> bookingRoom(
+    @Valid @RequestBody final BookingRoomInput input
+  ) {
     final var output = this.hotelApplicationService.bookingRoomRequest(input);
     return ResponseEntityAdapter.of(output);
   }

@@ -63,7 +63,6 @@ public class BookingRoomRequestUseCaseImpl implements BookingRoomRequestUseCase 
     final var rooms = this.hotelRepository.findAllRoomsById(this.mapToRoomIds(input));
     this.validateRooms(input.rooms(), rooms);
     this.validateGuest(input, rooms);
-    // TODO: this.validateCustomerId(input.customerId());
     final var reservationOrderId = ReservationOrderId.newInstance();
 
     this.bookingRoomRequestedPublisher.publish(
