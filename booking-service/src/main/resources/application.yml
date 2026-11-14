@@ -78,6 +78,11 @@ management:
       show-details: never
 
 app:
+  booking:
+    # Reserva PENDING além deste prazo é cancelada e o quarto volta a ficar livre.
+    pending-timeout: PT10M
+    expiration-scheduler:
+      cron: "0 */5 * * * *"
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
     # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.

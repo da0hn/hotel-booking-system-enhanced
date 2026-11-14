@@ -344,6 +344,9 @@ Os outros três serviços só reagem ao que chega na sua fila.
    `PaymentFailedEvent`.
 5. `hotel-service` (`PaymentResponseHandlerImpl`) propaga para o customer e manda o booking
    mudar o status (`BookingRoomPaymentCompleted` → `CONFIRMED`, ou `...Failed` → `CANCELED`).
+   `PENDING` só vai para um desses dois; estado final não transiciona. Reserva `PENDING` além
+   de `app.booking.pending-timeout` (10 minutos) é cancelada pelo scheduler do
+   `booking-service`, que publica `BookingRoomExpiredEvent` para o cliente saber.
 6. `customer-service` grava cada transição na timeline; o cliente consulta em
    `GET /customer-service/customers/{customerId}/reservation-order/{reservationOrderId}`.
 

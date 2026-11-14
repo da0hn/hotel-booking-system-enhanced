@@ -246,7 +246,9 @@ class BookingApplicationTest {
     final var existing = this.mapper.bookingRoomInputToBooking(
       this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     existing.initialize();
-    existing.changeStatusTo(status);
+    if (status != BookingStatus.PENDING) {
+      existing.changeStatusTo(status);
+    }
     when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
 
     final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
@@ -292,6 +294,30 @@ class BookingApplicationTest {
     } else {
       verifyNoInteractions(this.publisher);
     }
+  }
+
+  @Test
+  @DisplayName("rejeita pagamento concluído de reserva já cancelada sem publicar confirmação")
+  void pagamentoTardioNaoConfirmaReservaCancelada() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentCompleted.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CONFIRMED)
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class);
+
+    assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELED);
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
   }
 
   @Test

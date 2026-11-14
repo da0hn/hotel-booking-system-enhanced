@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -46,4 +47,17 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, UUID>
     """
   )
   Optional<BookingEntity> findByReservationOrderId(UUID reservationOrderId);
+
+  /**
+   * Ids das reservas {@code PENDING} mais velhas que o prazo, na ordem em que foram criadas.
+   * {@code skip locked} deixa a outra instância do scheduler seguir com as linhas que esta
+   * transação ainda não soltou, em vez de esperar e expirar a mesma reserva duas vezes.
+   */
+  @Query(value = """
+    select id from booking
+    where status = 'PENDING' and created_at < :deadline
+    order by created_at
+    for update skip locked
+    """, nativeQuery = true)
+  List<String> lockPendingIdsCreatedBefore(Instant deadline);
 }

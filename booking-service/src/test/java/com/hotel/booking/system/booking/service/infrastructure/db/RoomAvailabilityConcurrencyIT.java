@@ -269,6 +269,11 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
     }
 
     @Override
+    public List<Booking> lockPendingCreatedBefore(final java.time.Instant deadline) {
+      return this.delegate.lockPendingCreatedBefore(deadline);
+    }
+
+    @Override
     public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
       final var found = this.delegate.findBookingByRoomIdAndPeriod(roomId, bookingPeriod);
       if (this.meeting == Meeting.OCCUPANCY_READ) {

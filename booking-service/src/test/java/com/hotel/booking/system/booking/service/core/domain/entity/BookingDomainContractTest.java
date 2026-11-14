@@ -67,6 +67,13 @@ class BookingDomainContractTest {
     assertThat(valid.getBookingRooms()).isEmpty();
     assertThatThrownBy(() -> valid.changeStatusTo(null)).isInstanceOf(NullPointerException.class);
     assertThat(valid.getStatus()).isEqualTo(BookingStatus.PENDING);
+    valid.changeStatusTo(BookingStatus.CONFIRMED);
+    assertThat(valid.getStatus()).isEqualTo(BookingStatus.CONFIRMED);
+    assertThatThrownBy(() -> valid.changeStatusTo(BookingStatus.PENDING)).isInstanceOf(BookingDomainException.class);
+    assertThatThrownBy(() -> valid.changeStatusTo(BookingStatus.CANCELED)).isInstanceOf(BookingDomainException.class);
+    final var canceled = this.booking(order, customer, BookingStatus.PENDING);
+    canceled.changeStatusTo(BookingStatus.CANCELED);
+    assertThatThrownBy(() -> canceled.changeStatusTo(BookingStatus.CONFIRMED)).isInstanceOf(BookingDomainException.class);
   }
 
   @Test
