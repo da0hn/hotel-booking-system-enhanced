@@ -37,6 +37,7 @@ public class CustomerDatabaseMapperImpl implements CustomerDatabaseMapper {
       .checkOut(reservationOrder.getCheckOut())
       .totalPrice(reservationOrder.getTotalPrice().getValue())
       .currentStatus(reservationOrder.getCurrentStatus())
+      .version(reservationOrder.getVersion())
       .history(reservationOrder.getTimeline().stream()
                  .map(this::reservationOrderHistoryToReservationOrderHistoryEntity)
                  .collect(Collectors.toSet()))
@@ -66,6 +67,7 @@ public class CustomerDatabaseMapperImpl implements CustomerDatabaseMapper {
       .guests(entity.getGuests())
       .totalPrice(Money.of(entity.getTotalPrice()))
       .currentStatus(entity.getCurrentStatus())
+      .version(entity.getVersion())
       .timeline(Timeline.of(
         entity.getHistory().stream()
           .map(this::reservationOrderHistoryEntityToReservationOrderTimeline)

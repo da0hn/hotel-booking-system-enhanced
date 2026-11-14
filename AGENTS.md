@@ -487,8 +487,9 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
   manda uma mudança de status por pedido. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
-  leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
-  por último (issue #53).
+  leem o pedido e gravam com `@Version` em `reservation_order`. Se as duas transações leram o
+  pedido antes de qualquer uma gravar, a que commita por último falha em vez de deixar
+  `current_status` para trás da timeline; o retry do listener aplica o evento de novo.
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real
