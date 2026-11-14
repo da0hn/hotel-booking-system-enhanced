@@ -67,9 +67,19 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
    * Com o lock antes, a segunda espera a primeira comitar e então a encontra. A constraint
    * {@code booking_reservation_order_id_uk} segue como rede de segurança do banco.</p>
    */
+  /**
+   * A validação de domínio vem antes do lock: um pedido que o domínio já recusou não espera o
+   * quarto, e sob contenção sairia para o retry em vez de virar evento de falha. O lock continua
+   * antes da busca por pedido repetido.
+   */
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
     final var booking = this.mapper.bookingRoomInputToBooking(input);
+    final var rejection = FailureMessages.empty();
+    this.initializeAndValidate(booking, rejection);
+    if (rejection.isNotEmpty()) {
+      return new BookingRoomOutput(booking, CustomerReservationStatus.RESERVATION_FAILED, rejection);
+    }
     this.verifyRoomAvailability.lockRooms(booking);
     return this.bookingRepository.findBookingByReservationOrderId(booking.getReservationOrderId())
       .map(this::duplicateOf)
@@ -78,7 +88,6 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
 
   private BookingRoomOutput create(final Booking booking) {
     final var failureMessages = FailureMessages.empty();
-    this.initializeAndValidate(booking, failureMessages);
     this.verifyRoomAvailability(booking, failureMessages);
     if (failureMessages.isNotEmpty()) {
       return new BookingRoomOutput(booking, CustomerReservationStatus.RESERVATION_FAILED, failureMessages);

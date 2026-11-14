@@ -81,6 +81,9 @@ app:
   booking:
     # Reserva PENDING além deste prazo é cancelada e o quarto volta a ficar livre.
     pending-timeout: PT10M
+    # Espera máxima pelo lock do quarto, por tentativa de entrega. O pior caso até a DLQ é
+    # cerca de três vezes este limite mais o backoff do retry (1 s, depois 2 s).
+    room-lock-timeout: 10s
     expiration-scheduler:
       cron: "0 */5 * * * *"
   rabbitmq:

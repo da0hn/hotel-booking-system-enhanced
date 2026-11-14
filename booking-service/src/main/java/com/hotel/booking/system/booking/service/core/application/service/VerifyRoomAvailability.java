@@ -28,10 +28,10 @@ import java.util.stream.Collectors;
  * ({@link RoomRepository#lockAllByRoomId}); o lock dura até o commit de quem chamou, que também
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
  *
- * <p><strong>O lock tem custo, e o teto dele não está no nosso código.</strong> Ele só é solto no
- * commit do listener. A resposta da reserva entra no outbox nessa mesma transação; o confirm do
- * broker acontece no relay, depois do commit, então o lock não espera o broker. Ainda não há
- * {@code lock_timeout}: com outro pedido segurando o quarto, a espera segue sem limite.</p>
+ * <p><strong>O lock tem custo.</strong> Ele só é solto no commit do listener. A resposta entra no
+ * outbox nessa transação; o confirm do broker é do relay. A espera está limitada por
+ * {@code app.booking.room-lock-timeout} (10 s por tentativa). Estourar o prazo falha a sentença
+ * e a transação desfaz, sem evento de falha de negócio.</p>
  */
 @Slf4j
 @DomainService

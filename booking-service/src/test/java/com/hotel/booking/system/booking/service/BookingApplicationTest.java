@@ -8,6 +8,7 @@ import com.hotel.booking.system.booking.service.core.application.service.*;
 import com.hotel.booking.system.booking.service.core.application.usecase.*;
 import com.hotel.booking.system.booking.service.core.domain.entity.*;
 import com.hotel.booking.system.booking.service.core.domain.exception.*;
+import org.springframework.dao.CannotAcquireLockException;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.*;
 import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publisher.BookingRoomResponsePublisher;
 import com.hotel.booking.system.commons.core.domain.event.*;
@@ -87,6 +88,7 @@ class BookingApplicationTest {
       new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
     new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(this.event(BigDecimal.ONE));
     verify(this.repository, never()).save(any());
+    verify(this.rooms, never()).lockAllByRoomId(any());
     final var sent = ArgumentCaptor.forClass(BookingRoomResponseEvent.class);
     verify(this.publisher).publish(sent.capture());
     assertThat(sent.getValue()).isInstanceOfSatisfying(BookingRoomFailedEvent.class, failed -> {
@@ -217,6 +219,21 @@ class BookingApplicationTest {
     final var inOrder = inOrder(this.rooms, this.repository);
     inOrder.verify(this.rooms).lockAllByRoomId(any());
     inOrder.verify(this.repository).findBookingByReservationOrderId(any());
+  }
+
+  @Test
+  @DisplayName("falha de espera do lock não grava a reserva nem publica recusa de negócio")
+  void esperaDoLockNaoViraFalhaDeNegocio() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    when(this.rooms.lockAllByRoomId(any())).thenThrow(new CannotAcquireLockException("lock timeout"));
+
+    assertThatThrownBy(() -> new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher)
+      .handle(this.event(new BigDecimal("20.2468"))))
+      .isInstanceOf(CannotAcquireLockException.class);
+
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
   }
 
   /**
