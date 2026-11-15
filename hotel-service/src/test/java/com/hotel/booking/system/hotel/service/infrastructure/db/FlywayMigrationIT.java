@@ -48,7 +48,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
 
     assertThat(aplicadas)
       .as("uma migration nova precisa ser somada aqui de propósito, para que a lista continue sendo uma trava")
-      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015");
+      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015", "016");
   }
 
   @Test
@@ -83,6 +83,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getResultList();
 
     assertThat(resultado).isEmpty();
+  }
+
+  @Test
+  @DisplayName("indexa a linha pendente do outbox por seq")
+  void indexaPendenteDoOutboxPorSeq() {
+    final var total = this.entityManager
+      .createNativeQuery("select count(*) from pg_indexes where indexname = 'outbox_event_pending_seq_idx'")
+      .getSingleResult();
+
+    assertThat(((Number) total).longValue()).isEqualTo(1L);
   }
 
   @ParameterizedTest(name = "{0} = {1}")

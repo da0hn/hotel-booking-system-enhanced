@@ -118,6 +118,15 @@ class DeadLetterConfigurationTest {
     assertThat(jitter.get()).isEqualTo(Duration.ofMillis(500));
   }
 
+  @Test
+  @DisplayName("dá três threads ao agendador e retém o outbox por um dia")
+  void agendaEmPoolERetemOOutboxPorUmDia() throws IOException {
+    final var binder = Binder.get(ambienteDoApplicationYml());
+
+    assertThat(binder.bind("spring.task.scheduling.pool.size", Integer.class).get()).isEqualTo(3);
+    assertThat(binder.bind("app.outbox.retention", Duration.class).get()).isEqualTo(Duration.ofDays(1));
+  }
+
   /**
    * Lê o {@code application.yml} de verdade, e não valores montados no teste: o Boot ignora
    * em silêncio uma chave que não existe, então uma propriedade com o nome errado (como o

@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015");
   }
 
   @Test
@@ -295,6 +295,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(processadoEm).isNotNull();
+  }
+
+  @Test
+  @DisplayName("indexa a linha pendente do outbox por seq")
+  void indexaPendenteDoOutboxPorSeq() {
+    final var total = this.entityManager
+      .createNativeQuery("select count(*) from pg_indexes where indexname = 'outbox_event_pending_seq_idx'")
+      .getSingleResult();
+
+    assertThat(((Number) total).longValue()).isEqualTo(1L);
   }
 
   @Test

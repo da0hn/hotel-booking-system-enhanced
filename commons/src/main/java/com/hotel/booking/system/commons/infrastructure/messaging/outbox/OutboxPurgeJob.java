@@ -11,7 +11,7 @@ import java.time.Duration;
  * Remove eventos já publicados e mais velhos que a retenção. Linha pendente não entra: o que
  * o broker ainda não confirmou não pode ser apagado.
  *
- * <p>A retenção é {@code app.outbox.retention} (sete dias) e a execução, a cada
+ * <p>A retenção é {@code app.outbox.retention} (um dia) e a execução, a cada
  * {@code app.outbox.purge-interval} (uma hora). Com várias instâncias o job roda em todas; o
  * {@code DELETE} por data é idempotente.</p>
  */

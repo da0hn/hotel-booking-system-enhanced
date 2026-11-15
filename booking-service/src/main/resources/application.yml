@@ -4,6 +4,13 @@ server:
   servlet:
     context-path: /booking-service
 spring:
+  task:
+    scheduling:
+      # O padrão do Boot é uma thread. O relay, a expiração de PENDING e os expurgos
+      # dividiriam essa thread: um backlog segura os outros. Três deixam o relay e a
+      # expiração andarem juntos; o expurgo horário usa a que sobra.
+      pool:
+        size: 3
   application:
     name: '@name@'
     version: '@revision@'
@@ -104,9 +111,10 @@ app:
       booking-room-confirmation: booking-room-confirmation
       booking-room-status-changed: booking-room-status-changed
   # O relay publica o que a transação de negócio gravou. O intervalo curto encurta a espera da
-  # saga; a retenção é a mesma janela do processed_event.
+  # saga. A linha publicada não é lida por ninguém: a deduplicação mora no processed_event.
+  # Um dia cobre uma investigação; mais do que isso só aumenta o claim.
   outbox:
     relay-interval: PT1S
     round-budget: PT5S
-    retention: P7D
+    retention: P1D
     purge-interval: PT1H

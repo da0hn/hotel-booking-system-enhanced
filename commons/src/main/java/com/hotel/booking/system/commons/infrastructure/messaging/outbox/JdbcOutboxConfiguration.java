@@ -31,7 +31,7 @@ public class JdbcOutboxConfiguration {
 
   static final String ROUND_BUDGET_PROPERTY = "app.outbox.round-budget";
 
-  static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
+  static final Duration DEFAULT_RETENTION = Duration.ofDays(1);
 
   static final Duration DEFAULT_ROUND_BUDGET = Duration.ofSeconds(5);
 

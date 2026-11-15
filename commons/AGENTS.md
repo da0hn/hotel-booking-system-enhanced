@@ -26,6 +26,29 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
   domínio, só no listener — serviços saudáveis, `POST /hotel/booking` respondendo 200 e a saga
   parada. Evento novo entra na cobertura sozinho; não há lista para manter.
 
+## Outbox
+
+O `hotel-service` e o `booking-service` gravam o evento em `outbox_event` na transação do
+efeito. O `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só então marca
+`published_at`. O `payment-service` não entra: não tem banco.
+
+- **O tipo é conferido antes do `Class.forName`**, com a mesma igualdade de pacote de
+  `TrustedEventPackages`. Um subpacote novo de evento precisa entrar na lista também por
+  causa do relay, não só do listener. Fora da lista, a linha recebe `abandoned_at` na hora.
+- **`abandoned_at` é falha da própria linha**: tipo fora da lista, classe ausente no
+  classpath, ou return sem fila (`MessageUnroutableException`). O relay loga em `ERROR` com
+  `aggregateId` e `eventType`. Para reprocessar, zere `abandoned_at`, `next_attempt_at` e
+  `attempts`.
+- **Falha de transporte não abandona.** Broker fora, nack e timeout incrementam `attempts`
+  e agendam `next_attempt_at` (1s, 2s, 4s… até 5 minutos). Enquanto o head espera, os
+  eventos seguintes do mesmo agregado também esperam.
+- **Cada invocação tem teto.** `app.outbox.round-budget` (`PT5S`), vezes doze, devolve a
+  thread mesmo com backlog. O `relay-interval` (`PT1S`) só vale com a fila vazia. Os dois
+  serviços põem `spring.task.scheduling.pool.size: 3` para o relay não dividir a única
+  thread do agendador com a expiração e os expurgos.
+- **A linha publicada fica um dia** (`app.outbox.retention`). Nada a lê depois do
+  `published_at`: a deduplicação é o `processed_event`. O expurgo não apaga pendente.
+
 ## Retry e DLQ: detalhes
 
 - **Retry sem estado, com backoff exponencial**: `max-retries: 2` (três tentativas ao todo),
