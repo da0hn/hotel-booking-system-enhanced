@@ -6,7 +6,6 @@ import com.hotel.booking.system.booking.service.core.domain.entity.Room;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.BookingRepository;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.RoomRepository;
 import com.hotel.booking.system.commons.core.application.annotation.DomainService;
-import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.extern.slf4j.Slf4j;
@@ -29,12 +28,10 @@ import java.util.stream.Collectors;
  * ({@link RoomRepository#lockAllByRoomId}); o lock dura até o commit de quem chamou, que também
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
  *
- * <p><strong>O lock tem custo, e o teto dele não está no nosso código.</strong> Ele só é solto no
- * commit do listener, e até lá a mesma transação ainda grava a reserva e publica o evento de
- * resposta esperando o confirm do broker: até 5 s por tentativa, em até 3 tentativas, cada uma
- * numa transação própria. Com o broker saudável isso leva milissegundos; com ele lento, cada
- * pedido do mesmo quarto espera o anterior, e não há {@code lock_timeout} que limite a espera.
- * Publicar só depois do commit, que encurtaria a seção crítica, depende do Outbox (#35).</p>
+ * <p><strong>O lock tem custo.</strong> Ele só é solto no commit do listener. A resposta entra no
+ * outbox nessa transação; o confirm do broker é do relay. A espera está limitada por
+ * {@code app.booking.room-lock-timeout} (10 s por tentativa). Estourar o prazo falha a sentença
+ * e a transação desfaz, sem evento de falha de negócio.</p>
  */
 @Slf4j
 @DomainService
@@ -66,11 +63,15 @@ public class VerifyRoomAvailability {
 
     final var rooms = this.roomRepository.lockAllByRoomId(booking.getRoomsId());
     final var requestedUnitsByRoom = this.requestedUnitsByRoom(booking);
+    final var occupiedByRoom = this.bookingRepository.sumOccupiedUnits(
+      rooms.stream().map(Room::getId).toList(),
+      booking.getBookingPeriod()
+    );
 
     log.info("Verifying rooms availability reservationOrderId={}", booking.getReservationOrderId());
     for (final var room : rooms) {
       final var requestedUnits = requestedUnitsByRoom.getOrDefault(room.getId(), 0);
-      final var occupiedUnits = this.occupiedUnits(room, booking);
+      final var occupiedUnits = occupiedByRoom.getOrDefault(room.getId(), 0);
       if (occupiedUnits + requestedUnits > room.getQuantity()) {
         log.error(
           "The roomId={} is unavailable for period={}, reservationOrderId={}",
@@ -94,23 +95,11 @@ public class VerifyRoomAvailability {
       .collect(Collectors.groupingBy(BookingRoom::getRoomId, Collectors.summingInt(VerifyRoomAvailability::unitsOf)));
   }
 
-  private int occupiedUnits(final Room room, final Booking booking) {
-    return this.bookingRepository.findBookingByRoomIdAndPeriod(room.getId(), booking.getBookingPeriod()).stream()
-      .filter(item -> item.getStatus() != BookingStatus.CANCELED)
-      .filter(item -> booking.isBookingPeriodContainedIn(item.getBookingPeriod()))
-      .flatMap(item -> item.getBookingRooms().stream())
-      .filter(item -> room.getId().equals(item.getRoomId()))
-      .mapToInt(VerifyRoomAvailability::unitsOf)
-      .sum();
-  }
-
   /**
    * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} recusa o
-   * pedido cuja linha tem quantidade nula, zero ou negativa ({@code BookingRoom.validate()}),
-   * mas o caso de uso verifica a disponibilidade mesmo assim, antes de olhar esse resultado.
-   * Um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem indo para a
-   * DLQ. Uma quantidade negativa também passa por esta soma, sem efeito: o pedido já saiu da
-   * validação com falha e não chega a ser gravado.
+   * pedido antes do lock, então esta soma não é o caminho do pedido inválido. Quem chama
+   * {@code execute} direto, sem essa validação, não pode tomar um {@code NullPointerException}
+   * no lugar da recusa de domínio.
    */
   private static int unitsOf(final BookingRoom bookingRoom) {
     return Optional.ofNullable(bookingRoom.getQuantity()).orElse(0);

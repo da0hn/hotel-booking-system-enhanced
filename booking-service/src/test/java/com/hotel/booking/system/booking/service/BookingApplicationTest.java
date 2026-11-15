@@ -8,6 +8,7 @@ import com.hotel.booking.system.booking.service.core.application.service.*;
 import com.hotel.booking.system.booking.service.core.application.usecase.*;
 import com.hotel.booking.system.booking.service.core.domain.entity.*;
 import com.hotel.booking.system.booking.service.core.domain.exception.*;
+import org.springframework.dao.CannotAcquireLockException;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.*;
 import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publisher.BookingRoomResponsePublisher;
 import com.hotel.booking.system.commons.core.domain.event.*;
@@ -87,6 +88,7 @@ class BookingApplicationTest {
       new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
     new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(this.event(BigDecimal.ONE));
     verify(this.repository, never()).save(any());
+    verify(this.rooms, never()).lockAllByRoomId(any());
     final var sent = ArgumentCaptor.forClass(BookingRoomResponseEvent.class);
     verify(this.publisher).publish(sent.capture());
     assertThat(sent.getValue()).isInstanceOfSatisfying(BookingRoomFailedEvent.class, failed -> {
@@ -178,7 +180,7 @@ class BookingApplicationTest {
     new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher).handle(secondDelivery);
 
     verify(this.repository, never()).save(any());
-    verify(this.repository, never()).findBookingByRoomIdAndPeriod(any(), any());
+    verify(this.repository, never()).sumOccupiedUnits(any(), any());
     verifyNoInteractions(this.publisher);
   }
 
@@ -219,6 +221,21 @@ class BookingApplicationTest {
     inOrder.verify(this.repository).findBookingByReservationOrderId(any());
   }
 
+  @Test
+  @DisplayName("falha de espera do lock não grava a reserva nem publica recusa de negócio")
+  void esperaDoLockNaoViraFalhaDeNegocio() {
+    final var usecase = new BookingRoomUseCaseImpl(this.repository, this.mapper,
+      new VerifyRoomAvailability(this.repository, this.rooms), new BookingInitializer());
+    when(this.rooms.lockAllByRoomId(any())).thenThrow(new CannotAcquireLockException("lock timeout"));
+
+    assertThatThrownBy(() -> new BookingRoomRequestedHandlerImpl(usecase, this.mapper, this.publisher)
+      .handle(this.event(new BigDecimal("20.2468"))))
+      .isInstanceOf(CannotAcquireLockException.class);
+
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
+  }
+
   /**
    * O que o caso de uso deve informar para cada status da reserva existente. Fica escrito aqui, e
    * não derivado do código, para que trocar duas entradas do mapa de produção deixe o teste
@@ -246,7 +263,9 @@ class BookingApplicationTest {
     final var existing = this.mapper.bookingRoomInputToBooking(
       this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     existing.initialize();
-    existing.changeStatusTo(status);
+    if (status != BookingStatus.PENDING) {
+      existing.changeStatusTo(status);
+    }
     when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
 
     final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
@@ -273,7 +292,7 @@ class BookingApplicationTest {
   void alteraStatusEConfirmaSomentePagamentoConcluido(final boolean paid) {
     final var booking = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     booking.initialize();
-    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
     final BookingRoomStatusUpdatedEvent event = paid
       ? BookingRoomPaymentCompleted.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CONFIRMED).build()
       : BookingRoomPaymentFailed.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CANCELED).failureMessages(List.of("declined")).build();
@@ -295,6 +314,54 @@ class BookingApplicationTest {
   }
 
   @Test
+  @DisplayName("rejeita pagamento concluído de reserva já cancelada sem publicar confirmação")
+  void pagamentoTardioNaoConfirmaReservaCancelada() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentCompleted.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CONFIRMED)
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class);
+
+    assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELED);
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
+  }
+
+  @Test
+  @DisplayName("pagamento recusado depois do cancelamento não grava de novo")
+  void pagamentoRecusadoDepoisDoCancelamentoNaoGravaDeNovo() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentFailed.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CANCELED)
+      .failureMessages(List.of("declined"))
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class);
+
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
+  }
+
+  @Test
   @DisplayName("não persiste atualização de pedido inexistente")
   void pedidoInexistenteNaoPersiste() {
     assertThatThrownBy(() -> new UpdateBookingStatusUseCaseImpl(this.repository).execute(
@@ -308,19 +375,13 @@ class BookingApplicationTest {
   @DisplayName("ignora reservas canceladas e períodos fora da consulta e soma as unidades das ativas")
   void disponibilidadeFiltraCanceladasEPeriodosESomaUnidades() {
     final var requested = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
-    final var occupied = Booking.builder().bookingPeriod(requested.getBookingPeriod()).status(BookingStatus.PENDING)
-      .bookingRooms(requested.getBookingRooms()).build();
-    final var canceled = Booking.builder().bookingPeriod(requested.getBookingPeriod()).status(BookingStatus.CANCELED)
-      .bookingRooms(requested.getBookingRooms()).build();
-    final var outside = Booking.builder().bookingPeriod(BookingPeriod.of(this.checkIn.plusDays(10), this.checkIn.plusDays(12)))
-      .status(BookingStatus.CONFIRMED).bookingRooms(requested.getBookingRooms()).build();
-    when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(occupied, canceled, outside));
+    when(this.repository.sumOccupiedUnits(any(), eq(requested.getBookingPeriod()))).thenReturn(Map.of(this.room, 2));
     when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 3)));
     final var service = new VerifyRoomAvailability(this.repository, this.rooms);
     assertThat(service.execute(requested).data()).containsExactly("The room roomId=" + this.room + " is no longer available for period 10/01/2030 - 13/01/2030");
     when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 4)));
     assertThat(service.execute(requested).data()).isEmpty();
-    when(this.repository.findBookingByRoomIdAndPeriod(this.room, requested.getBookingPeriod())).thenReturn(List.of(canceled, outside));
+    when(this.repository.sumOccupiedUnits(any(), eq(requested.getBookingPeriod()))).thenReturn(Map.of());
     when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 2)));
     assertThat(service.execute(requested).data()).isEmpty();
   }

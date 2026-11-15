@@ -1,6 +1,7 @@
 package com.hotel.booking.system.commons.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -16,7 +17,8 @@ import java.util.concurrent.TimeoutException;
  * eles, e a garantia de entrega é a mesma para todos.
  *
  * <p>{@link #publish(Object)} só retorna se o broker <strong>confirmou</strong> a mensagem
- * e a <strong>roteou</strong> para alguma fila. Qualquer outro desfecho vira
+ * e a <strong>roteou</strong> para alguma fila. O return (nenhuma fila recebeu) vira
+ * {@link MessageUnroutableException}; os outros desfechos viram
  * {@link MessagePublishException}. O {@code convertAndSend} sozinho não dá essa garantia:
  * com {@code publisher-confirm-type: correlated} o ack chega de forma assíncrona, e um
  * {@code ConfirmCallback} de template só consegue registrar a falha, não fazê-la chegar a
@@ -65,57 +67,80 @@ public abstract class AbstractRabbitPublisher<T> {
   }
 
   public void publish(final T event) {
+    this.publishTo(this.exchange, this.routingKey, event);
+  }
+
+  /**
+   * A mesma garantia de {@link #publish(Object)}, com o destino escolhido na hora. O relay do
+   * outbox usa este método: cada linha carrega o exchange e a routing key gravados por quem
+   * produziu o evento, e a confirmação do broker continua sendo a desta classe.
+   */
+  public void publishTo(final String exchange, final String routingKey, final Object event) {
     log.info(
       "Publishing event: {} to exchange={} | routingKey={}",
       event,
-      this.exchange,
-      this.routingKey
+      exchange,
+      routingKey
     );
     final var correlation = new CorrelationData(UUID.randomUUID().toString());
     final CorrelationData.Confirm confirm;
     try {
-      this.rabbitTemplate.convertAndSend(this.exchange, this.routingKey, event, correlation);
+      this.rabbitTemplate.convertAndSend(exchange, routingKey, event, correlation);
       confirm = correlation.getFuture().get(this.confirmTimeout.toMillis(), TimeUnit.MILLISECONDS);
     } catch (final TimeoutException exception) {
-      throw this.failure(event, "no broker confirmation within " + this.confirmTimeout, exception);
+      throw this.failure(event, exchange, routingKey, "no broker confirmation within " + this.confirmTimeout, exception);
     } catch (final InterruptedException exception) {
       Thread.currentThread().interrupt();
-      throw this.failure(event, "interrupted while waiting for the broker confirmation", exception);
+      throw this.failure(event, exchange, routingKey, "interrupted while waiting for the broker confirmation", exception);
     } catch (final ExecutionException exception) {
-      throw this.failure(event, "broker confirmation failed", exception);
+      throw this.failure(event, exchange, routingKey, "broker confirmation failed", exception);
     } catch (final RuntimeException exception) {
-      throw this.failure(event, "could not send the message", exception);
+      throw this.failure(event, exchange, routingKey, "could not send the message", exception);
     }
-    this.ensureDelivered(event, correlation, confirm);
+    this.ensureDelivered(event, exchange, routingKey, correlation, confirm);
     log.info(
       "Event: {} published successfully to exchange={} | routingKey={}",
       event,
-      this.exchange,
-      this.routingKey
+      exchange,
+      routingKey
     );
   }
 
   private void ensureDelivered(
-    final T event,
+    final Object event,
+    final String exchange,
+    final String routingKey,
     final CorrelationData correlation,
     final CorrelationData.Confirm confirm
   ) {
     final var returned = correlation.getReturned();
     if (returned != null) {
-      throw this.failure(event, "no queue received the message: " + returned.getReplyText(), null);
+      throw new MessageUnroutableException(this.message(
+        event, exchange, routingKey, "no queue received the message: " + returned.getReplyText()
+      ));
     }
     if (!confirm.ack()) {
-      throw this.failure(event, "broker refused the message: " + confirm.reason(), null);
+      throw this.failure(event, exchange, routingKey, "broker refused the message: " + confirm.reason(), null);
     }
   }
 
-  private MessagePublishException failure(final T event, final String reason, final Throwable cause) {
-    final var message = "Failed to publish %s to exchange=%s | routingKey=%s: %s".formatted(
+  private MessagePublishException failure(
+    final Object event,
+    final String exchange,
+    final String routingKey,
+    final String reason,
+    final Throwable cause
+  ) {
+    final var message = this.message(event, exchange, routingKey, reason);
+    return cause == null ? new MessagePublishException(message) : new MessagePublishException(message, cause);
+  }
+
+  private String message(final Object event, final String exchange, final String routingKey, final String reason) {
+    return "Failed to publish %s to exchange=%s | routingKey=%s: %s".formatted(
       event.getClass().getSimpleName(),
-      this.exchange,
-      this.routingKey,
+      exchange,
+      routingKey,
       reason
     );
-    return cause == null ? new MessagePublishException(message) : new MessagePublishException(message, cause);
   }
 }

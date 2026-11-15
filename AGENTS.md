@@ -291,12 +291,17 @@ Regras que o código segue e que devem ser mantidas:
   porque o `SagaIT` envia um pedido por vez. Como a soma decide a vaga, `BookingRoom.validate()`
   recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
-  **O lock tem custo**: só é solto no commit do listener, que inclui o publish com espera do
-  confirm do broker (5 s por tentativa, até 3 tentativas) e não tem `lock_timeout`. Com o broker
-  lento, cada pedido do mesmo quarto espera o anterior. O remédio estrutural é o Outbox (#35).
+  **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
+  transação; o confirm do broker é do relay, depois do commit. A espera pelo lock é limitada
+  por `app.booking.room-lock-timeout` (10 s por tentativa). Estourar o prazo falha a transação
+  sem gravar a reserva e sem evento de falha de negócio: a exceção segue o retry e a DLQ. O
+  pior caso até a DLQ é cerca de três vezes esse limite mais o backoff (1 s, depois 2 s). Os
+  quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
+  ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
+  `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
-  `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
+  `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
   propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
   `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
   disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
@@ -329,13 +334,13 @@ O `hotel-service` é o ponto de decisão: ele reage a cada resposta e decide o p
 Os outros três serviços só reagem ao que chega na sua fila.
 
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
-   capacidade contra o banco do hotel, gera um `reservationOrderId` e publica
+   capacidade contra o banco do hotel, gera um `reservationOrderId` e grava
    `BookingRoomRequestedEvent` (para o booking) + `CustomerBookingInitiatedEvent` (para o
-   customer). Responde 200 com o `reservationOrderId` assim que o broker confirma as duas
-   publicações — o resto é assíncrono. Se uma publicação falha, o `HotelExceptionHandler`
-   responde 503 com `hotel.booking.temporarily.unavailable`. As duas publicações **não são
-   atômicas**: se a segunda falha, o booking já recebeu a primeira. Só o Outbox (#35) fecha
-   essa janela.
+   customer) na tabela `outbox_event`, na transação do `HotelApplicationServiceImpl`. Responde
+   200 com o `reservationOrderId` sem falar com o broker — o relay publica os dois na ordem,
+   depois do commit. Se a transação desfaz, nenhuma das duas linhas fica. Falha ao gravar o
+   outbox é erro de banco e sai como 500; o `hotel-service` não traduz mais
+   `MessagePublishException` em 503, porque nenhum publisher dele fala com o broker.
 2. `booking-service` consome, valida disponibilidade no período (`VerifyRoomAvailability`),
    grava a reserva como `PENDING` e responde `BookingRoomPendingEvent` ou
    `BookingRoomFailedEvent`.
@@ -345,6 +350,14 @@ Os outros três serviços só reagem ao que chega na sua fila.
    `PaymentFailedEvent`.
 5. `hotel-service` (`PaymentResponseHandlerImpl`) propaga para o customer e manda o booking
    mudar o status (`BookingRoomPaymentCompleted` → `CONFIRMED`, ou `...Failed` → `CANCELED`).
+   `PENDING` só vai para um desses dois; estado final não transiciona, inclusive para o mesmo
+   estado. Reserva `PENDING` além de `app.booking.pending-timeout` (10 minutos) é cancelada
+   pelo scheduler do `booking-service`, que publica `BookingRoomExpiredEvent` para o cliente
+   saber. Um pagamento que chega depois disso ainda é traduzido pelo `hotel-service` nos dois
+   eventos de sempre (cliente e booking): o `booking-service` recusa `CANCELED → CONFIRMED` e
+   `CANCELED → CANCELED` e a mensagem segue para a DLQ, mas o cliente pode já ter
+   `PAYMENT_CONFIRMED` ou um segundo `PAYMENT_FAILED` na timeline. Essa janela fica aberta até
+   o estado da saga existir no `hotel-service`.
 6. `customer-service` grava cada transição na timeline; o cliente consulta em
    `GET /customer-service/customers/{customerId}/reservation-order/{reservationOrderId}`.
 
@@ -379,18 +392,38 @@ handler correspondente no `hotel-service`.
   `lombok.jacksonized.jacksonVersion += 3` no `lombok.config` da raiz (com `=` no lugar de `+=`
   a chave é ignorada em silêncio), e o `EventContractTest` prova que cada evento é construível.
   Os detalhes estão em `commons/AGENTS.md`.
-- **Publisher falha alto; nunca engole a exceção.** Todo publisher estende
-  `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que envia com
-  `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que nenhuma fila
-  recebeu — como falha, lançando `MessagePublishException`. Um `catch` que só loga recria o
-  defeito da #3: a saga trava sem sinal e o `POST` responde 200 com o broker fora. A regra
-  `publishersExtendAbstractRabbitPublisher` do ArchUnit de cada serviço recusa publisher que
-  não estenda a base.
+- **Publisher falha alto; nunca engole a exceção.** Quem fala com o broker — o relay do outbox e
+  o `payment-service` — usa `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que
+  envia com `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que
+  nenhuma fila recebeu — como falha, lançando `MessageUnroutableException`. Broker fora, nack
+  e timeout continuam `MessagePublishException`. O `hotel-service` e o
+  `booking-service` gravam no outbox (`OutboxPublisher`); a falha de gravar a linha sobe e
+  desfaz a transação. Um `catch` que só loga recria o defeito da #3. A regra de ArchUnit do
+  `payment-service` exige a base; a do `hotel` e do `booking` exige o outbox.
 - A garantia de entrega depende de **três chaves no `application.yml` de quem publica**:
   `publisher-confirm-type: correlated`, `publisher-returns: true` e `template.mandatory: true`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
+- **O relay confere o pacote antes do `Class.forName`.** A mesma lista
+  `TrustedEventPackages` do listener vale aqui: um subpacote novo de evento entra nela ou
+  o relay abandona a linha. A checagem vem antes do `Class.forName`, que executaria o
+  inicializador estático de qualquer classe do classpath.
+- **`abandoned_at` é só para falha da própria linha.** O relay preenche a coluna na hora, e
+  loga em `ERROR` com `aggregateId` e `eventType`, quando o tipo está fora de
+  `TrustedEventPackages`, a classe não está no classpath, ou o broker devolve a mensagem
+  (`MessageUnroutableException`). Falha de transporte incrementa `attempts` e agenda
+  `next_attempt_at` com backoff de 1s, 2s, 4s… até o teto de 5 minutos, sem abandonar: a
+  linha espera o broker voltar, e enquanto espera segura os eventos seguintes do mesmo
+  agregado. Para reprocessar uma linha abandonada, zere `abandoned_at`, `next_attempt_at` e
+  `attempts`; o relay pega na rodada seguinte. O expurgo só apaga linha já publicada, depois
+  de `app.outbox.retention` (um dia): o payload não serve à deduplicação, que mora no
+  `processed_event`.
+- **O relay não espera a fila esvaziar para devolver a thread.** Cada invocação publica
+  enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
+  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. O `hotel-service` e o
+  `booking-service` põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
+  thread, e nela o relay, a expiração de `PENDING` e os expurgos se bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.
@@ -429,7 +462,7 @@ escolha estão nos Javadocs; o que não se deduz do código:
   caso, o campo presente e nulo ou em branco, que só um produtor com defeito gera.
 - **A chave de negócio é a segunda rede.** `BookingRoomUseCaseImpl` busca por `reservationOrderId`
   *antes* de validar disponibilidade e, se já há reserva, devolve a saída marcada `duplicate` — o
-  handler não publica nada, porque a resposta da primeira vez foi confirmada pelo broker na mesma
+  handler não publica nada, porque a resposta da primeira vez está no outbox, na mesma
   transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
   reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
   falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
@@ -449,12 +482,13 @@ escolha estão nos Javadocs; o que não se deduz do código:
   um status *anterior* (o pedido já em `PAYMENT_CONFIRMED` e chega de novo um `AWAITING_PAYMENT`)
   não é reconhecida, porque isso pede uma tabela de transições permitidas, e uma regra mais larga
   barraria uma volta legítima, como uma nova tentativa de pagamento. A corrida de duas transações
-  que leem o pedido ao mesmo tempo também fica de fora: é a #53.
+  que leem o pedido ao mesmo tempo é barrada pelo `@Version` de `reservation_order` (#53).
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
-- **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer
-  entre as duas reprocessa o evento e republica a resposta com `eventId` novo. Só o Outbox (#35)
-  fecha essa janela.
+- **A resposta sai pelo outbox, na mesma transação do efeito.** Morrer entre o commit e o ack do
+  broker reentrega a mensagem; a deduplicação por `eventId` não repete o efeito, e a linha do
+  outbox que ainda não foi marcada é publicada pelo relay. O `payment-service` não entra nisso:
+  não tem banco, publica direto e a falha sobe pelo listener.
 
 ### Falha no consumidor: retry e DLQ
 
@@ -481,11 +515,12 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
   lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
   protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
-  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
-  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateBookingStatusUseCaseImpl` trava a reserva (`for update`) antes de mudar o status: a
+  expiração e o pagamento não gravam um por cima do outro. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
-  leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
-  por último (issue #53).
+  leem o pedido e gravam com `@Version` em `reservation_order`. Se as duas transações leram o
+  pedido antes de qualquer uma gravar, a que commita por último falha em vez de deixar
+  `current_status` para trás da timeline; o retry do listener aplica o evento de novo.
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real
@@ -516,7 +551,6 @@ domínio do serviço, por `this.reject(status, exception)`.
 | Campos de entrada (corpo ou parâmetro de query) recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
 | Id (path ou corpo) que não é UUID | 400 | `request.id.invalid`, com `data` = `[{field, message}]` só do primeiro campo recusado |
 | Corpo ilegível, método não suportado, rota inexistente | o do Spring (400, 405, 404) | `request.invalid` |
-| Falha ao publicar o evento (`MessagePublishException`) | 503 | `hotel.booking.temporarily.unavailable` |
 | Qualquer outra exceção | 500 | `internal.server.error`, sem detalhe |
 
 O que não se deduz do código:

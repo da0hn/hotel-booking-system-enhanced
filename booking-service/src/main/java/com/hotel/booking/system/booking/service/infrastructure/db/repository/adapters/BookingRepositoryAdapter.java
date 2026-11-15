@@ -10,9 +10,13 @@ import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.UUID;
 
 @Component
 @AllArgsConstructor
@@ -22,15 +26,38 @@ public class BookingRepositoryAdapter implements BookingRepository {
   private final BookingDatabaseMapper bookingDatabaseMapper;
 
   @Override
-  public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
-    final var bookings = this.bookingJpaRepository.findByRoomIdAndPeriod(
-      roomId.getValue(),
+  public Map<RoomId, Integer> sumOccupiedUnits(final Collection<RoomId> roomIds, final BookingPeriod bookingPeriod) {
+    if (roomIds.isEmpty()) {
+      return Map.of();
+    }
+    final var rows = this.bookingJpaRepository.sumOccupiedUnits(
+      roomIds.stream().map(RoomId::getValue).toList(),
       bookingPeriod.getCheckIn(),
       bookingPeriod.getCheckOut()
     );
-    return bookings.stream()
+    final var occupied = new HashMap<RoomId, Integer>();
+    for (final var row : rows) {
+      occupied.put(RoomId.of((UUID) row[0]), ((Number) row[1]).intValue());
+    }
+    return occupied;
+  }
+
+  @Override
+  public List<Booking> lockPendingCreatedBefore(final Instant deadline, final int limit) {
+    return this.bookingJpaRepository.lockPendingIdsCreatedBefore(deadline, limit).stream()
+      .map(UUID::fromString)
+      .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
       .map(this.bookingDatabaseMapper::bookingEntityToBooking)
-      .collect(Collectors.toList());
+      .toList();
+  }
+
+  @Override
+  public Optional<Booking> lockByReservationOrderId(final ReservationOrderId reservationOrderId) {
+    return this.bookingJpaRepository.lockIdByReservationOrderId(reservationOrderId.toString()).stream()
+      .map(UUID::fromString)
+      .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
+      .map(this.bookingDatabaseMapper::bookingEntityToBooking)
+      .findFirst();
   }
 
   @Override

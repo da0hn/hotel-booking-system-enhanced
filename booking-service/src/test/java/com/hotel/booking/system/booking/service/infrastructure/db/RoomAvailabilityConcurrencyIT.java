@@ -269,8 +269,23 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
     }
 
     @Override
-    public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
-      final var found = this.delegate.findBookingByRoomIdAndPeriod(roomId, bookingPeriod);
+    public List<Booking> lockPendingCreatedBefore(final java.time.Instant deadline, final int limit) {
+      return this.delegate.lockPendingCreatedBefore(deadline, limit);
+    }
+
+    @Override
+    public java.util.Optional<Booking> lockByReservationOrderId(
+      final com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId reservationOrderId
+    ) {
+      return this.delegate.lockByReservationOrderId(reservationOrderId);
+    }
+
+    @Override
+    public java.util.Map<RoomId, Integer> sumOccupiedUnits(
+      final java.util.Collection<RoomId> roomIds,
+      final BookingPeriod bookingPeriod
+    ) {
+      final var found = this.delegate.sumOccupiedUnits(roomIds, bookingPeriod);
       if (this.meeting == Meeting.OCCUPANCY_READ) {
         this.waitForTheOtherThread();
       }

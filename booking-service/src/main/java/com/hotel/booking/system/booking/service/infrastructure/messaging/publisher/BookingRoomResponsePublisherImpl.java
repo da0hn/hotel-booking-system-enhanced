@@ -4,20 +4,25 @@ import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publish
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
 import com.hotel.booking.system.commons.core.application.annotation.Publisher;
+import com.hotel.booking.system.commons.core.application.outbox.Outbox;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomResponseEvent;
-import com.hotel.booking.system.commons.infrastructure.messaging.AbstractRabbitPublisher;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxPublisher;
 
 @Publisher
 public class BookingRoomResponsePublisherImpl
-  extends AbstractRabbitPublisher<BookingRoomResponseEvent>
+  extends OutboxPublisher<BookingRoomResponseEvent>
   implements BookingRoomResponsePublisher {
 
   public BookingRoomResponsePublisherImpl(
-    final RabbitTemplate rabbitTemplate,
+    final Outbox outbox,
     final RoutingKeyProperties routingKeyProperties,
     final ExchangeProperties exchangeProperties
   ) {
-    super(rabbitTemplate, exchangeProperties.bookingRoom(), routingKeyProperties.bookingRoomConfirmation());
+    super(outbox, exchangeProperties.bookingRoom(), routingKeyProperties.bookingRoomConfirmation());
+  }
+
+  @Override
+  protected String aggregateId(final BookingRoomResponseEvent event) {
+    return event.getReservationOrderId();
   }
 }

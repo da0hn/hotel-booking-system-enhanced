@@ -20,7 +20,8 @@ public class BookingRoomResponseListenerImpl implements BookingRoomResponseListe
   private final IdempotentEventConsumer idempotentEventConsumer;
 
   /**
-   * Transacional só por causa do registro do {@code eventId}: o handler apenas publica, mas a
+   * Transacional por causa do registro do {@code eventId} e das linhas do outbox: o handler grava
+   * os próximos eventos da saga na mesma transação, e o relay só os publica depois do commit. A
    * reentrega de uma resposta do booking geraria um segundo {@code PaymentRequestedEvent} — com
    * {@code eventId} novo, portanto indistinguível para o payment. Cortar a duplicata aqui
    * protege o resto da cadeia.

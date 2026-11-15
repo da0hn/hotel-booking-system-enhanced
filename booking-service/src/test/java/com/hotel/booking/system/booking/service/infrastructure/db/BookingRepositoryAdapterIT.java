@@ -52,7 +52,7 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
       assertThat(item.getQuantity()).isEqualTo(2);
       assertThat(item.getPrice().getValue()).isEqualByComparingTo("10.1234");
     });
-    assertThat(this.bookings.findBookingByRoomIdAndPeriod(ROOM, period)).extracting(Booking::getId).containsExactly(booking.getId());
+    assertThat(this.bookings.sumOccupiedUnits(List.of(ROOM), period)).containsEntry(ROOM, 2);
     found.changeStatusTo(BookingStatus.CONFIRMED);
     this.bookings.save(found);
     this.entityManager.flush();
@@ -64,26 +64,25 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A regra de "check-out depois do check-in" vale para o pedido novo, e não para o que o banco
-   * já tem: se a reidratação recusasse uma reserva antiga de zero noites, toda checagem de
-   * disponibilidade do quarto dela e toda atualização de status daquele pedido lançariam
-   * exceção.
+   * O banco passou a recusar a estadia de zero noites (issue #54), então o teste que gravava
+   * essa linha para provar a reidratação não cabe mais. O construtor do período continua sem
+   * chamar {@code validate()}, e isso fica no teste de domínio: uma linha antiga, se existisse,
+   * ainda seria lida. O que este banco faz agora é não deixar a linha nascer.
    */
   @Test
-  @DisplayName("reidrata uma reserva antiga de zero noites sem recusá-la")
-  void reidrataReservaDeZeroNoites() {
+  @DisplayName("não grava reserva de zero noites")
+  void naoGravaReservaDeZeroNoites() {
     final var order = ReservationOrderId.of(UUID.randomUUID());
     final var period = BookingPeriod.of(LocalDate.of(2035, 4, 1), LocalDate.of(2035, 4, 1));
     final var booking = Booking.builder().reservationOrderId(order).customerId(CustomerId.of(UUID.randomUUID()))
       .bookingPeriod(period).totalPrice(Money.of(new BigDecimal("10.1234")))
       .bookingRooms(List.of(BookingRoom.builder().roomId(ROOM).quantity(1).price(Money.of(new BigDecimal("10.1234"))).build())).build();
     booking.initialize();
-    this.bookings.save(booking);
-    this.entityManager.flush();
-    this.entityManager.clear();
 
-    assertThat(this.bookings.findBookingByReservationOrderId(order)).hasValueSatisfying(found -> assertThat(found.getBookingPeriod()).isEqualTo(period));
-    assertThat(this.bookings.findBookingByRoomIdAndPeriod(ROOM, BookingPeriod.of(LocalDate.of(2035, 3, 30), LocalDate.of(2035, 4, 3)))).extracting(Booking::getId).containsExactly(booking.getId());
+    assertThatThrownBy(() -> {
+      this.bookings.save(booking);
+      this.entityManager.flush();
+    }).hasStackTraceContaining("booking_period_ck");
   }
 
   @Test

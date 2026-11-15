@@ -106,10 +106,6 @@ public class Booking extends AbstractDomainEntity<BookingId> {
     return this.bookingPeriod;
   }
 
-  public boolean isBookingPeriodContainedIn(final BookingPeriod period) {
-    return this.bookingPeriod.isContainedIn(period);
-  }
-
   public CustomerId getCustomerId() {
     return this.customerId;
   }
@@ -134,8 +130,16 @@ public class Booking extends AbstractDomainEntity<BookingId> {
     return this.updatedAt;
   }
 
+  /**
+   * Só {@code PENDING} anda, e só para {@code CONFIRMED} ou {@code CANCELED}. Um pagamento que
+   * chega depois do cancelamento (a reserva expirou, ou o pagamento já tinha falhado) não
+   * confirma uma reserva que já soltou o quarto.
+   */
   public void changeStatusTo(final BookingStatus status) {
     Objects.requireNonNull(status, ApplicationMessage.BOOKING_STATUS_NOT_NULL);
+    if (this.status == null || !this.status.canTransitionTo(status)) {
+      throw new BookingDomainException(ApplicationMessage.BOOKING_STATUS_TRANSITION_INVALID);
+    }
     this.status = status;
   }
 

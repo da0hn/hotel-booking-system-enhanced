@@ -5,7 +5,7 @@ import com.hotel.booking.system.commons.core.application.annotation.Listener;
 import com.hotel.booking.system.commons.core.application.annotation.Mapper;
 import com.hotel.booking.system.commons.core.application.annotation.Publisher;
 import com.hotel.booking.system.commons.core.application.annotation.UseCase;
-import com.hotel.booking.system.commons.infrastructure.messaging.AbstractRabbitPublisher;
+import com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxPublisher;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ImportOption.DoNotIncludeTests;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -93,10 +93,10 @@ class HotelArchitectureTest {
     .allowEmptyShould(true);
 
   @ArchTest
-  static final ArchRule publishersExtendAbstractRabbitPublisher = classes()
+  static final ArchRule publishersWriteToTheOutbox = classes()
     .that().resideInAnyPackage(ROOT + ".infrastructure.messaging.publisher..")
-    .should().beAssignableTo(AbstractRabbitPublisher.class)
-    .because("só a base confirma a entrega e propaga a falha; um publisher próprio volta a engolir a exceção")
+    .should().beAssignableTo(OutboxPublisher.class)
+    .because("o publish direto dentro da transação reabre a janela entre o banco e o broker; quem confirma a entrega é o relay, pelo AbstractRabbitPublisher")
     .allowEmptyShould(true);
 
   @ArchTest

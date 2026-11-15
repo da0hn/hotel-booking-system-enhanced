@@ -531,9 +531,9 @@ class BookingRoomRequestUseCaseTest {
   }
 
   /**
-   * Documenta a janela que só o Outbox fecha: os dois publishes não são atômicos. Quando o
-   * segundo falha, o pedido ao booking já saiu e a saga segue sem o registro inicial no
-   * customer. O chamador, ao menos, recebe o erro em vez de um 200 enganoso.
+   * Os dois eventos entram no outbox na mesma transação de quem chamou. Se o segundo
+   * {@code publish} falha, o caso de uso propaga o erro e essa transação desfaz as duas linhas:
+   * não sobra pedido no booking sem o registro inicial no customer.
    */
   @Test
   @DisplayName("Should propagate the failure when CustomerBookingInitiatedEvent publish fails after the request was sent")

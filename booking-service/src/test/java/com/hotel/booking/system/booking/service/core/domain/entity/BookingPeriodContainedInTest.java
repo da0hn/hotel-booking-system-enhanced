@@ -26,7 +26,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(1)),
         this.modify(END_DATE, date -> date.plusDays(1))
@@ -44,7 +44,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(2)),
         this.modify(END_DATE, UnaryOperator.identity())
@@ -62,7 +62,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, UnaryOperator.identity()),
         this.modify(END_DATE, date -> date.plusDays(2))
@@ -81,7 +81,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(END_DATE, date -> date.plusDays(5)),
         this.modify(END_DATE, date -> date.plusDays(10))
@@ -100,7 +100,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(10)),
         this.modify(INITIAL_DATE, date -> date.minusDays(5))
@@ -119,7 +119,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, UnaryOperator.identity()),
         this.modify(END_DATE, date -> date.plusDays(1))
@@ -137,7 +137,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.plusDays(1)),
         this.modify(END_DATE, UnaryOperator.identity())
@@ -155,7 +155,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, other -> other.plusDays(1)),
         this.modify(END_DATE, other -> other.minusDays(1))
