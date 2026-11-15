@@ -1,5 +1,6 @@
 package com.hotel.booking.system.commons.infrastructure.messaging.outbox;
 
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import com.hotel.booking.system.commons.core.application.outbox.OutboxEntry;
 import com.hotel.booking.system.commons.core.application.outbox.OutboxRepository;
 import com.hotel.booking.system.commons.core.domain.event.TrustedEventPackages;
@@ -30,8 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class OutboxRelay {
 
-  static final int MAX_ATTEMPTS = 10;
-
+  /**
+   * A partir da 10ª falha de transporte o atraso fica neste teto. Antes dele o backoff é
+   * 1s, 2s, 4s… até 256s; 2^9 já passa de cinco minutos, então o teto vale de fato.
+   */
   private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
 
   private final OutboxRepository repository;
@@ -115,34 +118,51 @@ public class OutboxRelay {
       entry.ifPresent(value -> {
         failedAggregates.add(value.aggregateId());
         this.recordFailure(value, exception);
-        log.warn(
-          "Outbox event stayed pending after a failed publish | aggregateId={} | eventType={} | attempt={} | reason={}",
-          value.aggregateId(),
-          value.eventType(),
-          value.attempts() + 1,
-          exception.getMessage()
-        );
       });
       return true;
     }
   }
 
+  /**
+   * Falha da própria linha (tipo fora dos pacotes, classe ausente, nenhuma fila) abandona
+   * na hora: tentar de novo não muda o resultado. Falha de transporte só empurra o
+   * {@code next_attempt_at}. A linha continua pendente até o broker voltar, e enquanto
+   * espera segura os eventos seguintes do mesmo agregado.
+   */
   private void recordFailure(final OutboxEntry entry, final RuntimeException exception) {
     final var attempts = entry.attempts() + 1;
     final var now = this.clock.instant();
-    final var deterministic = exception instanceof IllegalStateException;
-    final Instant abandonedAt = deterministic || attempts >= MAX_ATTEMPTS ? now : null;
-    final Instant nextAttemptAt = abandonedAt == null ? now.plus(this.backoff(attempts)) : null;
+    final var causedByRow = exception instanceof IllegalStateException
+      || exception instanceof MessageUnroutableException;
+    final Optional<Instant> abandonedAt = causedByRow ? Optional.of(now) : Optional.empty();
+    final Optional<Instant> nextAttemptAt = causedByRow ? Optional.empty() : Optional.of(now.plus(this.backoff(attempts)));
     this.transaction.executeWithoutResult(status ->
       this.repository.recordFailure(entry.id(), attempts, nextAttemptAt, abandonedAt)
+    );
+    if (causedByRow) {
+      log.error(
+        "Outbox event abandoned | aggregateId={} | eventType={} | reason={}",
+        entry.aggregateId(),
+        entry.eventType(),
+        exception.getMessage()
+      );
+      return;
+    }
+    log.warn(
+      "Outbox event stayed pending after a failed publish | aggregateId={} | eventType={} | attempt={} | reason={}",
+      entry.aggregateId(),
+      entry.eventType(),
+      attempts,
+      exception.getMessage()
     );
   }
 
   private Duration backoff(final int attempts) {
-    final var shift = Math.min(attempts - 1, 8);
-    final var seconds = 1L << shift;
-    final var delay = Duration.ofSeconds(seconds);
-    return delay.compareTo(MAX_BACKOFF) > 0 ? MAX_BACKOFF : delay;
+    final var exponent = attempts - 1;
+    if (exponent >= 9) {
+      return MAX_BACKOFF;
+    }
+    return Duration.ofSeconds(1L << exponent);
   }
 
   private Object deserialize(final OutboxEntry entry) {

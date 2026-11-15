@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -82,7 +83,12 @@ public final class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public void recordFailure(final UUID id, final int attempts, final Instant nextAttemptAt, final Instant abandonedAt) {
+  public void recordFailure(
+    final UUID id,
+    final int attempts,
+    final Optional<Instant> nextAttemptAt,
+    final Optional<Instant> abandonedAt
+  ) {
     this.jdbc.sql("""
         update outbox_event
         set attempts = :attempts,
@@ -92,8 +98,8 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         """)
       .param("id", id)
       .param("attempts", attempts)
-      .param("nextAttemptAt", nextAttemptAt == null ? null : OffsetDateTime.ofInstant(nextAttemptAt, ZoneOffset.UTC))
-      .param("abandonedAt", abandonedAt == null ? null : OffsetDateTime.ofInstant(abandonedAt, ZoneOffset.UTC))
+      .param("nextAttemptAt", nextAttemptAt.map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)).orElse(null))
+      .param("abandonedAt", abandonedAt.map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)).orElse(null))
       .update();
   }
 

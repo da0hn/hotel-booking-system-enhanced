@@ -395,7 +395,8 @@ handler correspondente no `hotel-service`.
 - **Publisher falha alto; nunca engole a exceção.** Quem fala com o broker — o relay do outbox e
   o `payment-service` — usa `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que
   envia com `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que
-  nenhuma fila recebeu — como falha, lançando `MessagePublishException`. O `hotel-service` e o
+  nenhuma fila recebeu — como falha, lançando `MessageUnroutableException`. Broker fora, nack
+  e timeout continuam `MessagePublishException`. O `hotel-service` e o
   `booking-service` gravam no outbox (`OutboxPublisher`); a falha de gravar a linha sobe e
   desfaz a transação. Um `catch` que só loga recria o defeito da #3. A regra de ArchUnit do
   `payment-service` exige a base; a do `hotel` e do `booking` exige o outbox.
@@ -404,6 +405,14 @@ handler correspondente no `hotel-service`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
+- **`abandoned_at` é só para falha da própria linha.** O relay preenche a coluna na hora, e
+  loga em `ERROR` com `aggregateId` e `eventType`, quando o tipo está fora de
+  `TrustedEventPackages`, a classe não está no classpath, ou o broker devolve a mensagem
+  (`MessageUnroutableException`). Falha de transporte incrementa `attempts` e agenda
+  `next_attempt_at` com backoff de 1s, 2s, 4s… até o teto de 5 minutos, sem abandonar: a
+  linha espera o broker voltar, e enquanto espera segura os eventos seguintes do mesmo
+  agregado. Para reprocessar uma linha abandonada, zere `abandoned_at`, `next_attempt_at` e
+  `attempts`; o relay pega na rodada seguinte. O expurgo só apaga linha publicada.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.

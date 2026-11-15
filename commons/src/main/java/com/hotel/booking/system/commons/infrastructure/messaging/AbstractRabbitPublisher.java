@@ -1,6 +1,7 @@
 package com.hotel.booking.system.commons.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -16,7 +17,8 @@ import java.util.concurrent.TimeoutException;
  * eles, e a garantia de entrega é a mesma para todos.
  *
  * <p>{@link #publish(Object)} só retorna se o broker <strong>confirmou</strong> a mensagem
- * e a <strong>roteou</strong> para alguma fila. Qualquer outro desfecho vira
+ * e a <strong>roteou</strong> para alguma fila. O return (nenhuma fila recebeu) vira
+ * {@link MessageUnroutableException}; os outros desfechos viram
  * {@link MessagePublishException}. O {@code convertAndSend} sozinho não dá essa garantia:
  * com {@code publisher-confirm-type: correlated} o ack chega de forma assíncrona, e um
  * {@code ConfirmCallback} de template só consegue registrar a falha, não fazê-la chegar a
@@ -113,7 +115,9 @@ public abstract class AbstractRabbitPublisher<T> {
   ) {
     final var returned = correlation.getReturned();
     if (returned != null) {
-      throw this.failure(event, exchange, routingKey, "no queue received the message: " + returned.getReplyText(), null);
+      throw new MessageUnroutableException(this.message(
+        event, exchange, routingKey, "no queue received the message: " + returned.getReplyText()
+      ));
     }
     if (!confirm.ack()) {
       throw this.failure(event, exchange, routingKey, "broker refused the message: " + confirm.reason(), null);
@@ -127,12 +131,16 @@ public abstract class AbstractRabbitPublisher<T> {
     final String reason,
     final Throwable cause
   ) {
-    final var message = "Failed to publish %s to exchange=%s | routingKey=%s: %s".formatted(
+    final var message = this.message(event, exchange, routingKey, reason);
+    return cause == null ? new MessagePublishException(message) : new MessagePublishException(message, cause);
+  }
+
+  private String message(final Object event, final String exchange, final String routingKey, final String reason) {
+    return "Failed to publish %s to exchange=%s | routingKey=%s: %s".formatted(
       event.getClass().getSimpleName(),
       exchange,
       routingKey,
       reason
     );
-    return cause == null ? new MessagePublishException(message) : new MessagePublishException(message, cause);
   }
 }

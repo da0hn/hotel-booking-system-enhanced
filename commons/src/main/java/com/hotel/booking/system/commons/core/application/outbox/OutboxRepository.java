@@ -2,6 +2,7 @@ package com.hotel.booking.system.commons.core.application.outbox;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -28,10 +29,11 @@ public interface OutboxRepository {
 
   /**
    * Registra uma falha de publicação. {@code abandonedAt} preenchido tira a linha do relay
-   * de vez: tentar de novo não muda o resultado (tipo fora dos pacotes confiáveis, ou o
-   * teto de tentativas).
+   * de vez: tentar de novo não muda o resultado (tipo fora dos pacotes confiáveis, classe
+   * ausente, ou nenhuma fila recebeu a mensagem). Vazio significa que a linha continua
+   * pendente e {@code nextAttemptAt} diz quando tentar de novo.
    */
-  void recordFailure(UUID id, int attempts, Instant nextAttemptAt, Instant abandonedAt);
+  void recordFailure(UUID id, int attempts, Optional<Instant> nextAttemptAt, Optional<Instant> abandonedAt);
 
   /**
    * @return quantas linhas publicadas foram removidas

@@ -28,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -154,22 +155,29 @@ class OutboxIT extends AbstractDatabaseIT {
   }
 
   @Test
-  @DisplayName("trata o return de mensagem sem fila como falha e mantém o evento pendente")
-  void mensagemSemFilaPermanecePendente() {
+  @DisplayName("o return sem fila abandona a linha e libera o evento seguinte do agregado")
+  void mensagemSemFilaAbandonaELiberaOSeguinte() {
     final var order = UUID.randomUUID().toString();
-    this.transaction.executeWithoutResult(status ->
-      this.outbox.append(order, "exchange.a", "sem-binding", this.event(order))
-    );
+    this.transaction.executeWithoutResult(status -> {
+      this.outbox.append(order, "exchange.a", "sem-binding", this.event(order));
+      this.outbox.append(order, "exchange.a", "seguinte", this.event(order));
+    });
     final var template = mock(RabbitTemplate.class);
+    final var published = new ArrayList<String>();
     doAnswer(invocation -> {
+      final var routingKey = invocation.getArgument(1, String.class);
       final var correlation = invocation.getArgument(3, CorrelationData.class);
-      correlation.setReturned(new ReturnedMessage(
-        new Message(new byte[0], new MessageProperties()),
-        312,
-        "NO_ROUTE",
-        "exchange.a",
-        "sem-binding"
-      ));
+      if ("sem-binding".equals(routingKey)) {
+        correlation.setReturned(new ReturnedMessage(
+          new Message(new byte[0], new MessageProperties()),
+          312,
+          "NO_ROUTE",
+          "exchange.a",
+          "sem-binding"
+        ));
+      } else {
+        published.add(routingKey);
+      }
       correlation.getFuture().complete(new CorrelationData.Confirm(true, null));
       return null;
     }).when(template).convertAndSend(any(String.class), any(String.class), any(Object.class), any(CorrelationData.class));
@@ -183,8 +191,44 @@ class OutboxIT extends AbstractDatabaseIT {
     );
 
     relay.publishPending();
+    relay.publishPending();
 
-    assertThat(this.pendingCount()).isEqualTo(1);
+    final var rows = this.rowsOf(order);
+    assertThat(rows.getFirst().abandonedAt()).isNotNull();
+    assertThat(rows.get(1).publishedAt()).isNotNull();
+    assertThat(published).containsExactly("seguinte");
+  }
+
+  @Test
+  @DisplayName("broker fora não abandona a linha, e o backoff segura o evento seguinte do agregado")
+  void brokerForaNaoAbandonaESeguraOSeguinte() {
+    final var order = UUID.randomUUID().toString();
+    this.transaction.executeWithoutResult(status -> {
+      this.outbox.append(order, "exchange.a", "primeiro", this.event(order));
+      this.outbox.append(order, "exchange.a", "segundo", this.event(order));
+    });
+    final var clock = new MovableClock();
+    OffsetDateTime previousAttempt = null;
+    for (var attempt = 1; attempt <= 11; attempt++) {
+      this.relay(clock, new ArrayList<>(), true).publishPending();
+      final var rows = this.rowsOf(order);
+      final var head = rows.getFirst();
+      assertThat(head.attempts()).isEqualTo(attempt);
+      assertThat(head.abandonedAt()).isNull();
+      assertThat(head.nextAttemptAt()).isNotNull();
+      if (previousAttempt != null) {
+        assertThat(head.nextAttemptAt()).isAfter(previousAttempt);
+      }
+      assertThat(rows.get(1).attempts()).isZero();
+      assertThat(rows.get(1).publishedAt()).isNull();
+      previousAttempt = head.nextAttemptAt();
+      clock.advance(Duration.between(clock.instant(), head.nextAttemptAt().toInstant()));
+    }
+
+    final var published = new ArrayList<String>();
+    this.relay(clock, published, false).publishPending();
+    assertThat(published).containsExactly("exchange.a|primeiro", "exchange.a|segundo");
+    assertThat(this.rowsOf(order)).allSatisfy(row -> assertThat(row.publishedAt()).isNotNull());
   }
 
   @Test
@@ -261,6 +305,31 @@ class OutboxIT extends AbstractDatabaseIT {
     new OutboxPurgeJob(this.repository, Duration.ofDays(7), clock).purge();
     assertThat(this.jdbc.sql("select count(*) from outbox_event where exchange = 'exchange.ok'").query(Long.class).single()).isZero();
     assertThat(this.jdbc.sql("select count(*) from outbox_event where exchange = 'exchange.stuck'").query(Long.class).single()).isEqualTo(1L);
+  }
+
+  private List<OutboxRow> rowsOf(final String aggregateId) {
+    return this.jdbc.sql("""
+        select attempts, next_attempt_at, abandoned_at, published_at
+        from outbox_event
+        where aggregate_id = :aggregate
+        order by seq
+        """)
+      .param("aggregate", aggregateId)
+      .query((rs, row) -> new OutboxRow(
+        rs.getInt("attempts"),
+        rs.getObject("next_attempt_at", OffsetDateTime.class),
+        rs.getObject("abandoned_at", OffsetDateTime.class),
+        rs.getObject("published_at", OffsetDateTime.class)
+      ))
+      .list();
+  }
+
+  private record OutboxRow(
+    int attempts,
+    OffsetDateTime nextAttemptAt,
+    OffsetDateTime abandonedAt,
+    OffsetDateTime publishedAt
+  ) {
   }
 
   private long pendingCount() {
