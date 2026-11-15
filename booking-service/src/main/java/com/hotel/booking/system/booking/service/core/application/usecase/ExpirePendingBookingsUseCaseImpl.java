@@ -32,9 +32,9 @@ public class ExpirePendingBookingsUseCaseImpl implements ExpirePendingBookingsUs
   }
 
   @Override
-  public List<Booking> execute() {
+  public List<Booking> execute(final int limit) {
     final var deadline = Instant.now().minus(this.pendingTimeout);
-    final var expired = this.bookingRepository.lockPendingCreatedBefore(deadline);
+    final var expired = this.bookingRepository.lockPendingCreatedBefore(deadline, limit);
     for (final var booking : expired) {
       booking.changeStatusTo(BookingStatus.CANCELED);
       this.bookingRepository.save(booking);

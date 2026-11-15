@@ -21,11 +21,18 @@ public interface BookingRepository {
   Map<RoomId, Integer> sumOccupiedUnits(Collection<RoomId> roomIds, BookingPeriod bookingPeriod);
 
   /**
-   * Reservas {@code PENDING} criadas antes de {@code deadline}, travadas com
+   * Até {@code limit} reservas {@code PENDING} criadas antes de {@code deadline}, travadas com
    * {@code for update skip locked}. Outra instância do scheduler não vê as linhas que esta
    * transação já reservou, e não espera por elas.
    */
-  List<Booking> lockPendingCreatedBefore(Instant deadline);
+  List<Booking> lockPendingCreatedBefore(Instant deadline, int limit);
+
+  /**
+   * Trava a reserva do pedido até o fim da transação e a devolve. Quem vai mudar o status
+   * precisa desta leitura: sem o lock, uma expiração que commita no meio devolve
+   * {@code CONFIRMED} por cima de {@code CANCELED}.
+   */
+  Optional<Booking> lockByReservationOrderId(ReservationOrderId reservationOrderId);
 
   void save(Booking booking);
 

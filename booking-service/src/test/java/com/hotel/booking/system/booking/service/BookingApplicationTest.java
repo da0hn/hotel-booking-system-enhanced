@@ -292,7 +292,7 @@ class BookingApplicationTest {
   void alteraStatusEConfirmaSomentePagamentoConcluido(final boolean paid) {
     final var booking = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     booking.initialize();
-    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
     final BookingRoomStatusUpdatedEvent event = paid
       ? BookingRoomPaymentCompleted.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CONFIRMED).build()
       : BookingRoomPaymentFailed.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CANCELED).failureMessages(List.of("declined")).build();
@@ -320,7 +320,7 @@ class BookingApplicationTest {
       this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     booking.initialize();
     booking.changeStatusTo(BookingStatus.CANCELED);
-    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
     final var event = BookingRoomPaymentCompleted.builder()
       .reservationOrderId(this.order)
       .customerId(this.customer)

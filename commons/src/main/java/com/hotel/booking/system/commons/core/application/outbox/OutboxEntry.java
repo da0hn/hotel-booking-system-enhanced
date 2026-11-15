@@ -19,6 +19,7 @@ public record OutboxEntry(
   String exchange,
   String routingKey,
   String payload,
-  long sequence
+  long sequence,
+  int attempts
 ) {
 }

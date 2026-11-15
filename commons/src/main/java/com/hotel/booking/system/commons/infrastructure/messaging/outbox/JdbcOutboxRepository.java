@@ -23,13 +23,16 @@ import java.util.UUID;
 public final class JdbcOutboxRepository implements OutboxRepository {
 
   private static final String CLAIM = """
-    select id, aggregate_id, event_type, exchange, routing_key, payload::text as payload, seq
+    select id, aggregate_id, event_type, exchange, routing_key, payload::text as payload, seq, attempts
     from outbox_event
     where published_at is null
+      and abandoned_at is null
+      and (next_attempt_at is null or next_attempt_at <= :now)
       and not exists (
         select 1 from outbox_event earlier
         where earlier.aggregate_id = outbox_event.aggregate_id
           and earlier.published_at is null
+          and earlier.abandoned_at is null
           and earlier.seq < outbox_event.seq
       )
     """;
@@ -56,12 +59,14 @@ public final class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public List<OutboxEntry> claimPending(final int limit, final Set<String> excludedAggregates) {
+  public List<OutboxEntry> claimPending(final int limit, final Set<String> excludedAggregates, final Instant now) {
     final var excluded = excludedAggregates == null || excludedAggregates.isEmpty();
     final var sql = CLAIM
       + (excluded ? "" : "  and aggregate_id not in (:excluded)\n")
       + "order by seq\nlimit :limit\nfor update skip locked";
-    var query = this.jdbc.sql(sql).param("limit", limit);
+    var query = this.jdbc.sql(sql)
+      .param("limit", limit)
+      .param("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC));
     if (!excluded) {
       query = query.param("excluded", excludedAggregates);
     }
@@ -73,6 +78,22 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     this.jdbc.sql("update outbox_event set published_at = :publishedAt where id = :id")
       .param("id", id)
       .param("publishedAt", OffsetDateTime.ofInstant(publishedAt, ZoneOffset.UTC))
+      .update();
+  }
+
+  @Override
+  public void recordFailure(final UUID id, final int attempts, final Instant nextAttemptAt, final Instant abandonedAt) {
+    this.jdbc.sql("""
+        update outbox_event
+        set attempts = :attempts,
+            next_attempt_at = :nextAttemptAt,
+            abandoned_at = :abandonedAt
+        where id = :id
+        """)
+      .param("id", id)
+      .param("attempts", attempts)
+      .param("nextAttemptAt", nextAttemptAt == null ? null : OffsetDateTime.ofInstant(nextAttemptAt, ZoneOffset.UTC))
+      .param("abandonedAt", abandonedAt == null ? null : OffsetDateTime.ofInstant(abandonedAt, ZoneOffset.UTC))
       .update();
   }
 
@@ -91,7 +112,8 @@ public final class JdbcOutboxRepository implements OutboxRepository {
       rs.getString("exchange"),
       rs.getString("routing_key"),
       rs.getString("payload"),
-      rs.getLong("seq")
+      rs.getLong("seq"),
+      rs.getInt("attempts")
     );
   }
 

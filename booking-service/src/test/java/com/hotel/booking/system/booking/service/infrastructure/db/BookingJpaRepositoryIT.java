@@ -1,5 +1,6 @@
 package com.hotel.booking.system.booking.service.infrastructure.db;
 
+import com.hotel.booking.system.booking.service.core.domain.entity.BookingPeriod;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingRoomEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.RoomEntity;
@@ -116,6 +117,23 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
     assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2035, 3, 2), LocalDate.of(2035, 3, 4)))
       .isEqualTo(1);
     assertThat(ativa).isNotNull();
+  }
+
+  @Test
+  @DisplayName("conta unidade exatamente quando BookingPeriod.overlaps diz que há conflito")
+  void consultaEOverlapsConcordam() {
+    final var existente = BookingPeriod.of(LocalDate.of(2023, 6, 15), LocalDate.of(2023, 6, 25));
+    final var janelas = java.util.List.of(
+      BookingPeriod.of(LocalDate.of(2023, 6, 20), LocalDate.of(2023, 6, 30)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 25), LocalDate.of(2023, 6, 27)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 10), LocalDate.of(2023, 6, 15)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 1), LocalDate.of(2023, 7, 31)),
+      BookingPeriod.of(LocalDate.of(2023, 8, 1), LocalDate.of(2023, 8, 10))
+    );
+    for (final var janela : janelas) {
+      final var contou = this.occupied(QUARTO_TRIPLO_DELUXE, janela.getCheckIn(), janela.getCheckOut()) > 0;
+      assertThat(contou).isEqualTo(existente.overlaps(janela));
+    }
   }
 
   @Test

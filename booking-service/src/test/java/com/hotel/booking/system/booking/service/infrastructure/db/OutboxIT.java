@@ -28,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -115,7 +116,7 @@ class OutboxIT extends AbstractDatabaseIT {
       this.outbox.append(order, "exchange.a", "second", this.event(order));
     });
 
-    final var first = this.transaction.execute(status -> this.repository.claimPending(10, Set.of()));
+    final var first = this.transaction.execute(status -> this.repository.claimPending(10, Set.of(), Instant.now()));
 
     assertThat(first).hasSize(1);
     assertThat(first.getFirst().routingKey()).isEqualTo("first");
@@ -141,12 +142,13 @@ class OutboxIT extends AbstractDatabaseIT {
     this.transaction.executeWithoutResult(status ->
       this.outbox.append(order, "exchange.a", "key", this.event(order))
     );
-    final var failing = this.relay(new ArrayList<>(), true);
-    failing.publishPending();
+    final var clock = new MovableClock();
+    this.relay(clock, new ArrayList<>(), true).publishPending();
     assertThat(this.pendingCount()).isEqualTo(1);
 
+    clock.advance(Duration.ofMinutes(1));
     final var published = new ArrayList<String>();
-    this.relay(published, false).publishPending();
+    this.relay(clock, published, false).publishPending();
     assertThat(published).containsExactly("exchange.a|key");
     assertThat(this.pendingCount()).isZero();
   }
@@ -177,7 +179,7 @@ class OutboxIT extends AbstractDatabaseIT {
       this.jsonMapper,
       this.transaction,
       Clock.systemUTC(),
-      10
+      Duration.ofMinutes(1)
     );
 
     relay.publishPending();
@@ -201,7 +203,7 @@ class OutboxIT extends AbstractDatabaseIT {
     try {
       for (var i = 0; i < 2; i++) {
         executor.submit(() -> this.transaction.executeWithoutResult(status -> {
-          final var rows = this.repository.claimPending(1, Set.of());
+          final var rows = this.repository.claimPending(1, Set.of(), Instant.now());
           synchronized (claimed) {
             claimed.add(rows.getFirst().id());
           }
@@ -246,7 +248,7 @@ class OutboxIT extends AbstractDatabaseIT {
       attempts.incrementAndGet();
       return null;
     }).when(template).convertAndSend(any(String.class), any(String.class), any(Object.class), any(CorrelationData.class));
-    new OutboxRelay(this.repository, new OutboxBrokerPublisher(template), this.jsonMapper, this.transaction, Clock.systemUTC(), 10)
+    new OutboxRelay(this.repository, new OutboxBrokerPublisher(template), this.jsonMapper, this.transaction, Clock.systemUTC(), Duration.ofMinutes(1))
       .publishPending();
 
     assertThat(attempts).hasValue(1);
@@ -266,6 +268,10 @@ class OutboxIT extends AbstractDatabaseIT {
   }
 
   private OutboxRelay relay(final List<String> published, final boolean fail) {
+    return this.relay(Clock.systemUTC(), published, fail);
+  }
+
+  private OutboxRelay relay(final Clock clock, final List<String> published, final boolean fail) {
     final var template = mock(RabbitTemplate.class);
     doAnswer(invocation -> {
       if (fail) {
@@ -281,9 +287,55 @@ class OutboxIT extends AbstractDatabaseIT {
       new OutboxBrokerPublisher(template),
       this.jsonMapper,
       this.transaction,
-      Clock.systemUTC(),
-      10
+      clock,
+      Duration.ofMinutes(1)
     );
+  }
+
+  @Test
+  @DisplayName("não instancia nem publica um event_type fora dos pacotes confiáveis")
+  void tipoForaDosPacotesConfiaveisNaoEPublicado() {
+    final var id = UUID.randomUUID();
+    this.transaction.executeWithoutResult(status -> this.jdbc.sql("""
+        insert into outbox_event (id, aggregate_id, event_type, exchange, routing_key, payload)
+        values (:id, :aggregate, 'java.lang.Runtime', 'exchange.a', 'key', cast(:payload as jsonb))
+        """)
+      .param("id", id)
+      .param("aggregate", UUID.randomUUID().toString())
+      .param("payload", "{}")
+      .update());
+    final var published = new ArrayList<String>();
+    this.relay(published, false).publishPending();
+
+    assertThat(published).isEmpty();
+    assertThat(this.jdbc.sql("select abandoned_at from outbox_event where id = :id")
+      .param("id", id)
+      .query(Object.class)
+      .single()).isNotNull();
+  }
+
+  private static final class MovableClock extends Clock {
+
+    private Instant instant = Instant.now();
+
+    void advance(final Duration duration) {
+      this.instant = this.instant.plus(duration);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(final ZoneId zone) {
+      return this;
+    }
+
+    @Override
+    public Instant instant() {
+      return this.instant;
+    }
   }
 
   private BookingRoomConfirmedEvent event(final String order) {

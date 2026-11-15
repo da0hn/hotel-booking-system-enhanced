@@ -490,8 +490,8 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
   lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
   protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
-  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
-  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateBookingStatusUseCaseImpl` trava a reserva (`for update`) antes de mudar o status: a
+  expiração e o pagamento não gravam um por cima do outro. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
   leem o pedido e gravam com `@Version` em `reservation_order`. Se as duas transações leram o
   pedido antes de qualquer uma gravar, a que commita por último falha em vez de deixar

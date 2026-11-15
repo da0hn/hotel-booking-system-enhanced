@@ -89,7 +89,10 @@ class DeadLetterConfigurationTest {
         .hasSingleBean(Declarables.class)
         .hasSingleBean(MessageRecoverer.class)
         .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class)
-        .hasSingleBean(IdempotentEventConsumer.class));
+        .hasSingleBean(IdempotentEventConsumer.class)
+        .hasSingleBean(com.hotel.booking.system.commons.core.application.outbox.Outbox.class)
+        .hasSingleBean(com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxRelay.class)
+        .hasSingleBean(com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxPurgeJob.class));
   }
 
   @Test

@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014");
   }
 
   @Test
@@ -63,7 +63,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     "room; id, hotel_id, current_price, capacity, quantity",
     "booking_room; id, room_id, booking_id, price, quantity",
     "processed_event; event_id, event_type, processed_at",
-    "outbox_event; id, seq, aggregate_id, event_type, exchange, routing_key, payload, created_at, published_at",
+    "outbox_event; id, seq, aggregate_id, event_type, exchange, routing_key, payload, created_at, published_at, attempts, next_attempt_at, abandoned_at",
   })
   void criaTabelasComColunasEsperadas(final String tabela, final String colunas) {
     final var resultado = this.entityManager

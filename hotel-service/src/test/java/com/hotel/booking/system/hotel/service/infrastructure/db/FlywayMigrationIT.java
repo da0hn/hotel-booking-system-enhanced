@@ -48,7 +48,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
 
     assertThat(aplicadas)
       .as("uma migration nova precisa ser somada aqui de propósito, para que a lista continue sendo uma trava")
-      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014");
+      .containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015");
   }
 
   @Test
@@ -75,7 +75,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     "locality; id, city, state, country",
     "hotel; id, name, description, hotel_cep, hotel_street, locality_id, category_id",
     "room; id, name, description, capacity, current_price, hotel_id, quantity",
-    "outbox_event; id, seq, aggregate_id, event_type, exchange, routing_key, payload, created_at, published_at",
+    "outbox_event; id, seq, aggregate_id, event_type, exchange, routing_key, payload, created_at, published_at, attempts, next_attempt_at, abandoned_at",
   })
   void criaTabelasComColunasEsperadas(final String tabela, final String colunas) {
     final var resultado = this.entityManager

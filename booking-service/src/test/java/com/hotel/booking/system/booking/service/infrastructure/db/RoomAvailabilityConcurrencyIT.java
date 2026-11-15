@@ -269,8 +269,15 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
     }
 
     @Override
-    public List<Booking> lockPendingCreatedBefore(final java.time.Instant deadline) {
-      return this.delegate.lockPendingCreatedBefore(deadline);
+    public List<Booking> lockPendingCreatedBefore(final java.time.Instant deadline, final int limit) {
+      return this.delegate.lockPendingCreatedBefore(deadline, limit);
+    }
+
+    @Override
+    public java.util.Optional<Booking> lockByReservationOrderId(
+      final com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId reservationOrderId
+    ) {
+      return this.delegate.lockByReservationOrderId(reservationOrderId);
     }
 
     @Override

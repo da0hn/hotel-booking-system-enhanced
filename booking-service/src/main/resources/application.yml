@@ -86,6 +86,8 @@ app:
     room-lock-timeout: 10s
     expiration-scheduler:
       cron: "0 */5 * * * *"
+    # Cada transação do scheduler cancela no máximo este tanto. A rodada seguinte pega o resto.
+    expiration-batch-size: 100
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
     # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.
@@ -105,6 +107,6 @@ app:
   # saga; a retenção é a mesma janela do processed_event.
   outbox:
     relay-interval: PT1S
-    batch-size: 50
+    round-budget: PT5S
     retention: P7D
     purge-interval: PT1H

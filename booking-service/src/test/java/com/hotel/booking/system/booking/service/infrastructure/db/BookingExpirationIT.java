@@ -3,6 +3,7 @@ package com.hotel.booking.system.booking.service.infrastructure.db;
 import com.hotel.booking.system.booking.service.application.scheduler.BookingExpirationScheduler;
 import com.hotel.booking.system.booking.service.core.application.service.VerifyRoomAvailability;
 import com.hotel.booking.system.booking.service.core.application.usecase.ExpirePendingBookingsUseCaseImpl;
+import com.hotel.booking.system.booking.service.core.domain.exception.BookingDomainException;
 import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingPeriod;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingRoom;
@@ -45,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Expiração de reservas {@code PENDING} contra o PostgreSQL (issue #8).
@@ -89,7 +91,7 @@ class BookingExpirationIT extends AbstractDatabaseIT {
       new ExchangeProperties("exchange.booking-room")
     );
     final var useCase = new ExpirePendingBookingsUseCaseImpl(this.bookings, Duration.ofMinutes(10));
-    this.scheduler = new BookingExpirationScheduler(useCase, publisher);
+    this.scheduler = new BookingExpirationScheduler(useCase, publisher, this.transactionManager, 100);
   }
 
   @AfterEach
@@ -140,6 +142,71 @@ class BookingExpirationIT extends AbstractDatabaseIT {
   }
 
   @Test
+  @DisplayName("pagamento que chega depois da expiração não confirma a reserva")
+  void pagamentoDepoisDaExpiracaoNaoConfirma() {
+    final var order = this.gravaPendente(true);
+    this.transaction.executeWithoutResult(status -> this.scheduler.expirePendingBookings());
+
+    assertThatThrownBy(() -> this.transaction.executeWithoutResult(status -> {
+      final var booking = this.bookings.lockByReservationOrderId(order).orElseThrow();
+      booking.changeStatusTo(BookingStatus.CONFIRMED);
+      this.bookings.save(booking);
+    })).isInstanceOf(BookingDomainException.class);
+    assertThat(this.statusOf(order)).isEqualTo("CANCELED");
+  }
+
+  @Test
+  @DisplayName("o lock do pagamento impede a expiração de gravar por cima")
+  void pagamentoComLockNaoDeixaAExpiracaoSobrescrever() throws Exception {
+    final var order = this.gravaPendente(true);
+    final var holding = new CountDownLatch(1);
+    final var release = new CountDownLatch(1);
+    final var worker = Executors.newSingleThreadExecutor();
+    try {
+      worker.submit(() -> this.transaction.executeWithoutResult(status -> {
+        this.bookings.lockByReservationOrderId(order).orElseThrow();
+        holding.countDown();
+        try {
+          assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+        } catch (final InterruptedException exception) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(exception);
+        }
+        final var booking = this.bookings.lockByReservationOrderId(order).orElseThrow();
+        booking.changeStatusTo(BookingStatus.CONFIRMED);
+        this.bookings.save(booking);
+      }));
+      assertThat(holding.await(5, TimeUnit.SECONDS)).isTrue();
+      final var expiradas = this.transaction.execute(status ->
+        this.bookings.lockPendingCreatedBefore(Instant.now(), 10)
+      );
+      assertThat(expiradas).isEmpty();
+    } finally {
+      release.countDown();
+      worker.shutdown();
+      assertThat(worker.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+    assertThat(this.statusOf(order)).isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  @DisplayName("falha ao gravar o evento desfaz o cancelamento")
+  void falhaAoPublicarDesfazOCancelamento() {
+    final var order = this.gravaPendente(true);
+    final var failing = new BookingExpirationScheduler(
+      new ExpirePendingBookingsUseCaseImpl(this.bookings, Duration.ofMinutes(10)),
+      event -> {
+        throw new IllegalStateException("outbox down");
+      },
+      this.transactionManager,
+      100
+    );
+
+    assertThatThrownBy(failing::expirePendingBookings).hasStackTraceContaining("outbox down");
+    assertThat(this.statusOf(order)).isEqualTo("PENDING");
+  }
+
+  @Test
   @DisplayName("duas instâncias não expiram a mesma reserva")
   void duasInstanciasNaoExpiramAMesmaReserva() throws Exception {
     this.gravaPendente(true);
@@ -151,7 +218,7 @@ class BookingExpirationIT extends AbstractDatabaseIT {
     try {
       for (var i = 0; i < 2; i++) {
         executor.submit(() -> this.transaction.executeWithoutResult(status -> {
-          final var locked = this.bookings.lockPendingCreatedBefore(Instant.now());
+          final var locked = this.bookings.lockPendingCreatedBefore(Instant.now(), 10);
           synchronized (claimed) {
             locked.forEach(booking -> claimed.add(booking.getId().toString()));
           }

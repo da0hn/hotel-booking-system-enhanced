@@ -44,12 +44,21 @@ public class BookingRepositoryAdapter implements BookingRepository {
   }
 
   @Override
-  public List<Booking> lockPendingCreatedBefore(final Instant deadline) {
-    return this.bookingJpaRepository.lockPendingIdsCreatedBefore(deadline).stream()
+  public List<Booking> lockPendingCreatedBefore(final Instant deadline, final int limit) {
+    return this.bookingJpaRepository.lockPendingIdsCreatedBefore(deadline, limit).stream()
       .map(UUID::fromString)
       .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
       .map(this.bookingDatabaseMapper::bookingEntityToBooking)
       .toList();
+  }
+
+  @Override
+  public Optional<Booking> lockByReservationOrderId(final ReservationOrderId reservationOrderId) {
+    return this.bookingJpaRepository.lockIdByReservationOrderId(reservationOrderId.toString()).stream()
+      .map(UUID::fromString)
+      .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
+      .map(this.bookingDatabaseMapper::bookingEntityToBooking)
+      .findFirst();
   }
 
   @Override

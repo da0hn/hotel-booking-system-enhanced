@@ -50,7 +50,15 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, UUID>
     select id from booking
     where status = 'PENDING' and created_at < :deadline
     order by created_at
+    limit :limit
     for update skip locked
     """, nativeQuery = true)
-  List<String> lockPendingIdsCreatedBefore(Instant deadline);
+  List<String> lockPendingIdsCreatedBefore(Instant deadline, int limit);
+
+  @Query(value = """
+    select id from booking
+    where reservation_order_id = :reservationOrderId
+    for update
+    """, nativeQuery = true)
+  List<String> lockIdByReservationOrderId(String reservationOrderId);
 }

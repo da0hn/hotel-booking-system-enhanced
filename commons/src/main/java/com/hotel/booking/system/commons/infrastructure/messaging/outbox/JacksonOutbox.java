@@ -42,7 +42,8 @@ public final class JacksonOutbox implements Outbox {
       exchange,
       routingKey,
       this.jsonMapper.writeValueAsString(event),
-      0L
+      0L,
+      0
     ));
   }
 

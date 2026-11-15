@@ -29,11 +29,11 @@ public class JdbcOutboxConfiguration {
 
   static final String RETENTION_PROPERTY = "app.outbox.retention";
 
-  static final String BATCH_PROPERTY = "app.outbox.batch-size";
+  static final String ROUND_BUDGET_PROPERTY = "app.outbox.round-budget";
 
   static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
 
-  static final int DEFAULT_BATCH_SIZE = 50;
+  static final Duration DEFAULT_ROUND_BUDGET = Duration.ofSeconds(5);
 
   @Bean
   public OutboxRepository outboxRepository(final JdbcClient jdbcClient) {
@@ -58,16 +58,16 @@ public class JdbcOutboxConfiguration {
     final PlatformTransactionManager transactionManager,
     final Environment environment
   ) {
-    final var batchSize = Binder.get(environment)
-      .bind(BATCH_PROPERTY, Integer.class)
-      .orElse(DEFAULT_BATCH_SIZE);
+    final var roundBudget = Binder.get(environment)
+      .bind(ROUND_BUDGET_PROPERTY, Duration.class)
+      .orElse(DEFAULT_ROUND_BUDGET);
     return new OutboxRelay(
       repository,
       broker,
       jsonMapper,
       new TransactionTemplate(transactionManager),
       Clock.systemUTC(),
-      batchSize
+      roundBudget
     );
   }
 

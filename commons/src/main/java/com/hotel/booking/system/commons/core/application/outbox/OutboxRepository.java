@@ -17,13 +17,21 @@ public interface OutboxRepository {
   void append(OutboxEntry entry);
 
   /**
-   * Reserva até {@code limit} eventos publicáveis: de cada {@code aggregateId}, só o mais
-   * antigo ainda pendente, e nenhum cujo agregado esteja em {@code excludedAggregates}
-   * (agregado que já falhou nesta rodada do relay e não pode ser tentado de novo até a próxima).
+   * Reserva até {@code limit} eventos publicáveis agora ({@code now}): de cada
+   * {@code aggregateId}, só o mais antigo ainda pendente e não abandonado, e nenhum cujo
+   * agregado esteja em {@code excludedAggregates}. Linha com {@code next_attempt_at} no futuro
+   * espera; enquanto ela espera, as seguintes do mesmo agregado também esperam.
    */
-  List<OutboxEntry> claimPending(int limit, Set<String> excludedAggregates);
+  List<OutboxEntry> claimPending(int limit, Set<String> excludedAggregates, Instant now);
 
   void markPublished(UUID id, Instant publishedAt);
+
+  /**
+   * Registra uma falha de publicação. {@code abandonedAt} preenchido tira a linha do relay
+   * de vez: tentar de novo não muda o resultado (tipo fora dos pacotes confiáveis, ou o
+   * teto de tentativas).
+   */
+  void recordFailure(UUID id, int attempts, Instant nextAttemptAt, Instant abandonedAt);
 
   /**
    * @return quantas linhas publicadas foram removidas

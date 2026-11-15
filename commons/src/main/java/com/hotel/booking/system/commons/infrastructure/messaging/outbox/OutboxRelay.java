@@ -2,12 +2,16 @@ package com.hotel.booking.system.commons.infrastructure.messaging.outbox;
 
 import com.hotel.booking.system.commons.core.application.outbox.OutboxEntry;
 import com.hotel.booking.system.commons.core.application.outbox.OutboxRepository;
+import com.hotel.booking.system.commons.core.domain.event.TrustedEventPackages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -24,6 +28,10 @@ import java.util.Set;
 @Slf4j
 public class OutboxRelay {
 
+  static final int MAX_ATTEMPTS = 10;
+
+  private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
+
   private final OutboxRepository repository;
 
   private final OutboxBrokerPublisher broker;
@@ -34,7 +42,7 @@ public class OutboxRelay {
 
   private final Clock clock;
 
-  private final int batchSize;
+  private final Duration roundBudget;
 
   public OutboxRelay(
     final OutboxRepository repository,
@@ -42,24 +50,38 @@ public class OutboxRelay {
     final JsonMapper jsonMapper,
     final TransactionTemplate transaction,
     final Clock clock,
-    final int batchSize
+    final Duration roundBudget
   ) {
     this.repository = repository;
     this.broker = broker;
     this.jsonMapper = jsonMapper;
     this.transaction = transaction;
     this.clock = clock;
-    this.batchSize = batchSize;
+    this.roundBudget = roundBudget;
   }
 
+  /**
+   * Publica até esvaziar a fila ou estourar o orçamento da rodada. O
+   * {@code relay-interval} só separa rodadas: com a fila vazia é a espera até a próxima
+   * olhada; com backlog, a rodada seguinte começa assim que esta devolve a thread.
+   */
   @Scheduled(
     fixedDelayString = "${app.outbox.relay-interval:PT1S}",
     initialDelayString = "${app.outbox.relay-interval:PT1S}"
   )
   public void publishPending() {
-    final Set<String> failedAggregates = new HashSet<>();
-    for (var published = 0; published < this.batchSize; published++) {
-      if (!this.publishNext(failedAggregates)) {
+    final var invocationEnds = this.clock.instant().plus(this.roundBudget.multipliedBy(12));
+    while (this.clock.instant().isBefore(invocationEnds)) {
+      final var roundEnds = this.clock.instant().plus(this.roundBudget);
+      final Set<String> failedAggregates = new HashSet<>();
+      var progressed = false;
+      while (this.clock.instant().isBefore(roundEnds)) {
+        if (!this.publishNext(failedAggregates)) {
+          return;
+        }
+        progressed = true;
+      }
+      if (!progressed) {
         return;
       }
     }
@@ -72,7 +94,7 @@ public class OutboxRelay {
     final var claimed = new OutboxEntry[1];
     try {
       final var found = this.transaction.execute(status -> {
-        final var pending = this.repository.claimPending(1, failedAggregates);
+        final var pending = this.repository.claimPending(1, failedAggregates, this.clock.instant());
         if (pending.isEmpty()) {
           return false;
         }
@@ -87,13 +109,13 @@ public class OutboxRelay {
       final var entry = claimed[0];
       if (entry != null) {
         failedAggregates.add(entry.aggregateId());
+        this.recordFailure(entry, exception);
         log.warn(
-          "Outbox event stayed pending after a failed publish | aggregateId={} | eventType={} | exchange={} | routingKey={}",
+          "Outbox event stayed pending after a failed publish | aggregateId={} | eventType={} | attempt={} | reason={}",
           entry.aggregateId(),
           entry.eventType(),
-          entry.exchange(),
-          entry.routingKey(),
-          exception
+          entry.attempts() + 1,
+          exception.getMessage()
         );
         return true;
       }
@@ -101,7 +123,26 @@ public class OutboxRelay {
     }
   }
 
+  private void recordFailure(final OutboxEntry entry, final RuntimeException exception) {
+    final var attempts = entry.attempts() + 1;
+    final var now = this.clock.instant();
+    final var deterministic = exception instanceof IllegalStateException;
+    final Instant abandonedAt = deterministic || attempts >= MAX_ATTEMPTS ? now : null;
+    final Instant nextAttemptAt = abandonedAt == null ? now.plus(this.backoff(attempts)) : null;
+    this.transaction.executeWithoutResult(status ->
+      this.repository.recordFailure(entry.id(), attempts, nextAttemptAt, abandonedAt)
+    );
+  }
+
+  private Duration backoff(final int attempts) {
+    final var shift = Math.min(attempts - 1, 8);
+    final var seconds = 1L << shift;
+    final var delay = Duration.ofSeconds(seconds);
+    return delay.compareTo(MAX_BACKOFF) > 0 ? MAX_BACKOFF : delay;
+  }
+
   private Object deserialize(final OutboxEntry entry) {
+    this.requireTrusted(entry.eventType());
     try {
       final var type = Class.forName(entry.eventType());
       return this.jsonMapper.readValue(entry.payload(), type);
@@ -110,8 +151,23 @@ public class OutboxRelay {
     }
   }
 
-  int batchSize() {
-    return this.batchSize;
+  /**
+   * A mesma regra do {@code __TypeId__} que chega do broker: só um pacote listado em
+   * {@link TrustedEventPackages} pode ser instanciado, por igualdade, não por prefixo.
+   * A checagem vem antes do {@code Class.forName}, que executaria o inicializador estático
+   * de qualquer classe do classpath.
+   */
+  private void requireTrusted(final String eventType) {
+    final var separator = eventType.lastIndexOf('.');
+    final var packageName = separator < 0 ? "" : eventType.substring(0, separator);
+    final var trusted = Arrays.stream(TrustedEventPackages.names()).anyMatch(packageName::equals);
+    if (!trusted) {
+      throw new IllegalStateException("Outbox event type is not in a trusted package: " + eventType);
+    }
+  }
+
+  Duration roundBudget() {
+    return this.roundBudget;
   }
 
 }

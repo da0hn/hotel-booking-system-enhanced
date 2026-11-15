@@ -60,11 +60,6 @@ public class BookingPeriod {
     return this.checkIn.isBefore(other.checkOut) && this.checkOut.isAfter(other.checkIn);
   }
 
-  public boolean isContainedIn(final BookingPeriod other) {
-    return this.overlaps(other);
-  }
-
-
   public LocalDate getCheckIn() {
     return this.checkIn;
   }

@@ -105,7 +105,7 @@ app:
   # saga; a retenção é a mesma janela do processed_event.
   outbox:
     relay-interval: PT1S
-    batch-size: 50
+    round-budget: PT5S
     retention: P7D
     purge-interval: PT1H
 

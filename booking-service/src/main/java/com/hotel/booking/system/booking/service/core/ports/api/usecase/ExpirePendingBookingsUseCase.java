@@ -10,6 +10,9 @@ public interface ExpirePendingBookingsUseCase {
    * Cancela as reservas {@code PENDING} mais velhas que o prazo e as devolve para quem publica
    * o evento de expiração na mesma transação.
    */
-  List<Booking> execute();
+  /**
+   * @param limit quantas reservas esta transação cancela. O chamador repete até esvaziar.
+   */
+  List<Booking> execute(int limit);
 
 }
