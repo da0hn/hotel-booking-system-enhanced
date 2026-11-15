@@ -60,14 +60,14 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
   @Override
   public List<OutboxEntry> claimPending(final int limit, final Set<String> excludedAggregates, final Instant now) {
-    final var excluded = excludedAggregates == null || excludedAggregates.isEmpty();
+    final var nothingToExclude = excludedAggregates.isEmpty();
     final var sql = CLAIM
-      + (excluded ? "" : "  and aggregate_id not in (:excluded)\n")
+      + (nothingToExclude ? "" : "  and aggregate_id not in (:excluded)\n")
       + "order by seq\nlimit :limit\nfor update skip locked";
     var query = this.jdbc.sql(sql)
       .param("limit", limit)
       .param("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC));
-    if (!excluded) {
+    if (!nothingToExclude) {
       query = query.param("excluded", excludedAggregates);
     }
     return query.query(JdbcOutboxRepository::map).list();

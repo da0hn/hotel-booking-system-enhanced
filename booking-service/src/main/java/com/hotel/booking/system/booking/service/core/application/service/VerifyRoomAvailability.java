@@ -97,11 +97,9 @@ public class VerifyRoomAvailability {
 
   /**
    * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} recusa o
-   * pedido cuja linha tem quantidade nula, zero ou negativa ({@code BookingRoom.validate()}),
-   * mas o caso de uso verifica a disponibilidade mesmo assim, antes de olhar esse resultado.
-   * Um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem indo para a
-   * DLQ. Uma quantidade negativa também passa por esta soma, sem efeito: o pedido já saiu da
-   * validação com falha e não chega a ser gravado.
+   * pedido antes do lock, então esta soma não é o caminho do pedido inválido. Quem chama
+   * {@code execute} direto, sem essa validação, não pode tomar um {@code NullPointerException}
+   * no lugar da recusa de domínio.
    */
   private static int unitsOf(final BookingRoom bookingRoom) {
     return Optional.ofNullable(bookingRoom.getQuantity()).orElse(0);

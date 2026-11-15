@@ -13,7 +13,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Publica as linhas pendentes do outbox e só marca {@code published_at} depois que o broker
@@ -91,7 +93,7 @@ public class OutboxRelay {
    * @return {@code false} quando não há mais linha publicável nesta rodada
    */
   private boolean publishNext(final Set<String> failedAggregates) {
-    final var claimed = new OutboxEntry[1];
+    final var claimed = new AtomicReference<OutboxEntry>();
     try {
       final var found = this.transaction.execute(status -> {
         final var pending = this.repository.claimPending(1, failedAggregates, this.clock.instant());
@@ -99,27 +101,29 @@ public class OutboxRelay {
           return false;
         }
         final var entry = pending.getFirst();
-        claimed[0] = entry;
+        claimed.set(entry);
         this.broker.publishTo(entry.exchange(), entry.routingKey(), this.deserialize(entry));
         this.repository.markPublished(entry.id(), this.clock.instant());
         return true;
       });
       return Boolean.TRUE.equals(found);
     } catch (final RuntimeException exception) {
-      final var entry = claimed[0];
-      if (entry != null) {
-        failedAggregates.add(entry.aggregateId());
-        this.recordFailure(entry, exception);
+      final var entry = Optional.ofNullable(claimed.get());
+      if (entry.isEmpty()) {
+        throw exception;
+      }
+      entry.ifPresent(value -> {
+        failedAggregates.add(value.aggregateId());
+        this.recordFailure(value, exception);
         log.warn(
           "Outbox event stayed pending after a failed publish | aggregateId={} | eventType={} | attempt={} | reason={}",
-          entry.aggregateId(),
-          entry.eventType(),
-          entry.attempts() + 1,
+          value.aggregateId(),
+          value.eventType(),
+          value.attempts() + 1,
           exception.getMessage()
         );
-        return true;
-      }
-      throw exception;
+      });
+      return true;
     }
   }
 

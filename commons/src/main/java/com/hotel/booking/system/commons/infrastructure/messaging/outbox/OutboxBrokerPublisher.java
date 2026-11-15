@@ -14,4 +14,13 @@ public final class OutboxBrokerPublisher extends AbstractRabbitPublisher<Object>
     super(rabbitTemplate, "outbox", "outbox");
   }
 
+  /**
+   * O destino mora na linha do outbox. Este método herdado publicaria numa exchange que não
+   * existe; o relay usa {@link #publishTo(String, String, Object)}.
+   */
+  @Override
+  public void publish(final Object event) {
+    throw new UnsupportedOperationException("O relay publica com publishTo, usando o destino gravado na linha");
+  }
+
 }

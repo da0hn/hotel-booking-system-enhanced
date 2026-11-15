@@ -338,6 +338,30 @@ class BookingApplicationTest {
   }
 
   @Test
+  @DisplayName("pagamento recusado depois do cancelamento não grava de novo")
+  void pagamentoRecusadoDepoisDoCancelamentoNaoGravaDeNovo() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentFailed.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CANCELED)
+      .failureMessages(List.of("declined"))
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class);
+
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
+  }
+
+  @Test
   @DisplayName("não persiste atualização de pedido inexistente")
   void pedidoInexistenteNaoPersiste() {
     assertThatThrownBy(() -> new UpdateBookingStatusUseCaseImpl(this.repository).execute(

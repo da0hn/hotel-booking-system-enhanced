@@ -22,12 +22,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Exercita as duas consultas escritas à mão do {@code booking-service}.
+ * Exercita as consultas escritas à mão do {@code booking-service}.
  *
- * <p>A {@code findByRoomIdAndPeriod} é o coração da regra de disponibilidade: é ela que
- * decide se um quarto está livre no período pedido. Como compara colunas {@code date}
- * com desigualdades estritas, ela depende de como o banco compara datas — e é exatamente o tipo de coisa
- * que uma troca de engine muda em silêncio.</p>
+ * <p>{@code sumOccupiedUnits} é o coração da regra de disponibilidade: é ela que decide
+ * quantas unidades do quarto estão ocupadas no período pedido. Como compara colunas
+ * {@code date} com desigualdades estritas, ela depende de como o banco compara datas — e é
+ * exatamente o tipo de coisa que uma troca de engine muda em silêncio. As outras duas buscam
+ * a reserva pelo pedido e travam linhas para a expiração e a mudança de status.</p>
  */
 @DisplayName("Consultas de reserva por período")
 class BookingJpaRepositoryIT extends AbstractDatabaseIT {

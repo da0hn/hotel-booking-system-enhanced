@@ -74,6 +74,7 @@ class BookingDomainContractTest {
     final var canceled = this.booking(order, customer, BookingStatus.PENDING);
     canceled.changeStatusTo(BookingStatus.CANCELED);
     assertThatThrownBy(() -> canceled.changeStatusTo(BookingStatus.CONFIRMED)).isInstanceOf(BookingDomainException.class);
+    assertThatThrownBy(() -> canceled.changeStatusTo(BookingStatus.CANCELED)).isInstanceOf(BookingDomainException.class);
   }
 
   @Test

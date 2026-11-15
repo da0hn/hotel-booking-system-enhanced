@@ -15,6 +15,7 @@ import lombok.experimental.SuperBuilder;
 
 import java.time.LocalDate;
 import java.util.Objects;
+import java.util.Optional;
 
 @SuperBuilder
 public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
@@ -132,8 +133,8 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
     return this.currentStatus;
   }
 
-  public Long getVersion() {
-    return this.version;
+  public Optional<Long> getVersion() {
+    return Optional.ofNullable(this.version);
   }
 
 }
