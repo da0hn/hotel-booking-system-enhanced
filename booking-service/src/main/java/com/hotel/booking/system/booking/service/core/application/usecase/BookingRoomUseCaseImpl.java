@@ -55,21 +55,22 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
   }
 
   /**
-   * Idempotente pela chave de negócio: se o pedido já tem reserva, devolve a existente, marcada
-   * como repetida, em vez de gravar outra. A busca vem <em>antes</em> da verificação de
-   * disponibilidade de propósito — depois dela, a reserva do primeiro pedido contaria como
-   * ocupação do quarto e a repetição seria respondida como "indisponível", derrubando na saga
-   * um pedido que está reservado.
-   *
-   * <p>E vem <em>depois</em> do lock dos quartos, também de propósito. Sem o lock, duas entregas
-   * do mesmo pedido passam pela busca sem ver nada, e a segunda, ao acordar do lock que a
-   * verificação toma, enxerga a reserva da primeira como ocupação e cai no mesmo "indisponível".
-   * Com o lock antes, a segunda espera a primeira comitar e então a encontra. A constraint
-   * {@code booking_reservation_order_id_uk} segue como rede de segurança do banco.</p>
+   * A validação de domínio vem antes do lock: um pedido que o domínio já recusou não espera o
+   * quarto. O lock vem antes da busca por pedido repetido, e a busca vem antes da verificação
+   * de disponibilidade. Sem o lock, duas entregas do mesmo pedido passam pela busca sem ver
+   * nada, e a segunda conta a reserva da primeira como ocupação. Sem a busca antes da
+   * verificação, a repetição seria respondida como "indisponível" para um pedido que está
+   * reservado. A constraint {@code booking_reservation_order_id_uk} segue como rede de
+   * segurança do banco.
    */
   @Override
   public BookingRoomOutput execute(final BookingRoomInput input) {
     final var booking = this.mapper.bookingRoomInputToBooking(input);
+    final var rejection = FailureMessages.empty();
+    this.initializeAndValidate(booking, rejection);
+    if (rejection.isNotEmpty()) {
+      return new BookingRoomOutput(booking, CustomerReservationStatus.RESERVATION_FAILED, rejection);
+    }
     this.verifyRoomAvailability.lockRooms(booking);
     return this.bookingRepository.findBookingByReservationOrderId(booking.getReservationOrderId())
       .map(this::duplicateOf)
@@ -78,7 +79,6 @@ public class BookingRoomUseCaseImpl implements BookingRoomUseCase {
 
   private BookingRoomOutput create(final Booking booking) {
     final var failureMessages = FailureMessages.empty();
-    this.initializeAndValidate(booking, failureMessages);
     this.verifyRoomAvailability(booking, failureMessages);
     if (failureMessages.isNotEmpty()) {
       return new BookingRoomOutput(booking, CustomerReservationStatus.RESERVATION_FAILED, failureMessages);
