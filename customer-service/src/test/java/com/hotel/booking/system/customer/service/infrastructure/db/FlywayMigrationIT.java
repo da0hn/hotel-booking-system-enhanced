@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010");
   }
 
   @Test
@@ -60,7 +60,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   @DisplayName("cria as tabelas com as colunas esperadas")
   @CsvSource(delimiter = ';', value = {
     "customer; id, name, cpf",
-    "reservation_order; id, customer_id, hotel_id, guests, check_in, check_out, total_price, current_status",
+    "reservation_order; id, customer_id, hotel_id, guests, check_in, check_out, total_price, current_status, version",
     "reservation_order_history; id, reservation_order_id, status, occurred_at, failure_reason",
   })
   void criaTabelasComColunasEsperadas(final String tabela, final String colunas) {

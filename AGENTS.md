@@ -489,7 +489,9 @@ escolha estão nos Javadocs; o que não se deduz do código:
   um status *anterior* (o pedido já em `PAYMENT_CONFIRMED` e chega de novo um `AWAITING_PAYMENT`)
   não é reconhecida, porque isso pede uma tabela de transições permitidas, e uma regra mais larga
   barraria uma volta legítima, como uma nova tentativa de pagamento. A corrida de duas transações
-  que leem o pedido ao mesmo tempo também fica de fora: é a #53.
+  que leem o pedido ao mesmo tempo é barrada pelo `@Version` de `reservation_order` (#53); o
+  adaptador força o incremento da versão em todo `save`, inclusive no da transição que só
+  acrescenta uma entrada à timeline, que o Hibernate não contaria sozinho.
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
 - **A resposta sai pelo outbox, na mesma transação do efeito.** Morrer entre o commit e o ack do
@@ -525,8 +527,9 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   `UpdateBookingStatusUseCaseImpl` trava a reserva (`for update`) antes de mudar o status: a
   expiração e o pagamento não gravam um por cima do outro. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
-  leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
-  por último (issue #53).
+  leem o pedido e gravam com `@Version` em `reservation_order`. Se as duas transações leram o
+  pedido antes de qualquer uma gravar, a que commita por último falha em vez de deixar
+  `current_status` para trás da timeline; o retry do listener aplica o evento de novo.
 - **O retry vive em `spring.rabbitmq.listener.simple.retry.*`** (`max-retries: 2`, backoff
   exponencial de 1s a 10s). O Boot 4 **ignora em silêncio** chave que não conhece, como
   `max-attempts`: o `DeadLetterConfigurationTest` de cada serviço lê o `application.yml` real

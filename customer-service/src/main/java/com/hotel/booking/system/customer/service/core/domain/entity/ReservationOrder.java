@@ -15,6 +15,7 @@ import lombok.experimental.SuperBuilder;
 
 import java.time.LocalDate;
 import java.util.Objects;
+import java.util.Optional;
 
 @SuperBuilder
 public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
@@ -28,6 +29,13 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
   private LocalDate checkOut;
   private Money totalPrice;
   private CustomerReservationStatus currentStatus;
+
+  /**
+   * Versão lida do banco. Viaja com o agregado para o {@code UPDATE} condicional: sem ela, o
+   * save trataria o pedido como novo e falharia, e a versão é o que torna a gravação condicional
+   * ao que foi lido.
+   */
+  private Long version;
 
 
   protected ReservationOrder(final ReservationOrderId id) {
@@ -78,15 +86,20 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
    * de pagamento, se a saga passar a ter uma), e uma tabela de transições permitidas é uma decisão
    * de domínio maior que esta. Fica de fora, portanto, a reentrega tardia de um status <em>anterior</em> à
    * última entrada. E a corrida de duas transações que leem o pedido antes de qualquer uma gravar
-   * não se resolve aqui: é a issue #53.
+   * não se resolve pela comparação da timeline: as duas ainda não veem a entrada uma da outra.
+   * Quem barra é a {@code version} gravada com o pedido, que o adaptador incrementa em todo
+   * save, inclusive na transição que só acrescenta uma entrada à timeline. A segunda transação
+   * falha ao gravar, e o retry relê o pedido já commitado.
    */
   private boolean record(final ReservationOrderTimeline transition) {
     final var repeated = this.timeline.latest().filter(transition::isSameTransitionAs).isPresent();
     if (repeated) {
       return false;
     }
-    this.currentStatus = transition.getStatus();
     this.timeline.add(transition);
+    this.currentStatus = this.timeline.latest()
+      .map(ReservationOrderTimeline::getStatus)
+      .orElseThrow();
     return true;
   }
 
@@ -120,6 +133,10 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
 
   public CustomerReservationStatus getCurrentStatus() {
     return this.currentStatus;
+  }
+
+  public Optional<Long> getVersion() {
+    return Optional.ofNullable(this.version);
   }
 
 }
