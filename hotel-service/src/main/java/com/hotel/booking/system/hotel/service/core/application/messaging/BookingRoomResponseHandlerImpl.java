@@ -1,11 +1,13 @@
 package com.hotel.booking.system.hotel.service.core.application.messaging;
 
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomConfirmedEvent;
+import com.hotel.booking.system.commons.core.domain.event.BookingRoomExpiredEvent;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomFailedEvent;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomPendingEvent;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomResponseEvent;
 import com.hotel.booking.system.commons.core.domain.event.PaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingCompletedEvent;
+import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingPaymentFailedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingPaymentRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingRejectedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingStatusUpdatedEvent;
@@ -49,6 +51,14 @@ public class BookingRoomResponseHandlerImpl implements BookingRoomResponseHandle
         this.customerBookingRoomUpdatedPublisher.publish(bookingRoomStatusUpdatedEvent);
         log.info("Customer service notified | reservationOrderId={}", e.getReservationOrderId());
       }
+      case final BookingRoomExpiredEvent e -> {
+        log.info(
+          "Booking expired, notifying customer service | reservationOrderId={}",
+          e.getReservationOrderId()
+        );
+        this.customerBookingRoomUpdatedPublisher.publish(this.bookingRoomExpiredEventToCustomerBookingPaymentFailedEvent(e));
+        log.info("Customer service notified | reservationOrderId={}", e.getReservationOrderId());
+      }
       case final BookingRoomFailedEvent e -> {
         log.info(
           "Booking room failed with error messages \"{}\". Notifying customer service | reservationOrderId={}",
@@ -86,6 +96,15 @@ public class BookingRoomResponseHandlerImpl implements BookingRoomResponseHandle
       .reservationOrderId(event.getReservationOrderId())
       .customerId(event.getCustomerId())
       .status(CustomerReservationStatus.AWAITING_PAYMENT)
+      .build();
+  }
+
+  private CustomerBookingStatusUpdatedEvent bookingRoomExpiredEventToCustomerBookingPaymentFailedEvent(final BookingRoomExpiredEvent event) {
+    return CustomerBookingPaymentFailedEvent.builder()
+      .reservationOrderId(event.getReservationOrderId())
+      .customerId(event.getCustomerId())
+      .failureMessages(event.getFailureMessages())
+      .status(CustomerReservationStatus.PAYMENT_FAILED)
       .build();
   }
 

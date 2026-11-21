@@ -39,6 +39,7 @@ public final class ApplicationMessage {
   public static final String BOOKING_TOTAL_PRICE_INVALID = "booking.total-price.invalid";
   public static final String BOOKING_ROOM_QUANTITY_INVALID = "booking.room.quantity.invalid";
   public static final String BOOKING_STATUS_NOT_NULL = "booking.status.must.not.be.null";
+  public static final String BOOKING_STATUS_TRANSITION_INVALID = "booking.status.transition.invalid";
   public static final String BOOKING_NOT_FOUND = "booking.not.found";
   public static final String CUSTOMER_RESERVATION_ORDER_TIMELINE_NOT_NULL = "customer.reservation-order.timeline.must.not.be.null";
   public static final String CUSTOMER_RESERVATION_ORDER_STATUS_INVALID_STATE = "customer.reservation-order.status.invalid-state";
