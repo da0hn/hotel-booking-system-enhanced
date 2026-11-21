@@ -1,17 +1,26 @@
 package com.hotel.booking.system.booking.service.infrastructure.db;
 
-import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
-import com.hotel.booking.system.booking.service.core.domain.entity.BookingPeriod;
-import com.hotel.booking.system.booking.service.core.domain.entity.BookingRoom;
+import com.hotel.booking.system.booking.service.core.application.mapper.BookingUseCaseMapperImpl;
+import com.hotel.booking.system.booking.service.core.application.messaging.BookingRoomRequestedHandlerImpl;
+import com.hotel.booking.system.booking.service.core.application.service.BookingInitializer;
+import com.hotel.booking.system.booking.service.core.application.service.VerifyRoomAvailability;
+import com.hotel.booking.system.booking.service.core.application.usecase.BookingRoomUseCaseImpl;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.RoomEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.mapper.impl.BookingDatabaseMapperImpl;
 import com.hotel.booking.system.booking.service.infrastructure.db.repository.RoomJpaRepository;
 import com.hotel.booking.system.booking.service.infrastructure.db.repository.adapters.BookingRepositoryAdapter;
 import com.hotel.booking.system.booking.service.infrastructure.db.repository.adapters.RoomRepositoryAdapter;
-import com.hotel.booking.system.commons.core.domain.valueobject.CustomerId;
-import com.hotel.booking.system.commons.core.domain.valueobject.Money;
-import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.listener.BookingRoomRequestedRabbitMQListener;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
+import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
+import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
+import com.hotel.booking.system.commons.core.domain.event.BookingRoomItemRepresentation;
+import com.hotel.booking.system.commons.core.domain.event.BookingRoomRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
+import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.JdbcIdempotencyConfiguration;
+import com.hotel.booking.system.commons.infrastructure.messaging.outbox.JacksonOutbox;
+import com.hotel.booking.system.commons.infrastructure.messaging.outbox.JdbcOutboxRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +33,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -37,12 +47,23 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Ordem dos locks e limite de espera (issue #56).
+ *
+ * <p>Os dois quartos têm ids fixos, com {@code roomA} menor que {@code roomB}, e são gravados na
+ * ordem inversa ({@code roomB} primeiro). Assim a ordem física das linhas no heap não coincide
+ * com a ordem de id: o único jeito de o PostgreSQL travar {@code roomA} antes de {@code roomB} é
+ * o {@code order by} da consulta.</p>
  */
-@Import({BookingRepositoryAdapter.class, RoomRepositoryAdapter.class, BookingDatabaseMapperImpl.class})
+@Import({
+  BookingRepositoryAdapter.class,
+  RoomRepositoryAdapter.class,
+  BookingDatabaseMapperImpl.class,
+  JdbcIdempotencyConfiguration.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @DisplayName("Lock dos quartos")
 class RoomLockIT extends AbstractDatabaseIT {
@@ -62,6 +83,9 @@ class RoomLockIT extends AbstractDatabaseIT {
   private BookingDatabaseMapperImpl mapper;
 
   @Autowired
+  private IdempotentEventConsumer consumer;
+
+  @Autowired
   private EntityManager entityManager;
 
   @Autowired
@@ -79,11 +103,11 @@ class RoomLockIT extends AbstractDatabaseIT {
   @BeforeEach
   void criaQuartos() {
     this.transaction = new TransactionTemplate(this.transactionManager);
-    this.roomA = UUID.randomUUID();
-    this.roomB = UUID.randomUUID();
+    this.roomA = UUID.fromString("10000000-0000-4000-8000-00000000000a");
+    this.roomB = UUID.fromString("20000000-0000-4000-8000-00000000000b");
     this.transaction.executeWithoutResult(status -> {
-      this.persistRoom(this.roomA);
       this.persistRoom(this.roomB);
+      this.persistRoom(this.roomA);
     });
   }
 
@@ -95,6 +119,8 @@ class RoomLockIT extends AbstractDatabaseIT {
       this.jdbc.sql("delete from booking where check_in = :checkIn").param("checkIn", CHECK_IN).update();
       this.jdbc.sql("delete from room where id in (:a, :b)")
         .param("a", this.roomA.toString()).param("b", this.roomB.toString()).update();
+      this.jdbc.sql("delete from processed_event where event_type like '%BookingRoomRequestedEvent'").update();
+      this.jdbc.sql("delete from outbox_event where exchange = :exchange").param("exchange", "exchange.lock-it").update();
     });
   }
 
@@ -117,43 +143,183 @@ class RoomLockIT extends AbstractDatabaseIT {
     assertThat(failures).hasValue(0);
   }
 
+  /**
+   * Prova o {@code order by}, e não só a ausência de deadlock: um pedido que pede {@code roomB}
+   * e depois {@code roomA} fica esperando o menor, que outra transação segura, e enquanto
+   * espera <em>não</em> pode já ter o maior. Uma terceira conexão tenta o lock do maior sem
+   * esperar: ela só consegue se o pedido em espera ainda não o tomou. Sem o {@code order by} o
+   * PostgreSQL percorre as linhas na ordem física ({@code roomB} primeiro) e o pedido em espera
+   * já segura {@code roomB}.
+   */
   @Test
-  @DisplayName("quem espera o lock além do limite falha sem gravar a reserva")
-  void esperaAlemDoLimiteNaoGravaAReserva() throws Exception {
+  @DisplayName("trava os quartos em ordem de id: quem espera o menor ainda não segura o maior")
+  void quemEsperaOMenorAindaNaoSeguraOMaior() throws Exception {
+    final var holding = new CountDownLatch(1);
+    final var release = new CountDownLatch(1);
+    final var holder = Executors.newSingleThreadExecutor();
+    final var waiter = Executors.newSingleThreadExecutor();
+    try {
+      holder.submit(() -> this.transaction.executeWithoutResult(status -> {
+        this.rooms.lockAllByRoomId(List.of(RoomId.of(this.roomA)));
+        holding.countDown();
+        this.await(release);
+      }));
+      assertThat(holding.await(5, TimeUnit.SECONDS)).isTrue();
+      final var waiting = waiter.submit(() -> this.transaction.executeWithoutResult(status ->
+        this.rooms.lockAllByRoomId(List.of(RoomId.of(this.roomB), RoomId.of(this.roomA)))
+      ));
+      this.awaitSomeoneBlockedOnALock();
+
+      assertThatCode(() -> this.transaction.executeWithoutResult(status ->
+        this.jdbc.sql("select id from room where id = :id for no key update nowait")
+          .param("id", this.roomB.toString())
+          .query(String.class)
+          .single()
+      )).as("o pedido em espera ainda não tomou o lock do quarto de id maior").doesNotThrowAnyException();
+
+      release.countDown();
+      waiting.get(5, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      holder.shutdownNow();
+      waiter.shutdownNow();
+    }
+  }
+
+  /**
+   * Prova o valor e o escopo do {@code lock_timeout}: o adaptador padrão usa os 10 s do
+   * {@code application.yml}, o impaciente os 300 ms que recebeu, e o limite some com a transação
+   * (o {@code set_config} é local), em vez de ficar na conexão devolvida ao pool.
+   */
+  @Test
+  @DisplayName("limita a espera em 10 s com o adaptador padrão, 300 ms com o impaciente, e só dentro da transação")
+  void lockTimeoutTemOValorConfiguradoESoVaiAteOFimDaTransacao() {
+    final var impatient = this.impatient();
+
+    final var padrao = this.transaction.execute(status -> {
+      this.rooms.lockAllByRoomId(List.of(RoomId.of(this.roomA)));
+      return this.lockTimeoutDaSessao();
+    });
+    final var curto = this.transaction.execute(status -> {
+      impatient.lockAllByRoomId(List.of(RoomId.of(this.roomA)));
+      return this.lockTimeoutDaSessao();
+    });
+    final var depoisDoCommit = this.transaction.execute(status -> this.lockTimeoutDaSessao());
+
+    assertThat(padrao).isEqualTo("10s");
+    assertThat(curto).isEqualTo("300ms");
+    assertThat(depoisDoCommit).as("o limite não vaza para a conexão que volta ao pool").isEqualTo("0");
+  }
+
+  /**
+   * O estouro do limite atravessa a cadeia inteira: listener, consumidor idempotente, handler, caso
+   * de uso, publisher do outbox e repositórios reais. A exceção chega a quem chamou (que é o que
+   * deixa o retry e a DLQ agirem), e a transação desfaz tudo o que ela já tinha gravado: o
+   * registro do evento. Não vira reserva, nem resposta de falha de negócio no outbox.
+   */
+  @Test
+  @DisplayName("o estouro do limite atravessa o listener: sem reserva, sem registro do evento e sem resposta no outbox")
+  void estouroDoLimiteAtravessaOListenerSemGravarNada() throws Exception {
     final var holding = new CountDownLatch(1);
     final var release = new CountDownLatch(1);
     final var holder = Executors.newSingleThreadExecutor();
     holder.submit(() -> this.transaction.executeWithoutResult(status -> {
       this.rooms.lockAllByRoomId(List.of(RoomId.of(this.roomA)));
       holding.countDown();
-      try {
-        assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
-      } catch (final InterruptedException exception) {
-        Thread.currentThread().interrupt();
-        throw new IllegalStateException(exception);
-      }
+      this.await(release);
     }));
     assertThat(holding.await(5, TimeUnit.SECONDS)).isTrue();
-    final var impatient = new RoomRepositoryAdapter(
+    final var listener = this.listenerComEspera(this.impatient());
+    final var event = this.eventOf(this.roomA);
+
+    assertThatThrownBy(() -> this.transaction.executeWithoutResult(status -> listener.listen(event)))
+      .hasStackTraceContaining("lock timeout");
+
+    release.countDown();
+    holder.shutdown();
+    assertThat(holder.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(this.count("select count(*) from booking where reservation_order_id = :id", event.getReservationOrderId()))
+      .as("a reserva não foi gravada").isZero();
+    assertThat(this.count("select count(*) from processed_event where event_id = :id", event.getEventId()))
+      .as("o registro do evento foi desfeito").isZero();
+    assertThat(this.count("select count(*) from outbox_event where aggregate_id = :id", event.getReservationOrderId()))
+      .as("nenhuma resposta, nem de falha de negócio, foi gravada no outbox").isZero();
+  }
+
+  private BookingRoomRequestedRabbitMQListener listenerComEspera(final RoomRepositoryAdapter roomRepository) {
+    final var useCaseMapper = new BookingUseCaseMapperImpl();
+    final var useCase = new BookingRoomUseCaseImpl(
+      this.bookings,
+      useCaseMapper,
+      new VerifyRoomAvailability(this.bookings, roomRepository),
+      new BookingInitializer()
+    );
+    final var publisher = new BookingRoomResponsePublisherImpl(
+      new JacksonOutbox(new JdbcOutboxRepository(this.jdbc), JsonMapper.builder().build()),
+      new RoutingKeyProperties("request", "response", "change"),
+      new ExchangeProperties("exchange.lock-it")
+    );
+    return new BookingRoomRequestedRabbitMQListener(
+      new BookingRoomRequestedHandlerImpl(useCase, useCaseMapper, publisher),
+      this.consumer
+    );
+  }
+
+  private RoomRepositoryAdapter impatient() {
+    return new RoomRepositoryAdapter(
       this.roomJpaRepository,
       this.mapper,
       this.entityManager,
       Duration.ofMillis(300)
     );
-    final var order = ReservationOrderId.newInstance();
+  }
 
-    assertThatThrownBy(() -> this.transaction.executeWithoutResult(status -> {
-      impatient.lockAllByRoomId(List.of(RoomId.of(this.roomA)));
-      this.bookings.save(this.booking(order, this.roomA));
-    })).hasStackTraceContaining("lock timeout");
+  private BookingRoomRequestedEvent eventOf(final UUID room) {
+    return BookingRoomRequestedEvent.builder()
+      .reservationOrderId(UUID.randomUUID().toString())
+      .customerId(UUID.randomUUID().toString())
+      .price(new BigDecimal("10.0000"))
+      .guests(2)
+      .checkIn(CHECK_IN)
+      .checkOut(CHECK_IN.plusDays(2))
+      .rooms(List.of(BookingRoomItemRepresentation.builder()
+        .roomId(room.toString())
+        .quantity(1)
+        .price(new BigDecimal("10.0000"))
+        .build()))
+      .build();
+  }
 
-    release.countDown();
-    holder.shutdown();
-    assertThat(holder.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
-    assertThat(this.jdbc.sql("select count(*) from booking where reservation_order_id = :order")
-      .param("order", order.toString())
-      .query(Long.class)
-      .single()).isZero();
+  private String lockTimeoutDaSessao() {
+    return this.jdbc.sql("select current_setting('lock_timeout')").query(String.class).single();
+  }
+
+  private long count(final String sql, final String id) {
+    return this.jdbc.sql(sql).param("id", id).query(Long.class).single();
+  }
+
+  /** Espera a transação do pedido que pede o menor quarto ficar bloqueada num lock de linha. */
+  private void awaitSomeoneBlockedOnALock() throws InterruptedException {
+    final var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      final var blocked = this.jdbc.sql("select count(*) from pg_stat_activity where wait_event_type = 'Lock'")
+        .query(Long.class)
+        .single();
+      if (blocked > 0) {
+        return;
+      }
+      Thread.sleep(50);
+    }
+    throw new AssertionError("nenhuma transação ficou esperando o lock do quarto");
+  }
+
+  private void await(final CountDownLatch release) {
+    try {
+      assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+    } catch (final InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(exception);
+    }
   }
 
   private void lockInOrder(final CyclicBarrier start, final AtomicInteger failures, final UUID first, final UUID second) {
@@ -175,22 +341,6 @@ class RoomLockIT extends AbstractDatabaseIT {
     room.setCapacity(2);
     room.setQuantity(4);
     this.entityManager.persist(room);
-  }
-
-  private Booking booking(final ReservationOrderId order, final UUID room) {
-    final var booking = Booking.builder()
-      .reservationOrderId(order)
-      .customerId(CustomerId.newInstance())
-      .bookingPeriod(BookingPeriod.of(CHECK_IN, CHECK_IN.plusDays(2)))
-      .totalPrice(Money.of(new BigDecimal("10.0000")))
-      .bookingRooms(List.of(BookingRoom.builder()
-        .roomId(RoomId.of(room))
-        .quantity(1)
-        .price(Money.of(new BigDecimal("10.0000")))
-        .build()))
-      .build();
-    booking.initialize();
-    return booking;
   }
 
 }

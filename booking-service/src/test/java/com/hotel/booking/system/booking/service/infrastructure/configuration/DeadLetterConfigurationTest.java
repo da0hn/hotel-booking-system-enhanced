@@ -127,6 +127,16 @@ class DeadLetterConfigurationTest {
     assertThat(binder.bind("app.outbox.purge-interval", Duration.class).get()).isEqualTo(Duration.ofHours(1));
   }
 
+  @Test
+  @DisplayName("limita a espera pelo lock do quarto em 10 s")
+  void limitaAEsperaPeloLockDoQuartoEm10Segundos() throws IOException {
+    final var limite = Binder.get(ambienteDoApplicationYml())
+      .bind("app.booking.room-lock-timeout", Duration.class);
+
+    assertThat(limite.isBound()).isTrue();
+    assertThat(limite.get()).isEqualTo(Duration.ofSeconds(10));
+  }
+
   /**
    * Lê o {@code application.yml} de verdade, e não valores montados no teste: o Boot ignora
    * em silêncio uma chave que não existe, então uma propriedade com o nome errado (como o

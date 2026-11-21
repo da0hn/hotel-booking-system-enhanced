@@ -86,8 +86,10 @@ management:
 
 app:
   booking:
-    # Espera máxima pelo lock do quarto, por tentativa de entrega. O pior caso até a DLQ é
-    # cerca de três vezes este limite mais o backoff do retry (1 s, depois 2 s).
+    # Espera máxima por cada lock de quarto: o limite é por quarto esperado, não por pedido. Com
+    # um quarto, o pior caso até a DLQ é cerca de três vezes este limite mais o backoff do retry
+    # (1 s, depois 2 s); com N quartos segurados por outras transações, cada tentativa espera até
+    # N vezes. Precisa ser de 1 ms ou mais: zero desliga o limite no PostgreSQL.
     room-lock-timeout: 10s
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
