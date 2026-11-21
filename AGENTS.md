@@ -397,8 +397,10 @@ handler correspondente no `hotel-service`.
   inicializador estático de qualquer classe do classpath.
 - **`abandoned_at` é só para falha da própria linha.** O relay preenche a coluna na hora, e
   loga em `ERROR` com `aggregateId` e `eventType`, quando o tipo está fora de
-  `TrustedEventPackages`, a classe não está no classpath, ou o broker devolve a mensagem
-  (`MessageUnroutableException`). Falha de transporte incrementa `attempts` e agenda
+  `TrustedEventPackages`, a classe não está no classpath, o payload não é lido pelo tipo (o
+  Jackson recusa o JSON, como quando o evento mudou entre a gravação e a publicação), ou o
+  broker devolve a mensagem (`MessageUnroutableException`). O log leva só o tipo, não o
+  conteúdo recusado. Falha de transporte incrementa `attempts` e agenda
   `next_attempt_at` com backoff de 1s, 2s, 4s… até o teto de 5 minutos, sem abandonar: a
   linha espera o broker voltar, e enquanto espera segura os eventos seguintes do mesmo
   agregado. Para reprocessar uma linha abandonada, zere `abandoned_at`, `next_attempt_at` e
@@ -407,9 +409,9 @@ handler correspondente no `hotel-service`.
   `processed_event`.
 - **O relay não espera a fila esvaziar para devolver a thread.** Cada invocação publica
   enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
-  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. Os serviços com outbox
-  põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
-  thread, e nela o relay, a expiração de `PENDING` e os expurgos se bloqueariam.
+  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. Quem importa
+  `JdbcOutboxConfiguration` põe `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
+  thread, e nela o relay e os expurgos se bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.

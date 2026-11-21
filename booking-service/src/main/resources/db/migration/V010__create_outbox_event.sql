@@ -22,6 +22,8 @@ create index if not exists outbox_event_pending_idx
     on outbox_event (aggregate_id, seq)
     where published_at is null;
 
--- Serve ao expurgo, que apaga por published_at.
+-- Serve ao expurgo, que apaga por published_at. É parcial porque o expurgo só olha a linha já
+-- publicada: um índice total guardaria também uma entrada nula por insert, que ninguém lê.
 create index if not exists outbox_event_published_at_idx
-    on outbox_event (published_at);
+    on outbox_event (published_at)
+    where published_at is not null;

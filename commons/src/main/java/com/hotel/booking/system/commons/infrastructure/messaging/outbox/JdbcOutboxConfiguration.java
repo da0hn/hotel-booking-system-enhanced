@@ -16,9 +16,9 @@ import java.time.Clock;
 import java.time.Duration;
 
 /**
- * Outbox no banco do serviço. O {@code hotel-service} e o {@code booking-service} importam esta
- * configuração: são eles que gravam estado e publicam evento na mesma transação. O
- * {@code payment-service} não tem banco e continua publicando direto pelo
+ * Outbox no banco do serviço, para quem grava estado e publica evento na mesma transação: o
+ * {@code hotel-service} e o {@code booking-service}. O serviço adota o outbox importando esta
+ * configuração. O {@code payment-service} não tem banco e continua publicando direto pelo
  * {@code AbstractRabbitPublisher}; o {@code customer-service} só consome.
  *
  * <p>O agendador já nasce da configuração de idempotência, que estes serviços também importam.
