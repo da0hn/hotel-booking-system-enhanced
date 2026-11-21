@@ -391,6 +391,25 @@ handler correspondente no `hotel-service`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
   a dá como entregue. `PublisherConfirmsConfigurationTest` guarda as chaves nos três serviços
   que publicam, e `PublisherDeliveryIT` prova o comportamento contra um RabbitMQ real.
+- **O relay confere o pacote antes do `Class.forName`.** A mesma lista
+  `TrustedEventPackages` do listener vale aqui: um subpacote novo de evento entra nela ou
+  o relay abandona a linha. A checagem vem antes do `Class.forName`, que executaria o
+  inicializador estático de qualquer classe do classpath.
+- **`abandoned_at` é só para falha da própria linha.** O relay preenche a coluna na hora, e
+  loga em `ERROR` com `aggregateId` e `eventType`, quando o tipo está fora de
+  `TrustedEventPackages`, a classe não está no classpath, ou o broker devolve a mensagem
+  (`MessageUnroutableException`). Falha de transporte incrementa `attempts` e agenda
+  `next_attempt_at` com backoff de 1s, 2s, 4s… até o teto de 5 minutos, sem abandonar: a
+  linha espera o broker voltar, e enquanto espera segura os eventos seguintes do mesmo
+  agregado. Para reprocessar uma linha abandonada, zere `abandoned_at`, `next_attempt_at` e
+  `attempts`; o relay pega na rodada seguinte. O expurgo só apaga linha já publicada, depois
+  de `app.outbox.retention` (um dia): o payload não serve à deduplicação, que mora no
+  `processed_event`.
+- **O relay não espera a fila esvaziar para devolver a thread.** Cada invocação publica
+  enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
+  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. Os serviços com outbox
+  põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
+  thread, e nela o relay, a expiração de `PENDING` e os expurgos se bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.

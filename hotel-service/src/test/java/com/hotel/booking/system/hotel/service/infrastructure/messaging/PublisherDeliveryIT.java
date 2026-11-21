@@ -1,6 +1,7 @@
 package com.hotel.booking.system.hotel.service.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import com.hotel.booking.system.commons.core.domain.event.TrustedEventPackages;
 import com.hotel.booking.system.commons.infrastructure.messaging.AbstractRabbitPublisher;
 import org.junit.jupiter.api.DisplayName;
@@ -88,7 +89,7 @@ class PublisherDeliveryIT {
       );
 
       assertThatThrownBy(() -> publisher.publish(new PingEvent("sem-fila")))
-        .isInstanceOf(MessagePublishException.class)
+        .isInstanceOf(MessageUnroutableException.class)
         .hasMessageContaining("no queue received the message");
     });
   }

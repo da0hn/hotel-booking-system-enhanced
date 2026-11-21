@@ -1,6 +1,7 @@
 package com.hotel.booking.system.commons.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpConnectException;
@@ -65,7 +66,7 @@ class AbstractRabbitPublisherTest {
   }
 
   @Test
-  @DisplayName("lança MessagePublishException quando nenhuma fila recebeu a mensagem (return)")
+  @DisplayName("lança MessageUnroutableException quando nenhuma fila recebeu a mensagem (return)")
   void lancaQuandoNenhumaFilaRecebeu() {
     this.brokerAnswers(correlation -> {
       correlation.setReturned(new ReturnedMessage(
@@ -75,7 +76,7 @@ class AbstractRabbitPublisherTest {
     });
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isInstanceOf(MessageUnroutableException.class)
       .hasMessageContaining("NO_ROUTE")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
