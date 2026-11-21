@@ -1,5 +1,6 @@
 package com.hotel.booking.system.booking.service.infrastructure.db;
 
+import com.hotel.booking.system.booking.service.core.domain.entity.BookingPeriod;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.BookingRoomEntity;
 import com.hotel.booking.system.booking.service.infrastructure.db.entity.RoomEntity;
@@ -10,8 +11,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import org.hibernate.Session;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,10 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Exercita as duas consultas escritas à mão do {@code booking-service}.
  *
- * <p>A {@code findByRoomIdAndPeriod} é o coração da regra de disponibilidade: é ela que
- * decide se um quarto está livre no período pedido. Como compara colunas {@code date}
- * com desigualdades estritas, ela depende de como o banco compara datas — e é exatamente o tipo de coisa
- * que uma troca de engine muda em silêncio.</p>
+ * <p>{@code sumOccupiedUnits} é o coração da regra de disponibilidade: é ela que decide
+ * quantas unidades do quarto estão ocupadas no período pedido. Como compara colunas
+ * {@code date} com desigualdades estritas, ela depende de como o banco compara datas — e é
+ * exatamente o tipo de coisa que uma troca de engine muda em silêncio.</p>
  */
 @DisplayName("Consultas de reserva por período")
 class BookingJpaRepositoryIT extends AbstractDatabaseIT {
@@ -43,79 +47,42 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   @Test
   @DisplayName("acha a reserva quando o check-in cai dentro do período ocupado")
   void achaQuandoCheckInCaiDentro() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 20),
-      LocalDate.of(2023, 6, 30)
-    );
-
-    assertThat(encontradas).hasSize(1);
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 20), LocalDate.of(2023, 6, 30))).isEqualTo(1);
   }
 
   @Test
   @DisplayName("acha a reserva quando o check-out cai dentro do período ocupado")
   void achaQuandoCheckOutCaiDentro() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 10),
-      LocalDate.of(2023, 6, 20)
-    );
-
-    assertThat(encontradas).hasSize(1);
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 10), LocalDate.of(2023, 6, 20))).isEqualTo(1);
   }
 
   @Test
   @DisplayName("acha a reserva quando o período pedido cai inteiro dentro dela")
   void achaQuandoPeriodoCaiInteiroDentro() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 18),
-      LocalDate.of(2023, 6, 20)
-    );
-
-    assertThat(encontradas).hasSize(1);
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 18), LocalDate.of(2023, 6, 20))).isEqualTo(1);
   }
 
   @Test
   @DisplayName("não trata o dia de troca como conflito: o check-out de uma reserva libera o check-in da outra")
   void naoTrataODiaDeTrocaComoConflito() {
-    final var comecaNoCheckOut = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 25),
-      LocalDate.of(2023, 6, 27)
-    );
-    final var terminaNoCheckIn = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 10),
-      LocalDate.of(2023, 6, 15)
-    );
-
-    assertThat(comecaNoCheckOut).as("entra no dia em que a reserva sai").isEmpty();
-    assertThat(terminaNoCheckIn).as("sai no dia em que a reserva entra").isEmpty();
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 25), LocalDate.of(2023, 6, 27)))
+      .as("entra no dia em que a reserva sai")
+      .isZero();
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 10), LocalDate.of(2023, 6, 15)))
+      .as("sai no dia em que a reserva entra")
+      .isZero();
   }
 
   @Test
   @DisplayName("devolve vazio quando o período não encosta em nenhuma reserva")
   void devolveVazioQuandoPeriodoNaoEncosta() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 8, 1),
-      LocalDate.of(2023, 8, 10)
-    );
-
-    assertThat(encontradas).isEmpty();
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 8, 1), LocalDate.of(2023, 8, 10))).isZero();
   }
 
   @Test
-  @DisplayName("devolve as duas reservas do quarto ocupado em julho")
-  void devolveAsDuasReservasDeJulho() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_STANDARD_TAIAMA,
-      LocalDate.of(2023, 7, 10),
-      LocalDate.of(2023, 7, 15)
-    );
-
-    assertThat(encontradas).hasSize(2);
+  @DisplayName("soma as unidades das duas reservas de julho, 1 e 2")
+  void somaAsDuasReservasDeJulho() {
+    assertThat(this.occupied(QUARTO_STANDARD_TAIAMA, LocalDate.of(2023, 7, 10), LocalDate.of(2023, 7, 15))).isEqualTo(3);
   }
 
   /**
@@ -129,15 +96,9 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   @Test
   @DisplayName("acha a reserva quando o período pedido a engloba")
   void achaQuandoPeriodoEngloba() {
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2023, 6, 1),
-      LocalDate.of(2023, 7, 31)
-    );
-
-    assertThat(encontradas)
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2023, 6, 1), LocalDate.of(2023, 7, 31)))
       .as("o período engloba a reserva: o quarto está ocupado nesse intervalo")
-      .hasSize(1);
+      .isEqualTo(1);
   }
 
   /**
@@ -153,16 +114,65 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
     this.entityManager.flush();
     this.entityManager.clear();
 
-    final var encontradas = this.repository.findByRoomIdAndPeriod(
-      QUARTO_TRIPLO_DELUXE,
-      LocalDate.of(2035, 3, 2),
-      LocalDate.of(2035, 3, 4)
-    );
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2035, 3, 2), LocalDate.of(2035, 3, 4)))
+      .isEqualTo(1);
+    assertThat(ativa).isNotNull();
+  }
 
-    assertThat(encontradas).extracting(BookingEntity::getId).containsExactly(ativa);
+  @Test
+  @DisplayName("conta unidade exatamente quando BookingPeriod.overlaps diz que há conflito")
+  void consultaEOverlapsConcordam() {
+    final var existente = BookingPeriod.of(LocalDate.of(2023, 6, 15), LocalDate.of(2023, 6, 25));
+    final var janelas = java.util.List.of(
+      BookingPeriod.of(LocalDate.of(2023, 6, 20), LocalDate.of(2023, 6, 30)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 25), LocalDate.of(2023, 6, 27)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 10), LocalDate.of(2023, 6, 15)),
+      BookingPeriod.of(LocalDate.of(2023, 6, 1), LocalDate.of(2023, 7, 31)),
+      BookingPeriod.of(LocalDate.of(2023, 8, 1), LocalDate.of(2023, 8, 10))
+    );
+    for (final var janela : janelas) {
+      final var contou = this.occupied(QUARTO_TRIPLO_DELUXE, janela.getCheckIn(), janela.getCheckOut()) > 0;
+      assertThat(contou).isEqualTo(existente.overlaps(janela));
+    }
+  }
+
+  @Test
+  @DisplayName("soma as duas linhas do mesmo quarto uma vez cada")
+  void somaDuasLinhasDoMesmoQuartoSemDuplicar() {
+    final var reserva = this.gravaReserva(BookingStatus.PENDING, 2);
+    final var segunda = BookingRoomEntity.builder()
+      .id(UUID.randomUUID())
+      .room(this.entityManager.getReference(RoomEntity.class, QUARTO_TRIPLO_DELUXE))
+      .booking(this.entityManager.getReference(BookingEntity.class, reserva))
+      .price(new BigDecimal("10.0000"))
+      .quantity(3)
+      .build();
+    this.entityManager.persist(segunda);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    final var session = this.entityManager.unwrap(Session.class);
+    final var statistics = session.getSessionFactory().getStatistics();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+
+    assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2035, 3, 2), LocalDate.of(2035, 3, 4))).isEqualTo(5);
+    assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
+  }
+
+  private int occupied(final UUID room, final LocalDate checkIn, final LocalDate checkOut) {
+    final var rows = this.repository.sumOccupiedUnits(List.of(room), checkIn, checkOut);
+    if (rows.isEmpty()) {
+      return 0;
+    }
+    return ((Number) rows.getFirst()[1]).intValue();
   }
 
   private UUID gravaReserva(final BookingStatus status) {
+    return this.gravaReserva(status, 1);
+  }
+
+  private UUID gravaReserva(final BookingStatus status, final int quantity) {
     final var reserva = BookingEntity.builder()
       .id(UUID.randomUUID())
       .customerId(UUID.randomUUID())
@@ -177,7 +187,7 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
       .room(this.entityManager.getReference(RoomEntity.class, QUARTO_TRIPLO_DELUXE))
       .booking(reserva)
       .price(new BigDecimal("456.0000"))
-      .quantity(1)
+      .quantity(quantity)
       .build();
     reserva.setBookingRooms(Set.of(linha));
     this.entityManager.persist(reserva);
