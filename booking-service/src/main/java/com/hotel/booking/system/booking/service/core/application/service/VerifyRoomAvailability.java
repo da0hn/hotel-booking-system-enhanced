@@ -29,10 +29,12 @@ import java.util.stream.Collectors;
  * ({@link RoomRepository#lockAllByRoomId}); o lock dura até o commit de quem chamou, que também
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
  *
- * <p><strong>O lock tem custo, e o teto dele não está no nosso código.</strong> Ele só é solto no
- * commit do listener. A resposta da reserva entra no outbox nessa mesma transação; o confirm do
- * broker acontece no relay, depois do commit, então o lock não espera o broker. Ainda não há
- * {@code lock_timeout}: com outro pedido segurando o quarto, a espera segue sem limite.</p>
+ * <p><strong>O lock tem custo.</strong> Ele só é solto no commit do listener. A resposta entra no
+ * outbox nessa transação; o confirm do broker é do relay. Cada espera por lock está limitada por
+ * {@code app.booking.room-lock-timeout} (10 s): o limite é por quarto esperado, e não por pedido,
+ * então um pedido com N quartos segurados por transações diferentes espera até N vezes esse
+ * limite por tentativa. Estourar o prazo falha a instrução e a transação desfaz, sem evento de
+ * falha de negócio.</p>
  */
 @Slf4j
 @DomainService
@@ -102,11 +104,9 @@ public class VerifyRoomAvailability {
 
   /**
    * Uma linha sem {@code quantity} vale zero unidades. O {@code BookingInitializer} recusa o
-   * pedido cuja linha tem quantidade nula, zero ou negativa ({@code BookingRoom.validate()}),
-   * mas o caso de uso verifica a disponibilidade mesmo assim, antes de olhar esse resultado.
-   * Um {@code NullPointerException} aqui trocaria a recusa limpa por uma mensagem indo para a
-   * DLQ. Uma quantidade negativa também passa por esta soma, sem efeito: o pedido já saiu da
-   * validação com falha e não chega a ser gravado.
+   * pedido antes do lock, então esta soma não é o caminho do pedido inválido. Quem chama
+   * {@code execute} direto, sem essa validação, não pode tomar um {@code NullPointerException}
+   * no lugar da recusa de domínio.
    */
   private static int unitsOf(final BookingRoom bookingRoom) {
     return Optional.ofNullable(bookingRoom.getQuantity()).orElse(0);

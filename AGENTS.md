@@ -292,7 +292,13 @@ Regras que o código segue e que devem ser mantidas:
   recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
   **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
-  transação; o confirm do broker é do relay, depois do commit. Ainda não há `lock_timeout`. A
+  transação; o confirm do broker é do relay, depois do commit. Cada espera por lock é limitada
+  por `app.booking.room-lock-timeout` (10 s): o limite vale por quarto esperado, e não por
+  pedido, porque o `lock_timeout` do PostgreSQL conta cada aquisição separadamente. Estourar o
+  prazo falha a transação sem gravar a reserva e sem evento de falha de negócio: a exceção segue
+  o retry e a DLQ. Com um quarto esperado o pior caso até a DLQ é cerca de três vezes esse limite
+  mais o backoff (1 s, depois 2 s); com N quartos segurados por transações diferentes, cada
+  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
   ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
   `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
