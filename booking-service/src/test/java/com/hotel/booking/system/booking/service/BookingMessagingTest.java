@@ -5,16 +5,14 @@ import com.hotel.booking.system.booking.service.core.ports.api.messaging.*;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.listener.*;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.*;
-import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
+import com.hotel.booking.system.commons.core.application.outbox.Outbox;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
 import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageProperties;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
@@ -98,31 +96,25 @@ class BookingMessagingTest {
   }
 
   /**
-   * O publisher só retorna depois que o broker confirma a mensagem, e a falha de transporte
-   * sobe como {@link MessagePublishException}: dentro do listener ela provoca o rollback.
+   * A resposta da reserva entra no outbox, no destino que o publicador já resolvia. A falha de
+   * gravar a linha sobe: dentro do listener ela desfaz a reserva junto com o evento.
    */
   @Test
-  @DisplayName("publica na rota configurada e propaga falha do broker")
+  @DisplayName("grava a resposta no outbox na rota configurada e propaga falha de persistência")
   void publisherUsaRotaConfiguradaEPropagaFalhaDoBroker() {
-    final var template = mock(RabbitTemplate.class);
-    final var publisher = new BookingRoomResponsePublisherImpl(template,
+    final var outbox = mock(Outbox.class);
+    final var publisher = new BookingRoomResponsePublisherImpl(outbox,
       new RoutingKeyProperties("request", "response", "change"), new ExchangeProperties("booking"));
     final var event = BookingRoomConfirmedEvent.builder()
       .reservationOrderId(UUID.randomUUID().toString())
       .customerId(UUID.randomUUID().toString())
       .status(CustomerReservationStatus.RESERVED)
       .build();
-    doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
-      .complete(new CorrelationData.Confirm(true, null)))
-      .when(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
     publisher.publish(event);
-    verify(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
-    final var failure = new IllegalStateException("broker offline");
-    doThrow(failure).when(template).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
-    assertThatThrownBy(() -> publisher.publish(event))
-      .isInstanceOf(MessagePublishException.class)
-      .hasCause(failure);
-    verify(template, times(2)).convertAndSend(eq("booking"), eq("response"), eq(event), any(CorrelationData.class));
+    verify(outbox).append(event.getReservationOrderId(), "booking", "response", event);
+    final var failure = new IllegalStateException("banco indisponível");
+    doThrow(failure).when(outbox).append(any(), any(), any(), any());
+    assertThatThrownBy(() -> publisher.publish(event)).isSameAs(failure);
   }
 
   @Test
