@@ -1,6 +1,7 @@
 package com.hotel.booking.system.commons.infrastructure.messaging;
 
 import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
+import com.hotel.booking.system.commons.core.application.exception.MessageUnroutableException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpConnectException;
@@ -57,7 +58,7 @@ class AbstractRabbitPublisherTest {
     this.brokerAnswers(correlation -> correlation.getFuture().complete(new CorrelationData.Confirm(false, "queue full")));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasMessageContaining("TestEvent")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY)
@@ -65,7 +66,7 @@ class AbstractRabbitPublisherTest {
   }
 
   @Test
-  @DisplayName("lança MessagePublishException quando nenhuma fila recebeu a mensagem (return)")
+  @DisplayName("lança MessageUnroutableException quando nenhuma fila recebeu a mensagem (return)")
   void lancaQuandoNenhumaFilaRecebeu() {
     this.brokerAnswers(correlation -> {
       correlation.setReturned(new ReturnedMessage(
@@ -75,7 +76,7 @@ class AbstractRabbitPublisherTest {
     });
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isInstanceOf(MessageUnroutableException.class)
       .hasMessageContaining("NO_ROUTE")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
@@ -88,7 +89,7 @@ class AbstractRabbitPublisherTest {
     });
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasMessageContaining("TestEvent")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
@@ -102,7 +103,7 @@ class AbstractRabbitPublisherTest {
       .convertAndSend(eq(EXCHANGE), eq(ROUTING_KEY), eq(this.event), any(CorrelationData.class));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasCause(cause)
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
@@ -116,7 +117,7 @@ class AbstractRabbitPublisherTest {
       .convertAndSend(eq(EXCHANGE), eq(ROUTING_KEY), eq(this.event), any(CorrelationData.class));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasCause(cause);
   }
 
@@ -129,7 +130,7 @@ class AbstractRabbitPublisherTest {
     Thread.currentThread().interrupt();
     try {
       assertThatThrownBy(() -> this.publisher.publish(this.event))
-        .isInstanceOf(MessagePublishException.class);
+        .isExactlyInstanceOf(MessagePublishException.class);
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
     } finally {
       Thread.interrupted();

@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "014", "015");
   }
 
   @Test
@@ -63,6 +63,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     "room; id, hotel_id, current_price, capacity, quantity",
     "booking_room; id, room_id, booking_id, price, quantity",
     "processed_event; event_id, event_type, processed_at",
+    "outbox_event; id, seq, aggregate_id, event_type, exchange, routing_key, payload, created_at, published_at, attempts, next_attempt_at, abandoned_at",
   })
   void criaTabelasComColunasEsperadas(final String tabela, final String colunas) {
     final var resultado = this.entityManager
@@ -294,6 +295,26 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat(processadoEm).isNotNull();
+  }
+
+  @Test
+  @DisplayName("indexa a linha pendente do outbox por seq")
+  void indexaPendenteDoOutboxPorSeq() {
+    final var total = this.entityManager
+      .createNativeQuery("select count(*) from pg_indexes where indexname = 'outbox_event_pending_seq_idx'")
+      .getSingleResult();
+
+    assertThat(((Number) total).longValue()).isEqualTo(1L);
+  }
+
+  @Test
+  @DisplayName("indexa só a linha já publicada do outbox por published_at, para o expurgo")
+  void indexaSoPublicadaDoOutboxParaOExpurgo() {
+    final var definicao = this.entityManager
+      .createNativeQuery("select indexdef from pg_indexes where indexname = 'outbox_event_published_at_idx'")
+      .getSingleResult();
+
+    assertThat((String) definicao).contains("WHERE (published_at IS NOT NULL)");
   }
 
   private void inserirReservaDoPedido(final String pedido) {
