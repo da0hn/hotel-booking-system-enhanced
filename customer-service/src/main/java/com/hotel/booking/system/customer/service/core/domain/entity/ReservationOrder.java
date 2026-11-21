@@ -32,7 +32,8 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
 
   /**
    * Versão lida do banco. Viaja com o agregado para o {@code UPDATE} condicional: sem ela, o
-   * save montaria uma entidade nova e a corrida de duas transações passaria em silêncio.
+   * save trataria o pedido como novo e falharia, e a versão é o que torna a gravação condicional
+   * ao que foi lido.
    */
   private Long version;
 
@@ -86,8 +87,9 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
    * de domínio maior que esta. Fica de fora, portanto, a reentrega tardia de um status <em>anterior</em> à
    * última entrada. E a corrida de duas transações que leem o pedido antes de qualquer uma gravar
    * não se resolve pela comparação da timeline: as duas ainda não veem a entrada uma da outra.
-   * Quem barra é a {@code version} gravada com o pedido. A segunda transação falha ao gravar,
-   * e o retry relê o pedido já commitado.
+   * Quem barra é a {@code version} gravada com o pedido, que o adaptador incrementa em todo
+   * save, inclusive na transição que só acrescenta uma entrada à timeline. A segunda transação
+   * falha ao gravar, e o retry relê o pedido já commitado.
    */
   private boolean record(final ReservationOrderTimeline transition) {
     final var repeated = this.timeline.latest().filter(transition::isSameTransitionAs).isPresent();
@@ -97,7 +99,7 @@ public class ReservationOrder extends AbstractDomainEntity<ReservationOrderId> {
     this.timeline.add(transition);
     this.currentStatus = this.timeline.latest()
       .map(ReservationOrderTimeline::getStatus)
-      .orElse(transition.getStatus());
+      .orElseThrow();
     return true;
   }
 

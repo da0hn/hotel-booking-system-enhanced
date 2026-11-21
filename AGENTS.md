@@ -449,7 +449,9 @@ escolha estão nos Javadocs; o que não se deduz do código:
   um status *anterior* (o pedido já em `PAYMENT_CONFIRMED` e chega de novo um `AWAITING_PAYMENT`)
   não é reconhecida, porque isso pede uma tabela de transições permitidas, e uma regra mais larga
   barraria uma volta legítima, como uma nova tentativa de pagamento. A corrida de duas transações
-  que leem o pedido ao mesmo tempo é barrada pelo `@Version` de `reservation_order` (#53).
+  que leem o pedido ao mesmo tempo é barrada pelo `@Version` de `reservation_order` (#53); o
+  adaptador força o incremento da versão em todo `save`, inclusive no da transição que só
+  acrescenta uma entrada à timeline, que o Hibernate não contaria sozinho.
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
 - **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer

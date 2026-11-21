@@ -2,6 +2,7 @@ package com.hotel.booking.system.customer.service.infrastructure.db;
 
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerId;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerReservationStatus;
+import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import com.hotel.booking.system.commons.core.domain.valueobject.HotelId;
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
 import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrderId;
@@ -26,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -140,6 +142,83 @@ class ReservationOrderConcurrencyIT extends AbstractDatabaseIT {
     assertThat(stored.getCurrentStatus()).isEqualTo(this.latest(stored));
   }
 
+  /**
+   * A transação A muda o status do pedido e a B só acrescenta uma entrada com o status que o
+   * pedido já tinha (um motivo novo para a mesma falha). B não altera nenhuma coluna de
+   * {@code reservation_order}, então não há {@code UPDATE} do pai para a versão condicionar: sem
+   * forçar o incremento, as duas passam e o {@code current_status} de A fica atrás da última
+   * entrada da timeline, que é a de B. B calcula o instante depois de A, de propósito.
+   */
+  @Test
+  @DisplayName("a transição que só acrescenta entrada à timeline também perde a corrida, e o retry converge")
+  void transicaoQueSoAcrescentaEntradaTambemPerdeACorrida() throws Exception {
+    this.transaction.executeWithoutResult(tx -> {
+      final var order = this.orders.findById(this.orderId);
+      order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED, FailureMessages.of("r0"));
+      this.orders.save(order);
+    });
+    final var bothRead = new CyclicBarrier(2);
+    final var bothWrote = new CyclicBarrier(2);
+    final var statusChanged = new CountDownLatch(1);
+    final var failures = new AtomicInteger();
+    final var executor = Executors.newFixedThreadPool(2);
+    try {
+      executor.submit(() -> {
+        try {
+          this.transaction.executeWithoutResult(tx -> {
+            final var order = this.orders.findById(this.orderId);
+            this.await(bothRead);
+            order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED);
+            statusChanged.countDown();
+            this.orders.save(order);
+            this.await(bothWrote);
+          });
+        } catch (final OptimisticLockingFailureException exception) {
+          failures.incrementAndGet();
+        }
+      });
+      executor.submit(() -> {
+        try {
+          this.transaction.executeWithoutResult(tx -> {
+            final var order = this.orders.findById(this.orderId);
+            this.await(bothRead);
+            this.awaitAndLetTheClockAdvance(statusChanged);
+            order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED, FailureMessages.of("rB"));
+            this.orders.save(order);
+            this.await(bothWrote);
+          });
+        } catch (final OptimisticLockingFailureException exception) {
+          failures.incrementAndGet();
+        }
+      });
+      executor.shutdown();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      if (!executor.isShutdown()) {
+        executor.shutdownNow();
+      }
+    }
+
+    assertThat(failures).as("uma das duas transações perde a corrida").hasValue(1);
+    final var afterRace = this.transaction.execute(tx -> this.orders.findById(this.orderId));
+    assertThat(afterRace.getCurrentStatus()).isEqualTo(this.latest(afterRace));
+
+    final var loserWasTheStatusChange = afterRace.getTimeline().stream()
+      .noneMatch(entry -> entry.getStatus() == CustomerReservationStatus.PAYMENT_CONFIRMED);
+    this.transaction.executeWithoutResult(tx -> {
+      final var order = this.orders.findById(this.orderId);
+      final var applied = loserWasTheStatusChange
+        ? order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED)
+        : order.updateToFailureStatus(CustomerReservationStatus.PAYMENT_FAILED, FailureMessages.of("rB"));
+      assertThat(applied).isTrue();
+      this.orders.save(order);
+    });
+
+    final var stored = this.transaction.execute(tx -> this.orders.findById(this.orderId));
+    assertThat(stored.getTimeline()).hasSize(4);
+    assertThat(stored.getCurrentStatus()).isEqualTo(this.latest(stored));
+  }
+
   @Test
   @DisplayName("pedidos diferentes seguem em paralelo")
   void pedidosDiferentesSeguemEmParalelo() throws Exception {
@@ -158,13 +237,13 @@ class ReservationOrderConcurrencyIT extends AbstractDatabaseIT {
     final var bothRead = new CyclicBarrier(2);
     final var executor = Executors.newFixedThreadPool(2);
     try {
-      executor.submit(() -> this.transaction.executeWithoutResult(tx -> {
+      final var first = executor.submit(() -> this.transaction.executeWithoutResult(tx -> {
         final var order = this.orders.findById(this.orderId);
         this.await(bothRead);
         order.updateStatus(CustomerReservationStatus.AWAITING_PAYMENT);
         this.orders.save(order);
       }));
-      executor.submit(() -> this.transaction.executeWithoutResult(tx -> {
+      final var second = executor.submit(() -> this.transaction.executeWithoutResult(tx -> {
         final var order = this.orders.findById(otherId);
         this.await(bothRead);
         order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED);
@@ -172,10 +251,12 @@ class ReservationOrderConcurrencyIT extends AbstractDatabaseIT {
       }));
       executor.shutdown();
       assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
-      final var first = this.transaction.execute(tx -> this.orders.findById(this.orderId));
-      final var second = this.transaction.execute(tx -> this.orders.findById(otherId));
-      assertThat(first.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
-      assertThat(second.getCurrentStatus()).isEqualTo(CustomerReservationStatus.PAYMENT_CONFIRMED);
+      first.get();
+      second.get();
+      final var storedFirst = this.transaction.execute(tx -> this.orders.findById(this.orderId));
+      final var storedSecond = this.transaction.execute(tx -> this.orders.findById(otherId));
+      assertThat(storedFirst.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+      assertThat(storedSecond.getCurrentStatus()).isEqualTo(CustomerReservationStatus.PAYMENT_CONFIRMED);
     } finally {
       this.transaction.executeWithoutResult(status -> {
         this.jdbc.sql("delete from reservation_order_history where reservation_order_id = :id")
@@ -188,6 +269,17 @@ class ReservationOrderConcurrencyIT extends AbstractDatabaseIT {
 
   private CustomerReservationStatus latest(final ReservationOrder order) {
     return order.getTimeline().latest().orElseThrow().getStatus();
+  }
+
+  /** Espera o outro lado mudar o status e dá um passo ao relógio, para o instante daqui ser o maior. */
+  private void awaitAndLetTheClockAdvance(final CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+      Thread.sleep(50);
+    } catch (final InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(exception);
+    }
   }
 
   private void await(final CyclicBarrier barrier) {

@@ -112,6 +112,27 @@ class CustomerDomainTest {
     assertThat(order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED)).isTrue();
   }
 
+  /**
+   * O status atual é o da entrada mais recente da timeline pelo instante, e não o da transição
+   * que acabou de entrar. É a premissa de relógio da issue #53: uma réplica com o relógio
+   * atrasado grava uma transição que entra na timeline, mas não vira o status atual.
+   */
+  @Test
+  @DisplayName("deriva o status atual da entrada mais recente, mesmo quando a transição nova tem instante anterior")
+  void derivaOStatusAtualDaEntradaMaisRecente() {
+    final var futura = new ReservationOrderTimeline(ReservationOrderTimelineId.newInstance(),
+      CustomerReservationStatus.AWAITING_PAYMENT, null, Instant.now().plusSeconds(3600));
+    final var order = ReservationOrder.builder()
+      .timeline(Timeline.of(List.of(futura)))
+      .currentStatus(CustomerReservationStatus.AWAITING_PAYMENT)
+      .build();
+
+    assertThat(order.updateStatus(CustomerReservationStatus.PAYMENT_CONFIRMED)).isTrue();
+
+    assertThat(order.getTimeline()).hasSize(2);
+    assertThat(order.getCurrentStatus()).isEqualTo(CustomerReservationStatus.AWAITING_PAYMENT);
+  }
+
   @Test
   @DisplayName("trata motivo nulo e em branco como a mesma ausência de motivo")
   void trataMotivoNuloEEmBrancoComoAMesmaAusencia() {
