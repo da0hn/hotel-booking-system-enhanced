@@ -15,14 +15,18 @@ import org.hibernate.Session;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 
 /**
- * Exercita as duas consultas escritas à mão do {@code booking-service}.
+ * Exercita as consultas escritas à mão do {@code booking-service} que a reserva e a verificação de
+ * disponibilidade usam: a soma de ocupação por quarto e a busca pelo pedido.
  *
  * <p>{@code sumOccupiedUnits} é o coração da regra de disponibilidade: é ela que decide
  * quantas unidades do quarto estão ocupadas no período pedido. Como compara colunas
@@ -102,28 +106,49 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A consulta roda com o lock do quarto aberto, e cada reserva que ela devolve vira mais uma
-   * ida ao banco para carregar as linhas dela. Reserva cancelada não ocupa unidade nenhuma, e
-   * elas só se acumulam (o pagamento recusado cancela), então não deve nem ser carregada.
+   * Reserva cancelada não ocupa unidade nenhuma, e elas só se acumulam (o pagamento recusado
+   * cancela): a soma não pode contá-las. A reserva ativa do mesmo período conta uma vez.
    */
   @Test
-  @DisplayName("não devolve reserva cancelada, mas devolve a ativa do mesmo período")
-  void naoDevolveReservaCancelada() {
-    final var ativa = this.gravaReserva(BookingStatus.PENDING);
+  @DisplayName("ignora reserva cancelada na soma, mas conta a ativa do mesmo período")
+  void ignoraReservaCanceladaNaSoma() {
+    this.gravaReserva(BookingStatus.PENDING);
     this.gravaReserva(BookingStatus.CANCELED);
     this.entityManager.flush();
     this.entityManager.clear();
 
     assertThat(this.occupied(QUARTO_TRIPLO_DELUXE, LocalDate.of(2035, 3, 2), LocalDate.of(2035, 3, 4)))
       .isEqualTo(1);
-    assertThat(ativa).isNotNull();
+  }
+
+  /**
+   * O pedido pede vários quartos de uma vez: a consulta devolve uma linha por quarto pedido, com
+   * a soma de cada um, e nenhuma de um quarto que ninguém pediu, mesmo ocupado no período.
+   */
+  @Test
+  @DisplayName("soma a ocupação de cada quarto pedido e não traz o quarto que não foi pedido")
+  void somaAOcupacaoDeCadaQuartoPedidoSemTrazerOsOutros() {
+    final var naoPedido = this.outroQuarto();
+    this.gravaReserva(BookingStatus.PENDING, 2, QUARTO_TRIPLO_DELUXE);
+    this.gravaReserva(BookingStatus.CONFIRMED, 3, QUARTO_STANDARD_TAIAMA);
+    this.gravaReserva(BookingStatus.PENDING, 4, naoPedido);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    final var porQuarto = this.occupiedByRoom(
+      List.of(QUARTO_TRIPLO_DELUXE, QUARTO_STANDARD_TAIAMA),
+      LocalDate.of(2035, 3, 2),
+      LocalDate.of(2035, 3, 4)
+    );
+
+    assertThat(porQuarto).containsOnly(entry(QUARTO_TRIPLO_DELUXE, 2), entry(QUARTO_STANDARD_TAIAMA, 3));
   }
 
   @Test
   @DisplayName("conta unidade exatamente quando BookingPeriod.overlaps diz que há conflito")
   void consultaEOverlapsConcordam() {
     final var existente = BookingPeriod.of(LocalDate.of(2023, 6, 15), LocalDate.of(2023, 6, 25));
-    final var janelas = java.util.List.of(
+    final var janelas = List.of(
       BookingPeriod.of(LocalDate.of(2023, 6, 20), LocalDate.of(2023, 6, 30)),
       BookingPeriod.of(LocalDate.of(2023, 6, 25), LocalDate.of(2023, 6, 27)),
       BookingPeriod.of(LocalDate.of(2023, 6, 10), LocalDate.of(2023, 6, 15)),
@@ -161,11 +186,24 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   private int occupied(final UUID room, final LocalDate checkIn, final LocalDate checkOut) {
-    final var rows = this.repository.sumOccupiedUnits(List.of(room), checkIn, checkOut);
-    if (rows.isEmpty()) {
-      return 0;
+    return this.occupiedByRoom(List.of(room), checkIn, checkOut).getOrDefault(room, 0);
+  }
+
+  private Map<UUID, Integer> occupiedByRoom(final List<UUID> rooms, final LocalDate checkIn, final LocalDate checkOut) {
+    final var porQuarto = new HashMap<UUID, Integer>();
+    for (final var row : this.repository.sumOccupiedUnits(rooms, checkIn, checkOut)) {
+      porQuarto.put((UUID) row[0], ((Number) row[1]).intValue());
     }
-    return ((Number) rows.getFirst()[1]).intValue();
+    return porQuarto;
+  }
+
+  /** Um quarto do seed que não é nenhum dos dois constantes desta classe. */
+  private UUID outroQuarto() {
+    return UUID.fromString(String.valueOf(this.entityManager
+      .createNativeQuery("select id from room where id not in (:triplo, :standard) limit 1")
+      .setParameter("triplo", QUARTO_TRIPLO_DELUXE.toString())
+      .setParameter("standard", QUARTO_STANDARD_TAIAMA.toString())
+      .getSingleResult()));
   }
 
   private UUID gravaReserva(final BookingStatus status) {
@@ -173,6 +211,10 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
   }
 
   private UUID gravaReserva(final BookingStatus status, final int quantity) {
+    return this.gravaReserva(status, quantity, QUARTO_TRIPLO_DELUXE);
+  }
+
+  private UUID gravaReserva(final BookingStatus status, final int quantity, final UUID quarto) {
     final var reserva = BookingEntity.builder()
       .id(UUID.randomUUID())
       .customerId(UUID.randomUUID())
@@ -184,7 +226,7 @@ class BookingJpaRepositoryIT extends AbstractDatabaseIT {
       .build();
     final var linha = BookingRoomEntity.builder()
       .id(UUID.randomUUID())
-      .room(this.entityManager.getReference(RoomEntity.class, QUARTO_TRIPLO_DELUXE))
+      .room(this.entityManager.getReference(RoomEntity.class, quarto))
       .booking(reserva)
       .price(new BigDecimal("456.0000"))
       .quantity(quantity)

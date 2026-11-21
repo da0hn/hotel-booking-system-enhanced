@@ -320,10 +320,13 @@ class BookingApplicationTest {
     verify(this.repository, never()).save(any());
   }
 
-  /** A ocupação é a soma das unidades das reservas ativas: o pedido e a reserva existente valem 2 cada. */
+  /**
+   * A ocupação vem pronta da consulta agregada, com o período do pedido; aqui se confere só a
+   * aritmética contra o total do quarto: 2 ocupadas mais 2 pedidas passam de 3 e cabem em 4.
+   */
   @Test
-  @DisplayName("ignora reservas canceladas e períodos fora da consulta e soma as unidades das ativas")
-  void disponibilidadeFiltraCanceladasEPeriodosESomaUnidades() {
+  @DisplayName("recusa quando a ocupação devolvida pela consulta mais o pedido passa do total do quarto")
+  void disponibilidadeSomaAOcupacaoDaConsultaAoPedido() {
     final var requested = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     when(this.repository.sumOccupiedUnits(any(), eq(requested.getBookingPeriod()))).thenReturn(Map.of(this.room, 2));
     when(this.rooms.lockAllByRoomId(List.of(this.room))).thenReturn(List.of(new Room(this.room, HotelId.of(UUID.randomUUID()), 3, 3)));
