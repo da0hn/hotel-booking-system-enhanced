@@ -7,6 +7,7 @@ import com.hotel.booking.system.commons.core.domain.event.TrustedEventPackages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
@@ -124,8 +125,8 @@ public class OutboxRelay {
   }
 
   /**
-   * Falha da própria linha (tipo fora dos pacotes, classe ausente, nenhuma fila) abandona
-   * na hora: tentar de novo não muda o resultado. Falha de transporte só empurra o
+   * Falha da própria linha (tipo fora dos pacotes, classe ausente, payload que o tipo não lê,
+   * nenhuma fila) abandona na hora: tentar de novo não muda o resultado. Falha de transporte só empurra o
    * {@code next_attempt_at}. A linha continua pendente até o broker voltar, e enquanto
    * espera segura os eventos seguintes do mesmo agregado.
    */
@@ -165,6 +166,12 @@ public class OutboxRelay {
     return Duration.ofSeconds(1L << exponent);
   }
 
+  /**
+   * Reconstrói o evento da linha. Tanto a classe ausente quanto o payload que o tipo não lê
+   * viram {@link IllegalStateException}, o sinal de que o defeito é da própria linha: o relay
+   * a abandona em vez de tentá-la de novo para sempre. A mensagem do Jackson fica só na causa,
+   * porque ela cita pedaços do payload e o log do relay imprime a mensagem.
+   */
   private Object deserialize(final OutboxEntry entry) {
     this.requireTrusted(entry.eventType());
     try {
@@ -172,6 +179,8 @@ public class OutboxRelay {
       return this.jsonMapper.readValue(entry.payload(), type);
     } catch (final ClassNotFoundException exception) {
       throw new IllegalStateException("Outbox event type is not on the classpath: " + entry.eventType(), exception);
+    } catch (final JacksonException exception) {
+      throw new IllegalStateException("Outbox event payload cannot be read as " + entry.eventType(), exception);
     }
   }
 
@@ -188,10 +197,6 @@ public class OutboxRelay {
     if (!trusted) {
       throw new IllegalStateException("Outbox event type is not in a trusted package: " + eventType);
     }
-  }
-
-  Duration roundBudget() {
-    return this.roundBudget;
   }
 
 }

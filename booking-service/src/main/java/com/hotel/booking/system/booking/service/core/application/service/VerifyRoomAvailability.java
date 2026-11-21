@@ -11,6 +11,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.extern.slf4j.Slf4j;
 
 import java.text.MessageFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -29,9 +30,11 @@ import java.util.stream.Collectors;
  * grava a reserva. Quem espera o lock enxerga, ao acordar, a reserva que a primeira comitou.</p>
  *
  * <p><strong>O lock tem custo.</strong> Ele só é solto no commit do listener. A resposta entra no
- * outbox nessa transação; o confirm do broker é do relay. A espera está limitada por
- * {@code app.booking.room-lock-timeout} (10 s por tentativa). Estourar o prazo falha a sentença
- * e a transação desfaz, sem evento de falha de negócio.</p>
+ * outbox nessa transação; o confirm do broker é do relay. Cada espera por lock está limitada por
+ * {@code app.booking.room-lock-timeout} (10 s): o limite é por quarto esperado, e não por pedido,
+ * então um pedido com N quartos segurados por transações diferentes espera até N vezes esse
+ * limite por tentativa. Estourar o prazo falha a instrução e a transação desfaz, sem evento de
+ * falha de negócio.</p>
  */
 @Slf4j
 @DomainService
@@ -63,10 +66,7 @@ public class VerifyRoomAvailability {
 
     final var rooms = this.roomRepository.lockAllByRoomId(booking.getRoomsId());
     final var requestedUnitsByRoom = this.requestedUnitsByRoom(booking);
-    final var occupiedByRoom = this.bookingRepository.sumOccupiedUnits(
-      rooms.stream().map(Room::getId).toList(),
-      booking.getBookingPeriod()
-    );
+    final var occupiedByRoom = this.occupiedUnitsByRoom(rooms, booking);
 
     log.info("Verifying rooms availability reservationOrderId={}", booking.getReservationOrderId());
     for (final var room : rooms) {
@@ -88,6 +88,13 @@ public class VerifyRoomAvailability {
     }
 
     return failureMessages;
+  }
+
+  private Map<RoomId, Integer> occupiedUnitsByRoom(final List<Room> rooms, final Booking booking) {
+    return this.bookingRepository.sumOccupiedUnits(
+      rooms.stream().map(Room::getId).toList(),
+      booking.getBookingPeriod()
+    );
   }
 
   private Map<RoomId, Integer> requestedUnitsByRoom(final Booking booking) {

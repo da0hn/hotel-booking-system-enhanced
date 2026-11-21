@@ -36,8 +36,9 @@ efeito. O `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só
   `TrustedEventPackages`. Um subpacote novo de evento precisa entrar na lista também por
   causa do relay, não só do listener. Fora da lista, a linha recebe `abandoned_at` na hora.
 - **`abandoned_at` é falha da própria linha**: tipo fora da lista, classe ausente no
-  classpath, ou return sem fila (`MessageUnroutableException`). O relay loga em `ERROR` com
-  `aggregateId` e `eventType`. Para reprocessar, zere `abandoned_at`, `next_attempt_at` e
+  classpath, payload que o tipo não lê (o Jackson recusa o JSON), ou return sem fila
+  (`MessageUnroutableException`). O relay loga em `ERROR` com `aggregateId` e `eventType`, sem
+  o conteúdo recusado. Para reprocessar, zere `abandoned_at`, `next_attempt_at` e
   `attempts`.
 - **Falha de transporte não abandona.** Broker fora, nack e timeout incrementam `attempts`
   e agendam `next_attempt_at` (1s, 2s, 4s… até 5 minutos). Enquanto o head espera, os
@@ -45,7 +46,7 @@ efeito. O `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só
 - **Cada invocação tem teto.** `app.outbox.round-budget` (`PT5S`), vezes doze, devolve a
   thread mesmo com backlog. O `relay-interval` (`PT1S`) só vale com a fila vazia. Os dois
   serviços põem `spring.task.scheduling.pool.size: 3` para o relay não dividir a única
-  thread do agendador com a expiração e os expurgos.
+  thread do agendador com os expurgos.
 - **A linha publicada fica um dia** (`app.outbox.retention`). Nada a lê depois do
   `published_at`: a deduplicação é o `processed_event`. O expurgo não apaga pendente.
 

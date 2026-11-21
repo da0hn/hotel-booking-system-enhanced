@@ -58,7 +58,7 @@ class AbstractRabbitPublisherTest {
     this.brokerAnswers(correlation -> correlation.getFuture().complete(new CorrelationData.Confirm(false, "queue full")));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasMessageContaining("TestEvent")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY)
@@ -89,7 +89,7 @@ class AbstractRabbitPublisherTest {
     });
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasMessageContaining("TestEvent")
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
@@ -103,7 +103,7 @@ class AbstractRabbitPublisherTest {
       .convertAndSend(eq(EXCHANGE), eq(ROUTING_KEY), eq(this.event), any(CorrelationData.class));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasCause(cause)
       .hasMessageContaining(EXCHANGE)
       .hasMessageContaining(ROUTING_KEY);
@@ -117,7 +117,7 @@ class AbstractRabbitPublisherTest {
       .convertAndSend(eq(EXCHANGE), eq(ROUTING_KEY), eq(this.event), any(CorrelationData.class));
 
     assertThatThrownBy(() -> this.publisher.publish(this.event))
-      .isInstanceOf(MessagePublishException.class)
+      .isExactlyInstanceOf(MessagePublishException.class)
       .hasCause(cause);
   }
 
@@ -130,7 +130,7 @@ class AbstractRabbitPublisherTest {
     Thread.currentThread().interrupt();
     try {
       assertThatThrownBy(() -> this.publisher.publish(this.event))
-        .isInstanceOf(MessagePublishException.class);
+        .isExactlyInstanceOf(MessagePublishException.class);
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
     } finally {
       Thread.interrupted();

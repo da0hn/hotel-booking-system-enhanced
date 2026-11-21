@@ -18,6 +18,13 @@ import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * O limite de espera do lock, {@code app.booking.room-lock-timeout}, não tem default no código: a
+ * fonte é o {@code application.yml}, e uma chave com o nome errado impede o serviço de subir em
+ * vez de cair em silêncio num valor que ninguém conferiu. O construtor recusa duração abaixo de
+ * 1 ms, porque o PostgreSQL entende {@code lock_timeout = 0} como "sem limite", o oposto do que a
+ * propriedade promete.
+ */
 @Component
 public class RoomRepositoryAdapter implements RoomRepository {
 
@@ -30,8 +37,13 @@ public class RoomRepositoryAdapter implements RoomRepository {
     final RoomJpaRepository roomJpaRepository,
     @Lazy final BookingDatabaseMapper bookingDatabaseMapper,
     final EntityManager entityManager,
-    @Value("${app.booking.room-lock-timeout:10s}") final Duration roomLockTimeout
+    @Value("${app.booking.room-lock-timeout}") final Duration roomLockTimeout
   ) {
+    if (roomLockTimeout.toMillis() < 1) {
+      throw new IllegalArgumentException(
+        "app.booking.room-lock-timeout must be at least 1ms: in PostgreSQL a lock_timeout of 0 disables the limit"
+      );
+    }
     this.roomJpaRepository = roomJpaRepository;
     this.bookingDatabaseMapper = bookingDatabaseMapper;
     this.entityManager = entityManager;
@@ -44,9 +56,11 @@ public class RoomRepositoryAdapter implements RoomRepository {
   }
 
   /**
-   * {@code lock_timeout} vale só nesta transação ({@code set_config} local). Estourar o prazo
-   * falha a sentença; quem chamou desfaz a transação e não grava a reserva. Não é recusa de
-   * negócio, então não vira evento de falha: a exceção segue o retry do listener.
+   * {@code lock_timeout} vale só nesta transação ({@code set_config} local) e conta cada espera
+   * por lock, não o pedido inteiro: a consulta trava os quartos um a um, e o PostgreSQL aplica o
+   * limite a cada aquisição separadamente. Estourar o prazo falha a instrução; quem chamou desfaz
+   * a transação e não grava a reserva. Não é recusa de negócio, então não vira evento de falha:
+   * a exceção segue o retry do listener.
    */
   @Override
   public List<Room> lockAllByRoomId(final Collection<? extends RoomId> ids) {

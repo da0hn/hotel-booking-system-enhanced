@@ -15,21 +15,24 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * Cenários de disponibilidade de {@link VerifyRoomAvailability}, a regra mais delicada do
  * {@code booking-service}.
  *
- * <p>O repositório é um mock que devolve exatamente o que a consulta por período devolveria;
- * a regra sob teste é o que o serviço faz com essa lista. Por isso o cenário de período
- * contido existe nas duas pontas: aqui prova-se que o <em>filtro de domínio</em> reconhece a
- * sobreposição, e a prova de que a consulta devolve essa reserva está em
- * {@code BookingJpaRepositoryIT#achaQuandoPeriodoEngloba}.</p>
+ * <p>O repositório é um mock que devolve a ocupação por quarto que a consulta agregada
+ * devolveria; a regra sob teste é a aritmética {@code ocupado + pedido > quantidade} e os
+ * argumentos com que o serviço chama a consulta. Quem decide o que conta como ocupação (reserva
+ * cancelada fora, sobreposição estrita, dia de troca) é a consulta, e isso é provado contra o
+ * banco em {@code BookingJpaRepositoryIT}.</p>
  *
  * <p>A corrida entre duas reservas do último quarto não cabe num mock: ela depende do lock do
  * banco e é provada em {@code RoomAvailabilityConcurrencyIT}.</p>
@@ -73,10 +76,10 @@ class VerifyRoomAvailabilityTest {
 
   private void givenOccupied(final int units) {
     if (units == 0) {
-      when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of());
+      when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(Map.of());
       return;
     }
-    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of(this.roomId, units));
+    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(Map.of(this.roomId, units));
   }
 
   @Test
@@ -91,25 +94,37 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @DisplayName("aceita quando o check-in novo é o check-out de outra reserva")
-  void aceitaQuandoCheckInNovoEOCheckOutDeOutraReserva() {
-    this.givenRoomWithQuantity(1);
-    this.givenOccupied(0);
-
-    final var failures = this.service.execute(this.booking(this.roomId, period(12, 14), BookingStatus.PENDING, 1));
-
-    assertThat(failures.data()).isEmpty();
-  }
-
-  @Test
-  @DisplayName("ignora reservas canceladas")
-  void ignoraReservasCanceladas() {
+  @DisplayName("aceita quando a consulta não devolve ocupação para o quarto")
+  void aceitaQuandoAConsultaNaoDevolveOcupacao() {
     this.givenRoomWithQuantity(1);
     this.givenOccupied(0);
 
     final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
 
     assertThat(failures.data()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("consulta a ocupação de todos os quartos travados, no período do pedido")
+  void consultaAOcupacaoDosQuartosTravadosNoPeriodoDoPedido() {
+    final var other = RoomId.newInstance();
+    when(this.rooms.lockAllByRoomId(any())).thenReturn(List.of(
+      this.roomWithQuantity(this.roomId, 1),
+      this.roomWithQuantity(other, 1)
+    ));
+    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(Map.of());
+    final var requested = BookingPeriod.of(CHECK_IN.withDayOfMonth(10), CHECK_IN.withDayOfMonth(13));
+
+    this.service.execute(Booking.builder()
+      .bookingPeriod(requested)
+      .status(BookingStatus.PENDING)
+      .bookingRooms(List.of(
+        BookingRoom.builder().roomId(this.roomId).quantity(1).price(Money.of(100)).build(),
+        BookingRoom.builder().roomId(other).quantity(1).price(Money.of(100)).build()
+      ))
+      .build());
+
+    verify(this.bookings).sumOccupiedUnits(eq(List.of(this.roomId, other)), eq(requested));
   }
 
   @Test
@@ -135,17 +150,6 @@ class VerifyRoomAvailabilityTest {
   }
 
   @Test
-  @DisplayName("reconhece a reserva existente inteiramente contida no período pedido")
-  void reconheceReservaExistenteContidaNoPeriodoPedido() {
-    this.givenRoomWithQuantity(1);
-    this.givenOccupied(1);
-
-    final var failures = this.service.execute(this.booking(this.roomId, period(10, 13), BookingStatus.PENDING, 1));
-
-    assertThat(failures.data()).containsExactly(unavailable(this.roomId, "10/01/2030 - 13/01/2030"));
-  }
-
-  @Test
   @DisplayName("aponta só o quarto indisponível quando o pedido tem vários quartos")
   void apontaSoOQuartoIndisponivel() {
     final var free = RoomId.newInstance();
@@ -153,7 +157,7 @@ class VerifyRoomAvailabilityTest {
       this.roomWithQuantity(this.roomId, 1),
       this.roomWithQuantity(free, 1)
     ));
-    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(java.util.Map.of(this.roomId, 1));
+    when(this.bookings.sumOccupiedUnits(any(), any())).thenReturn(Map.of(this.roomId, 1));
     final var requested = Booking.builder()
       .bookingPeriod(period(10, 13))
       .status(BookingStatus.PENDING)

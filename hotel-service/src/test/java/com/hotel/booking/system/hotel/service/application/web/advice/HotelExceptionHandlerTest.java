@@ -63,8 +63,8 @@ class HotelExceptionHandlerTest {
   }
 
   @Test
-  @DisplayName("mantém 200 com o identificador da reserva quando a publicação funciona")
-  void mantem200QuandoAPublicacaoFunciona() throws Exception {
+  @DisplayName("responde 200 com o identificador da reserva")
+  void responde200ComOIdentificadorDaReserva() throws Exception {
     final var reservationOrderId = UUID.randomUUID();
     when(this.book.execute(any(BookingRoomInput.class))).thenReturn(new BookingRoomOutput(reservationOrderId));
 

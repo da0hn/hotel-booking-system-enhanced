@@ -292,21 +292,23 @@ Regras que o código segue e que devem ser mantidas:
   recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
   **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
-  transação; o confirm do broker é do relay, depois do commit. A espera pelo lock é limitada
-  por `app.booking.room-lock-timeout` (10 s por tentativa). Estourar o prazo falha a transação
-  sem gravar a reserva e sem evento de falha de negócio: a exceção segue o retry e a DLQ. O
-  pior caso até a DLQ é cerca de três vezes esse limite mais o backoff (1 s, depois 2 s). Os
-  quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
+  transação; o confirm do broker é do relay, depois do commit. Cada espera por lock é limitada
+  por `app.booking.room-lock-timeout` (10 s): o limite vale por quarto esperado, e não por
+  pedido, porque o `lock_timeout` do PostgreSQL conta cada aquisição separadamente. Estourar o
+  prazo falha a transação sem gravar a reserva e sem evento de falha de negócio: a exceção segue
+  o retry e a DLQ. Com um quarto esperado o pior caso até a DLQ é cerca de três vezes esse limite
+  mais o backoff (1 s, depois 2 s); com N quartos segurados por transações diferentes, cada
+  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
   ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
   `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
   propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
-  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
-  disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
-  toda checagem do quarto dela lançar exceção. O `hotel-service` não valida período, então este
-  é o único ponto que barra o pedido.
+  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ. O
+  banco também recusa a linha de 0 noites (`booking_period_ck`, `V011`), que é a rede para o que
+  escapar do domínio. O `hotel-service` não valida período, então este é o único ponto de
+  domínio que barra o pedido.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).
@@ -411,8 +413,10 @@ handler correspondente no `hotel-service`.
   inicializador estático de qualquer classe do classpath.
 - **`abandoned_at` é só para falha da própria linha.** O relay preenche a coluna na hora, e
   loga em `ERROR` com `aggregateId` e `eventType`, quando o tipo está fora de
-  `TrustedEventPackages`, a classe não está no classpath, ou o broker devolve a mensagem
-  (`MessageUnroutableException`). Falha de transporte incrementa `attempts` e agenda
+  `TrustedEventPackages`, a classe não está no classpath, o payload não é lido pelo tipo (o
+  Jackson recusa o JSON, como quando o evento mudou entre a gravação e a publicação), ou o
+  broker devolve a mensagem (`MessageUnroutableException`). O log leva só o tipo, não o
+  conteúdo recusado. Falha de transporte incrementa `attempts` e agenda
   `next_attempt_at` com backoff de 1s, 2s, 4s… até o teto de 5 minutos, sem abandonar: a
   linha espera o broker voltar, e enquanto espera segura os eventos seguintes do mesmo
   agregado. Para reprocessar uma linha abandonada, zere `abandoned_at`, `next_attempt_at` e
@@ -423,7 +427,7 @@ handler correspondente no `hotel-service`.
   enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
   `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. O `hotel-service` e o
   `booking-service` põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
-  thread, e nela o relay, a expiração de `PENDING` e os expurgos se bloqueariam.
+  thread, e nela o relay e os expurgos se bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.
