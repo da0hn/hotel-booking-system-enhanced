@@ -1,5 +1,7 @@
 package com.hotel.booking.system.booking.service.infrastructure.configuration;
 
+import com.hotel.booking.system.booking.service.application.scheduler.BookingExpirationScheduler;
+import com.hotel.booking.system.booking.service.core.application.usecase.ExpirePendingBookingsUseCaseImpl;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.QueueProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
@@ -13,6 +15,7 @@ import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.retry.MessageRecoverer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.amqp.autoconfigure.RabbitListenerRetrySettingsCustomizer;
 import org.springframework.boot.amqp.autoconfigure.RabbitProperties;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -21,11 +24,15 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.annotation.Scheduled;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -135,6 +142,44 @@ class DeadLetterConfigurationTest {
 
     assertThat(limite.isBound()).isTrue();
     assertThat(limite.get()).isEqualTo(Duration.ofSeconds(10));
+  }
+
+  @Test
+  @DisplayName("configura a expiração: prazo de 10 minutos, cron de 5 em 5 minutos e lotes de 100")
+  void configuraAExpiracaoDeReservasPendentes() throws IOException {
+    final var binder = Binder.get(ambienteDoApplicationYml());
+
+    assertThat(binder.bind("app.booking.pending-timeout", Duration.class).get()).isEqualTo(Duration.ofMinutes(10));
+    assertThat(binder.bind("app.booking.expiration-scheduler.cron", String.class).get()).isEqualTo("0 */5 * * * *");
+    assertThat(binder.bind("app.booking.expiration-batch-size", Integer.class).get()).isEqualTo(100);
+  }
+
+  /**
+   * O código da expiração não tem default: a chave que ele lê precisa existir no yml, ou o
+   * serviço não sobe. Aqui o mesmo vale antes do deploy: toda expressão {@code @Value} e a do
+   * {@code @Scheduled} se resolve contra o {@code application.yml} real, então uma chave
+   * digitada errada de qualquer um dos lados derruba o teste.
+   */
+  @Test
+  @DisplayName("toda chave que o código da expiração lê existe no application.yml")
+  void aExpiracaoSoLeChavesQueOYmlDefine() throws Exception {
+    final var ambiente = ambienteDoApplicationYml();
+    final var expressoes = new ArrayList<String>();
+    expressoes.add(BookingExpirationScheduler.class.getMethod("expirePendingBookings").getAnnotation(Scheduled.class).cron());
+    for (final var construtor : List.of(
+      BookingExpirationScheduler.class.getConstructors()[0],
+      ExpirePendingBookingsUseCaseImpl.class.getConstructors()[0]
+    )) {
+      Arrays.stream(construtor.getParameters())
+        .map(parametro -> parametro.getAnnotation(Value.class))
+        .filter(Objects::nonNull)
+        .map(Value::value)
+        .forEach(expressoes::add);
+    }
+
+    assertThat(expressoes).hasSize(3).allSatisfy(expressao ->
+      assertThat(ambiente.resolveRequiredPlaceholders(expressao)).isNotBlank()
+    );
   }
 
   /**

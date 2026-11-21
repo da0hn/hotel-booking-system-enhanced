@@ -6,9 +6,9 @@ server:
 spring:
   task:
     scheduling:
-      # O padrão do Boot é uma thread. O relay e os dois expurgos dividiriam essa thread:
-      # um backlog do relay seguraria os expurgos. Três deixam o relay andar sem esperar
-      # por eles.
+      # O padrão do Boot é uma thread. O relay, a expiração de PENDING e os expurgos
+      # dividiriam essa thread: um backlog segura os outros. Três deixam o relay e a
+      # expiração andarem juntos; o expurgo horário usa a que sobra.
       pool:
         size: 3
   application:
@@ -86,11 +86,18 @@ management:
 
 app:
   booking:
+    # Reserva PENDING além deste prazo é cancelada e o quarto volta a ficar livre.
+    pending-timeout: PT10M
     # Espera máxima por cada lock de quarto: o limite é por quarto esperado, não por pedido. Com
     # um quarto, o pior caso até a DLQ é cerca de três vezes este limite mais o backoff do retry
     # (1 s, depois 2 s); com N quartos segurados por outras transações, cada tentativa espera até
     # N vezes. Precisa ser de 1 ms ou mais: zero desliga o limite no PostgreSQL.
     room-lock-timeout: 10s
+    expiration-scheduler:
+      cron: "0 */5 * * * *"
+    # Tamanho de cada transação do scheduler. A execução repete lotes até não restar reserva
+    # vencida, então este valor limita o tempo que cada lock fica preso, não o total por execução.
+    expiration-batch-size: 100
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não
     # tem chave de jitter em spring.rabbitmq.listener.simple.retry; quem lê esta é o commons.

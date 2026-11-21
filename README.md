@@ -65,7 +65,9 @@ Quem fala com quem, por qual protocolo, e quem é dono de qual banco.
 Três pontos que o desenho torna evidentes:
 
 - **O `hotel-service` é o centro de tudo.** Ele é o único ponto de entrada da reserva e o único serviço
-  que decide o passo seguinte da saga. Os demais reagem a mensagens e devolvem o resultado para ele.
+  que decide o passo seguinte da saga. Os demais reagem a mensagens e devolvem o resultado para ele,
+  com uma exceção: o scheduler de expiração do `booking-service` cancela por conta do relógio a reserva
+  `PENDING` vencida e avisa o cliente.
 - **O `payment-service` é um mock** que sorteia aprovação por saldo fictício, e não possui banco próprio
   nem API HTTP.
 - **O `customer-service` só consome.** Ele mantém a projeção de leitura do agendamento do cliente e nunca
@@ -80,7 +82,8 @@ com as ramificações de falha no rodapé.
 
 A saga é **coreografada na aparência e orquestrada na prática**: embora todos os serviços se comuniquem
 apenas por eventos, todo o roteamento vive em dois `switch` sobre hierarquias `sealed` dentro do
-`hotel-service`. Nenhum outro serviço decide o que acontece depois.
+`hotel-service`. Nenhum outro serviço decide o passo seguinte da saga; o `booking-service` só origina,
+pelo relógio, o cancelamento da reserva vencida.
 
 O rodapé do diagrama documenta a lacuna mais séria do desenho original: **não existe ação de compensação**.
 Quando o pagamento falha, o `booking-service` apenas grava `CANCELED` e a disponibilidade do quarto só

@@ -298,9 +298,10 @@ Regras que o código segue e que devem ser mantidas:
   prazo falha a transação sem gravar a reserva e sem evento de falha de negócio: a exceção segue
   o retry e a DLQ. Com um quarto esperado o pior caso até a DLQ é cerca de três vezes esse limite
   mais o backoff (1 s, depois 2 s); com N quartos segurados por transações diferentes, cada
-  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
-  ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
-  `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
+  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido
+  que o domínio já recusou não toma o lock. A ocupação de todos os quartos do pedido sai de uma
+  consulta agregada (`sum` de `booking_room.quantity`), com a sobreposição estrita de
+  `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
@@ -333,7 +334,8 @@ Regras que o código segue e que devem ser mantidas:
 ### Fluxo da saga (o que é preciso entender antes de mexer)
 
 O `hotel-service` é o ponto de decisão: ele reage a cada resposta e decide o próximo passo.
-Os outros três serviços só reagem ao que chega na sua fila.
+Os outros três serviços só reagem ao que chega na sua fila, com uma exceção: o scheduler de
+expiração do `booking-service` parte do relógio, não de uma mensagem (passo 5).
 
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
    capacidade contra o banco do hotel, gera um `reservationOrderId` e grava
@@ -352,6 +354,14 @@ Os outros três serviços só reagem ao que chega na sua fila.
    `PaymentFailedEvent`.
 5. `hotel-service` (`PaymentResponseHandlerImpl`) propaga para o customer e manda o booking
    mudar o status (`BookingRoomPaymentCompleted` → `CONFIRMED`, ou `...Failed` → `CANCELED`).
+   `PENDING` só vai para um desses dois; estado final não transiciona, inclusive para o mesmo
+   estado. Reserva `PENDING` além de `app.booking.pending-timeout` (10 minutos) é cancelada
+   pelo scheduler do `booking-service`, que publica `BookingRoomExpiredEvent` para o cliente
+   saber. Um pagamento que chega depois disso ainda é traduzido pelo `hotel-service` nos dois
+   eventos de sempre (cliente e booking): o `booking-service` recusa `CANCELED → CONFIRMED` e
+   `CANCELED → CANCELED` e a mensagem segue para a DLQ, mas o cliente pode já ter
+   `PAYMENT_CONFIRMED` ou um segundo `PAYMENT_FAILED` na timeline. Essa janela fica aberta até
+   o estado da saga existir no `hotel-service`.
 6. `customer-service` grava cada transição na timeline; o cliente consulta em
    `GET /customer-service/customers/{customerId}/reservation-order/{reservationOrderId}`.
 
@@ -419,7 +429,8 @@ handler correspondente no `hotel-service`.
   enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
   `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. O `hotel-service` e o
   `booking-service` põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
-  thread, e nela o relay e os expurgos se bloqueariam.
+  thread, e nela o relay e os expurgos — e, no `booking-service`, a expiração de `PENDING` — se
+  bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.
@@ -511,8 +522,8 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
   lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
   protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
-  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
-  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateBookingStatusUseCaseImpl` trava a reserva (`for update`) antes de mudar o status: a
+  expiração e o pagamento não gravam um por cima do outro. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
   leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
   por último (issue #53).

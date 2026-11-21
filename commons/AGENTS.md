@@ -46,7 +46,7 @@ efeito. O `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só
 - **Cada invocação tem teto.** `app.outbox.round-budget` (`PT5S`), vezes doze, devolve a
   thread mesmo com backlog. O `relay-interval` (`PT1S`) só vale com a fila vazia. Os dois
   serviços põem `spring.task.scheduling.pool.size: 3` para o relay não dividir a única
-  thread do agendador com os expurgos.
+  thread do agendador com os expurgos e, no `booking-service`, com a expiração de `PENDING`.
 - **A linha publicada fica um dia** (`app.outbox.retention`). Nada a lê depois do
   `published_at`: a deduplicação é o `processed_event`. O expurgo não apaga pendente.
 

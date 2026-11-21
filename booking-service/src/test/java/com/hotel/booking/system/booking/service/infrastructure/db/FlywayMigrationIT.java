@@ -43,7 +43,7 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .createNativeQuery("select version from flyway_schema_history where success = true and version is not null order by installed_rank")
       .getResultList();
 
-    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "014", "015");
+    assertThat(aplicadas).containsExactly("001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013", "014", "015");
   }
 
   @Test
@@ -315,6 +315,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
       .getSingleResult();
 
     assertThat((String) definicao).contains("WHERE (published_at IS NOT NULL)");
+  }
+
+  @Test
+  @DisplayName("indexa só a reserva pendente por created_at, para a varredura da expiração")
+  void indexaReservaPendentePorCriacao() {
+    final var definicao = this.entityManager
+      .createNativeQuery("select indexdef from pg_indexes where indexname = 'booking_pending_created_at_idx'")
+      .getSingleResult();
+
+    assertThat((String) definicao).contains("(created_at)").contains("'PENDING'");
   }
 
   @Test

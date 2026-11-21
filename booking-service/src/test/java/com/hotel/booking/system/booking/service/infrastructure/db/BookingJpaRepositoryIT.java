@@ -32,6 +32,10 @@ import static org.assertj.core.api.Assertions.entry;
  * quantas unidades do quarto estão ocupadas no período pedido. Como compara colunas
  * {@code date} com desigualdades estritas, ela depende de como o banco compara datas — e é
  * exatamente o tipo de coisa que uma troca de engine muda em silêncio.</p>
+ *
+ * <p>As consultas que travam linhas (a expiração e a mudança de status) não são exercitadas
+ * aqui: {@code BookingExpirationIT} as chama pelo adaptador e, com o profile {@code e2e}, o
+ * {@code SagaIT} passa pela do pedido.</p>
  */
 @DisplayName("Consultas de reserva por período")
 class BookingJpaRepositoryIT extends AbstractDatabaseIT {

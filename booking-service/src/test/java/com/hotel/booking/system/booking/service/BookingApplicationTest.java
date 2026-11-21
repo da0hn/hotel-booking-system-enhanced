@@ -13,6 +13,7 @@ import com.hotel.booking.system.booking.service.core.ports.spi.repository.*;
 import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publisher.BookingRoomResponsePublisher;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
+import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -263,7 +264,9 @@ class BookingApplicationTest {
     final var existing = this.mapper.bookingRoomInputToBooking(
       this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     existing.initialize();
-    existing.changeStatusTo(status);
+    if (status != BookingStatus.PENDING) {
+      existing.changeStatusTo(status);
+    }
     when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(existing));
 
     final var output = usecase.execute(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
@@ -290,7 +293,7 @@ class BookingApplicationTest {
   void alteraStatusEConfirmaSomentePagamentoConcluido(final boolean paid) {
     final var booking = this.mapper.bookingRoomInputToBooking(this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
     booking.initialize();
-    when(this.repository.findBookingByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
     final BookingRoomStatusUpdatedEvent event = paid
       ? BookingRoomPaymentCompleted.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CONFIRMED).build()
       : BookingRoomPaymentFailed.builder().reservationOrderId(this.order).customerId(this.customer).status(BookingStatus.CANCELED).failureMessages(List.of("declined")).build();
@@ -309,6 +312,56 @@ class BookingApplicationTest {
     } else {
       verifyNoInteractions(this.publisher);
     }
+  }
+
+  @Test
+  @DisplayName("rejeita pagamento concluído de reserva já cancelada sem publicar confirmação")
+  void pagamentoTardioNaoConfirmaReservaCancelada() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentCompleted.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CONFIRMED)
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class)
+      .hasMessage(ApplicationMessage.BOOKING_STATUS_TRANSITION_INVALID);
+
+    assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELED);
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
+  }
+
+  @Test
+  @DisplayName("pagamento recusado depois do cancelamento não grava de novo")
+  void pagamentoRecusadoDepoisDoCancelamentoNaoGravaDeNovo() {
+    final var booking = this.mapper.bookingRoomInputToBooking(
+      this.mapper.bookingRoomRequestedEventToBookingRoomInput(this.event(new BigDecimal("20.2468"))));
+    booking.initialize();
+    booking.changeStatusTo(BookingStatus.CANCELED);
+    when(this.repository.lockByReservationOrderId(ReservationOrderId.of(this.order))).thenReturn(Optional.of(booking));
+    final var event = BookingRoomPaymentFailed.builder()
+      .reservationOrderId(this.order)
+      .customerId(this.customer)
+      .status(BookingStatus.CANCELED)
+      .failureMessages(List.of("declined"))
+      .build();
+
+    assertThatThrownBy(() -> new BookingBeanConfiguration()
+      .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
+      .handle(event))
+      .isInstanceOf(BookingDomainException.class)
+      .hasMessage(ApplicationMessage.BOOKING_STATUS_TRANSITION_INVALID);
+
+    verify(this.repository, never()).save(any());
+    verifyNoInteractions(this.publisher);
   }
 
   @Test
