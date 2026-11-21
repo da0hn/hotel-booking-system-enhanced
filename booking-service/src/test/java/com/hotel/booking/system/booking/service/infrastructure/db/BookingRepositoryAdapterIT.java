@@ -52,7 +52,7 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
       assertThat(item.getQuantity()).isEqualTo(2);
       assertThat(item.getPrice().getValue()).isEqualByComparingTo("10.1234");
     });
-    assertThat(this.bookings.findBookingByRoomIdAndPeriod(ROOM, period)).extracting(Booking::getId).containsExactly(booking.getId());
+    assertThat(this.bookings.sumOccupiedUnits(List.of(ROOM), period)).containsEntry(ROOM, 2);
     found.changeStatusTo(BookingStatus.CONFIRMED);
     this.bookings.save(found);
     this.entityManager.flush();
@@ -64,26 +64,51 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
   }
 
   /**
-   * A regra de "check-out depois do check-in" vale para o pedido novo, e não para o que o banco
-   * já tem: se a reidratação recusasse uma reserva antiga de zero noites, toda checagem de
-   * disponibilidade do quarto dela e toda atualização de status daquele pedido lançariam
-   * exceção.
+   * O adapter repassa todos os quartos do pedido à consulta, e não só o primeiro, e devolve um
+   * mapa vazio sem consultar quando não há quarto.
    */
   @Test
-  @DisplayName("reidrata uma reserva antiga de zero noites sem recusá-la")
-  void reidrataReservaDeZeroNoites() {
+  @DisplayName("devolve a ocupação de todos os quartos do pedido e vazio quando não há quartos")
+  void somaAOcupacaoDeTodosOsQuartosDoPedido() {
+    final var outroQuarto = RoomId.of("2c5c52bb-739d-468b-a2a2-b8b917a2004f");
+    final var period = BookingPeriod.of(LocalDate.of(2035, 5, 1), LocalDate.of(2035, 5, 4));
+    final var booking = Booking.builder().reservationOrderId(ReservationOrderId.of(UUID.randomUUID()))
+      .customerId(CustomerId.of(UUID.randomUUID())).bookingPeriod(period)
+      .totalPrice(Money.of(new BigDecimal("50.0000")))
+      .bookingRooms(List.of(
+        BookingRoom.builder().roomId(ROOM).quantity(2).price(Money.of(new BigDecimal("10.0000"))).build(),
+        BookingRoom.builder().roomId(outroQuarto).quantity(3).price(Money.of(new BigDecimal("10.0000"))).build()
+      )).build();
+    booking.initialize();
+    this.bookings.save(booking);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    assertThat(this.bookings.sumOccupiedUnits(List.of(ROOM, outroQuarto), period))
+      .containsOnly(entry(ROOM, 2), entry(outroQuarto, 3));
+    assertThat(this.bookings.sumOccupiedUnits(List.of(), period)).isEmpty();
+  }
+
+  /**
+   * O banco passou a recusar a estadia de zero noites (issue #54), então o teste que gravava
+   * essa linha para provar a reidratação não cabe mais. O construtor do período continua sem
+   * chamar {@code validate()}, e isso fica no teste de domínio: uma linha antiga, se existisse,
+   * ainda seria lida. O que este banco faz agora é não deixar a linha nascer.
+   */
+  @Test
+  @DisplayName("não grava reserva de zero noites")
+  void naoGravaReservaDeZeroNoites() {
     final var order = ReservationOrderId.of(UUID.randomUUID());
     final var period = BookingPeriod.of(LocalDate.of(2035, 4, 1), LocalDate.of(2035, 4, 1));
     final var booking = Booking.builder().reservationOrderId(order).customerId(CustomerId.of(UUID.randomUUID()))
       .bookingPeriod(period).totalPrice(Money.of(new BigDecimal("10.1234")))
       .bookingRooms(List.of(BookingRoom.builder().roomId(ROOM).quantity(1).price(Money.of(new BigDecimal("10.1234"))).build())).build();
     booking.initialize();
-    this.bookings.save(booking);
-    this.entityManager.flush();
-    this.entityManager.clear();
 
-    assertThat(this.bookings.findBookingByReservationOrderId(order)).hasValueSatisfying(found -> assertThat(found.getBookingPeriod()).isEqualTo(period));
-    assertThat(this.bookings.findBookingByRoomIdAndPeriod(ROOM, BookingPeriod.of(LocalDate.of(2035, 3, 30), LocalDate.of(2035, 4, 3)))).extracting(Booking::getId).containsExactly(booking.getId());
+    assertThatThrownBy(() -> {
+      this.bookings.save(booking);
+      this.entityManager.flush();
+    }).hasStackTraceContaining("booking_period_ck");
   }
 
   @Test

@@ -11,22 +11,22 @@ import java.time.LocalDate;
 import java.util.function.UnaryOperator;
 
 @Tag("unit")
-@DisplayName("Period comparison with another Period tests")
+@DisplayName("Period overlap with another Period tests")
 @ExtendWith(MockitoExtension.class)
-class BookingPeriodContainedInTest {
+class BookingPeriodOverlapsTest {
 
   private static final LocalDate INITIAL_DATE = LocalDate.now().minusDays(10);
   private static final LocalDate END_DATE = LocalDate.now().plusDays(5);
 
   @Test
-  @DisplayName("Should return true when current period is contained in other period")
+  @DisplayName("Should return true when other period starts before and ends after current period")
   void test1() {
     final var sut = BookingPeriod.of(
       INITIAL_DATE,
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(1)),
         this.modify(END_DATE, date -> date.plusDays(1))
@@ -37,14 +37,14 @@ class BookingPeriodContainedInTest {
   }
 
   @Test
-  @DisplayName("Should return true when current check-in is contained in other period")
+  @DisplayName("Should return true when other period starts before current check-in and ends at current check-out")
   void test2() {
     final var sut = BookingPeriod.of(
       INITIAL_DATE,
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(2)),
         this.modify(END_DATE, UnaryOperator.identity())
@@ -55,14 +55,14 @@ class BookingPeriodContainedInTest {
   }
 
   @Test
-  @DisplayName("Should return true when current check-out is contained in other period")
+  @DisplayName("Should return true when other period starts at current check-in and ends after current check-out")
   void test3() {
     final var sut = BookingPeriod.of(
       INITIAL_DATE,
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, UnaryOperator.identity()),
         this.modify(END_DATE, date -> date.plusDays(2))
@@ -81,7 +81,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(END_DATE, date -> date.plusDays(5)),
         this.modify(END_DATE, date -> date.plusDays(10))
@@ -100,7 +100,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.minusDays(10)),
         this.modify(INITIAL_DATE, date -> date.minusDays(5))
@@ -119,7 +119,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, UnaryOperator.identity()),
         this.modify(END_DATE, date -> date.plusDays(1))
@@ -137,7 +137,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, date -> date.plusDays(1)),
         this.modify(END_DATE, UnaryOperator.identity())
@@ -155,7 +155,7 @@ class BookingPeriodContainedInTest {
       END_DATE
     );
 
-    final var response = sut.isContainedIn(
+    final var response = sut.overlaps(
       BookingPeriod.of(
         this.modify(INITIAL_DATE, other -> other.plusDays(1)),
         this.modify(END_DATE, other -> other.minusDays(1))
@@ -163,6 +163,42 @@ class BookingPeriodContainedInTest {
     );
 
     Assertions.assertThat(response).isTrue();
+  }
+
+  @Test
+  @DisplayName("Should return false when other check-in is the current check-out")
+  void test9() {
+    final var sut = BookingPeriod.of(
+      INITIAL_DATE,
+      END_DATE
+    );
+
+    final var response = sut.overlaps(
+      BookingPeriod.of(
+        this.modify(END_DATE, UnaryOperator.identity()),
+        this.modify(END_DATE, date -> date.plusDays(3))
+      )
+    );
+
+    Assertions.assertThat(response).isFalse();
+  }
+
+  @Test
+  @DisplayName("Should return false when other check-out is the current check-in")
+  void test10() {
+    final var sut = BookingPeriod.of(
+      INITIAL_DATE,
+      END_DATE
+    );
+
+    final var response = sut.overlaps(
+      BookingPeriod.of(
+        this.modify(INITIAL_DATE, date -> date.minusDays(3)),
+        this.modify(INITIAL_DATE, UnaryOperator.identity())
+      )
+    );
+
+    Assertions.assertThat(response).isFalse();
   }
 
   private LocalDate modify(final LocalDate date, final UnaryOperator<LocalDate> operation) {

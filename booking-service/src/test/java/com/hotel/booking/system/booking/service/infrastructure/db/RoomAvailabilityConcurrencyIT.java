@@ -32,7 +32,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
@@ -269,8 +271,11 @@ class RoomAvailabilityConcurrencyIT extends AbstractDatabaseIT {
     }
 
     @Override
-    public List<Booking> findBookingByRoomIdAndPeriod(final RoomId roomId, final BookingPeriod bookingPeriod) {
-      final var found = this.delegate.findBookingByRoomIdAndPeriod(roomId, bookingPeriod);
+    public Map<RoomId, Integer> sumOccupiedUnits(
+      final Collection<RoomId> roomIds,
+      final BookingPeriod bookingPeriod
+    ) {
+      final var found = this.delegate.sumOccupiedUnits(roomIds, bookingPeriod);
       if (this.meeting == Meeting.OCCUPANCY_READ) {
         this.waitForTheOtherThread();
       }

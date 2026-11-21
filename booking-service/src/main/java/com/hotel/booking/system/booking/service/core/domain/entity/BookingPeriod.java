@@ -42,8 +42,8 @@ public class BookingPeriod {
    * <p>A regra vive aqui e não no construtor, de propósito. {@code Booking.validate()} chama este
    * método, e o {@code BookingInitializer} converte a exceção em uma falha limpa
    * ({@code BookingRoomFailedEvent}); uma exceção do construtor sairia do mapper e iria para o
-   * retry e a DLQ. O construtor também reidrata reservas do banco, e uma linha antiga de zero
-   * noites não pode fazer toda checagem de disponibilidade do quarto dela lançar exceção.</p>
+   * retry e a DLQ. O banco também recusa a linha de zero noites ({@code booking_period_ck},
+   * {@code V011}), que é a rede para o que escapar do domínio.</p>
    */
   public void validate() {
     if (!this.checkOut.isAfter(this.checkIn)) {
@@ -51,21 +51,14 @@ public class BookingPeriod {
     }
   }
 
-  public boolean isContainedIn(final BookingPeriod other) {
-    final var containsOtherPeriod = this.checkIn.isBefore(other.checkIn) && this.checkOut.isAfter(other.checkOut);
-    final var isTotallyContained = this.checkIn.isAfter(other.checkIn) && this.checkOut.isBefore(other.checkOut);
-    final var isEqualCheckOut = this.checkOut.isEqual(other.checkOut);
-    final var isEqualCheckIn = this.checkIn.isEqual(other.checkIn);
-    final var isPartiallyContainedByCheckIn = this.checkIn.isAfter(other.checkIn) && this.checkIn.isBefore(other.checkOut);
-    final var isPartiallyContainedByCheckOut = this.checkOut.isAfter(other.checkIn) && this.checkOut.isBefore(other.checkOut);
-    return containsOtherPeriod
-      || isTotallyContained
-      || isPartiallyContainedByCheckIn
-      || isPartiallyContainedByCheckOut
-      || isEqualCheckIn
-      || isEqualCheckOut;
+  /**
+   * Sobreposição estrita, a única definição do sistema: o check-out de um período no mesmo dia
+   * do check-in do outro não conflita. A consulta de ocupação repete estas duas comparações e
+   * não pode usar outra.
+   */
+  public boolean overlaps(final BookingPeriod other) {
+    return this.checkIn.isBefore(other.checkOut) && this.checkOut.isAfter(other.checkIn);
   }
-
 
   public LocalDate getCheckIn() {
     return this.checkIn;

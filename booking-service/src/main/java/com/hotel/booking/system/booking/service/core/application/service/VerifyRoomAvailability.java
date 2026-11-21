@@ -6,12 +6,12 @@ import com.hotel.booking.system.booking.service.core.domain.entity.Room;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.BookingRepository;
 import com.hotel.booking.system.booking.service.core.ports.spi.repository.RoomRepository;
 import com.hotel.booking.system.commons.core.application.annotation.DomainService;
-import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.FailureMessages;
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.extern.slf4j.Slf4j;
 
 import java.text.MessageFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -64,11 +64,12 @@ public class VerifyRoomAvailability {
 
     final var rooms = this.roomRepository.lockAllByRoomId(booking.getRoomsId());
     final var requestedUnitsByRoom = this.requestedUnitsByRoom(booking);
+    final var occupiedByRoom = this.occupiedUnitsByRoom(rooms, booking);
 
     log.info("Verifying rooms availability reservationOrderId={}", booking.getReservationOrderId());
     for (final var room : rooms) {
       final var requestedUnits = requestedUnitsByRoom.getOrDefault(room.getId(), 0);
-      final var occupiedUnits = this.occupiedUnits(room, booking);
+      final var occupiedUnits = occupiedByRoom.getOrDefault(room.getId(), 0);
       if (occupiedUnits + requestedUnits > room.getQuantity()) {
         log.error(
           "The roomId={} is unavailable for period={}, reservationOrderId={}",
@@ -87,19 +88,16 @@ public class VerifyRoomAvailability {
     return failureMessages;
   }
 
+  private Map<RoomId, Integer> occupiedUnitsByRoom(final List<Room> rooms, final Booking booking) {
+    return this.bookingRepository.sumOccupiedUnits(
+      rooms.stream().map(Room::getId).toList(),
+      booking.getBookingPeriod()
+    );
+  }
+
   private Map<RoomId, Integer> requestedUnitsByRoom(final Booking booking) {
     return booking.getBookingRooms().stream()
       .collect(Collectors.groupingBy(BookingRoom::getRoomId, Collectors.summingInt(VerifyRoomAvailability::unitsOf)));
-  }
-
-  private int occupiedUnits(final Room room, final Booking booking) {
-    return this.bookingRepository.findBookingByRoomIdAndPeriod(room.getId(), booking.getBookingPeriod()).stream()
-      .filter(item -> item.getStatus() != BookingStatus.CANCELED)
-      .filter(item -> booking.isBookingPeriodContainedIn(item.getBookingPeriod()))
-      .flatMap(item -> item.getBookingRooms().stream())
-      .filter(item -> room.getId().equals(item.getRoomId()))
-      .mapToInt(VerifyRoomAvailability::unitsOf)
-      .sum();
   }
 
   /**
