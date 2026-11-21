@@ -8,6 +8,12 @@ import com.hotel.booking.system.payment.service.infrastructure.messaging.propert
 import com.hotel.booking.system.payment.service.infrastructure.messaging.properties.RoutingKeyProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
+/**
+ * Publica direto no broker. O {@code payment-service} não tem banco, então não há transação em
+ * que gravar um outbox: a falha de publicação sobe pelo listener, o retry e a DLQ tratam, e a
+ * idempotência em memória cobre a reentrega dentro do processo. Os serviços com banco
+ * ({@code hotel} e {@code booking}) gravam no outbox em vez deste caminho.
+ */
 @Publisher
 public class PaymentResponsePublisherImpl
   extends AbstractRabbitPublisher<PaymentResponseEvent>
