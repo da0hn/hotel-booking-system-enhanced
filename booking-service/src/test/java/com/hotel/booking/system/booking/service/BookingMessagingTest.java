@@ -101,7 +101,7 @@ class BookingMessagingTest {
    */
   @Test
   @DisplayName("grava a resposta no outbox na rota configurada e propaga falha de persistência")
-  void publisherUsaRotaConfiguradaEPropagaFalhaDoBroker() {
+  void publisherGravaNoOutboxNaRotaConfiguradaEPropagaFalhaDePersistencia() {
     final var outbox = mock(Outbox.class);
     final var publisher = new BookingRoomResponsePublisherImpl(outbox,
       new RoutingKeyProperties("request", "response", "change"), new ExchangeProperties("booking"));
