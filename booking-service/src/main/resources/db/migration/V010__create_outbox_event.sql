@@ -12,8 +12,7 @@ create table if not exists outbox_event
     payload       jsonb                    not null,
     created_at    timestamp with time zone not null default now(),
     published_at  timestamp with time zone,
-    constraint outbox_event_pk primary key (id),
-    constraint outbox_event_seq_uk unique (seq)
+    constraint outbox_event_pk primary key (id)
 );
 
 -- O relay busca o pendente mais antigo de cada agregado. O predicado parcial deixa a linha
