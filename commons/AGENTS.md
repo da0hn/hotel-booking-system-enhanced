@@ -28,7 +28,7 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
 
 ## Outbox
 
-O evento é gravado em `outbox_event` na transação do efeito, por quem usa o outbox. O
+O `booking-service` grava o evento em `outbox_event` na transação do efeito. O
 `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só então marca
 `published_at`. O `payment-service` não entra: não tem banco.
 

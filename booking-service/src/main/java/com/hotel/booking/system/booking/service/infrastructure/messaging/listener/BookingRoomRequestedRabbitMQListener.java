@@ -20,9 +20,10 @@ public class BookingRoomRequestedRabbitMQListener implements BookingRoomRequeste
   private final IdempotentEventConsumer idempotentEventConsumer;
 
   /**
-   * O registro do {@code eventId} e a reserva entram na mesma transação: o commit leva os dois e
-   * o rollback desfaz os dois. É por isso que a reentrega de um evento já processado pode ser
-   * descartada com segurança, e a de um evento que falhou, não.
+   * O registro do {@code eventId}, a reserva e a resposta no outbox entram na mesma transação: o
+   * commit leva os três e o rollback desfaz os três. O relay publica a resposta depois do commit.
+   * É por isso que a reentrega de um evento já processado pode ser descartada com segurança, e a
+   * de um evento que falhou, não.
    */
   @RabbitListener(queues = "${app.rabbitmq.queue.booking-room-requested}")
   @Transactional
