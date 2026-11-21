@@ -81,11 +81,15 @@ class DeadLetterConfigurationTest {
       .withBean(JsonMapper.class, () -> JsonMapper.builder().build())
       .withBean(RabbitTemplate.class, () -> mock(RabbitTemplate.class))
       .withBean(JdbcClient.class, () -> mock(JdbcClient.class))
+      .withBean(org.springframework.transaction.PlatformTransactionManager.class, () -> mock(org.springframework.transaction.PlatformTransactionManager.class))
       .run(context -> assertThat(context)
         .hasSingleBean(Declarables.class)
         .hasSingleBean(MessageRecoverer.class)
         .hasSingleBean(RabbitListenerRetrySettingsCustomizer.class)
-        .hasSingleBean(IdempotentEventConsumer.class));
+        .hasSingleBean(IdempotentEventConsumer.class)
+        .hasSingleBean(com.hotel.booking.system.commons.core.application.outbox.Outbox.class)
+        .hasSingleBean(com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxRelay.class)
+        .hasSingleBean(com.hotel.booking.system.commons.infrastructure.messaging.outbox.OutboxPurgeJob.class));
   }
 
   @Test
@@ -109,6 +113,15 @@ class DeadLetterConfigurationTest {
 
     assertThat(jitter.isBound()).isTrue();
     assertThat(jitter.get()).isEqualTo(Duration.ofMillis(500));
+  }
+
+  @Test
+  @DisplayName("dá três threads ao agendador e retém o outbox por um dia")
+  void agendaEmPoolERetemOOutboxPorUmDia() throws IOException {
+    final var binder = Binder.get(ambienteDoApplicationYml());
+
+    assertThat(binder.bind("spring.task.scheduling.pool.size", Integer.class).get()).isEqualTo(3);
+    assertThat(binder.bind("app.outbox.retention", Duration.class).get()).isEqualTo(Duration.ofDays(1));
   }
 
   /**

@@ -291,9 +291,8 @@ Regras que o código segue e que devem ser mantidas:
   porque o `SagaIT` envia um pedido por vez. Como a soma decide a vaga, `BookingRoom.validate()`
   recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
-  **O lock tem custo**: só é solto no commit do listener, que inclui o publish com espera do
-  confirm do broker (5 s por tentativa, até 3 tentativas) e não tem `lock_timeout`. Com o broker
-  lento, cada pedido do mesmo quarto espera o anterior. O remédio estrutural é o Outbox (#35).
+  **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
+  transação; o confirm do broker é do relay, depois do commit. Ainda não há `lock_timeout`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
@@ -379,13 +378,14 @@ handler correspondente no `hotel-service`.
   `lombok.jacksonized.jacksonVersion += 3` no `lombok.config` da raiz (com `=` no lugar de `+=`
   a chave é ignorada em silêncio), e o `EventContractTest` prova que cada evento é construível.
   Os detalhes estão em `commons/AGENTS.md`.
-- **Publisher falha alto; nunca engole a exceção.** Todo publisher estende
-  `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que envia com
-  `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que nenhuma fila
-  recebeu — como falha, lançando `MessagePublishException`. Um `catch` que só loga recria o
-  defeito da #3: a saga trava sem sinal e o `POST` responde 200 com o broker fora. A regra
-  `publishersExtendAbstractRabbitPublisher` do ArchUnit de cada serviço recusa publisher que
-  não estenda a base.
+- **Publisher falha alto; nunca engole a exceção.** Quem fala com o broker — o relay do outbox,
+  o `hotel-service` e o `payment-service` — usa `AbstractRabbitPublisher`
+  (`commons/infrastructure/messaging`), que envia com `CorrelationData`, espera o confirm do
+  broker e trata o return — a mensagem que nenhuma fila recebeu — como falha, lançando
+  `MessageUnroutableException`. Broker fora, nack e timeout continuam `MessagePublishException`.
+  O `booking-service` grava no outbox (`OutboxPublisher`); a falha de gravar a linha sobe e
+  desfaz a transação. Um `catch` que só loga recria o defeito da #3. A regra de ArchUnit do
+  `payment-service` e a do `hotel` exigem a base; a do `booking` exige o outbox.
 - A garantia de entrega depende de **três chaves no `application.yml` de quem publica**:
   `publisher-confirm-type: correlated`, `publisher-returns: true` e `template.mandatory: true`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
@@ -448,7 +448,7 @@ escolha estão nos Javadocs; o que não se deduz do código:
   caso, o campo presente e nulo ou em branco, que só um produtor com defeito gera.
 - **A chave de negócio é a segunda rede.** `BookingRoomUseCaseImpl` busca por `reservationOrderId`
   *antes* de validar disponibilidade e, se já há reserva, devolve a saída marcada `duplicate` — o
-  handler não publica nada, porque a resposta da primeira vez foi confirmada pelo broker na mesma
+  handler não publica nada, porque a resposta da primeira vez está no outbox, na mesma
   transação que gravou a reserva. Validar antes responderia "indisponível" para um pedido que está
   reservado. A constraint `booking_reservation_order_id_uk` fecha o que passar por aí; **a V009
   falha em banco que já tenha pedido com duas reservas** (a consulta está no comentário dela).
@@ -471,9 +471,10 @@ escolha estão nos Javadocs; o que não se deduz do código:
   que leem o pedido ao mesmo tempo também fica de fora: é a #53.
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
-- **Limite conhecido:** publicar no broker e dar commit continuam sendo duas escritas. Morrer
-  entre as duas reprocessa o evento e republica a resposta com `eventId` novo. Só o Outbox (#35)
-  fecha essa janela.
+- **A resposta sai pelo outbox, na mesma transação do efeito.** Morrer entre o commit e o ack do
+  broker reentrega a mensagem; a deduplicação por `eventId` não repete o efeito, e a linha do
+  outbox que ainda não foi marcada é publicada pelo relay. O `payment-service` não entra nisso:
+  não tem banco, publica direto e a falha sobe pelo listener.
 
 ### Falha no consumidor: retry e DLQ
 
