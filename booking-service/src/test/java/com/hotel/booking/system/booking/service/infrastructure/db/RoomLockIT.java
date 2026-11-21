@@ -28,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -213,9 +214,11 @@ class RoomLockIT extends AbstractDatabaseIT {
 
   /**
    * O estouro do limite atravessa a cadeia inteira: listener, consumidor idempotente, handler, caso
-   * de uso, publisher do outbox e repositórios reais. A exceção chega a quem chamou (que é o que
-   * deixa o retry e a DLQ agirem), e a transação desfaz tudo o que ela já tinha gravado: o
-   * registro do evento. Não vira reserva, nem resposta de falha de negócio no outbox.
+   * de uso, publisher do outbox e repositórios reais. A exceção chega a quem chamou como
+   * {@code CannotAcquireLockException}, o tipo que {@code BookingApplicationTest} simula e que
+   * deixa o retry e a DLQ agirem; se alguém a engolisse, a transação marcada para rollback
+   * falharia no commit com outro tipo. A transação desfaz tudo o que já tinha gravado, o
+   * registro do evento, e não sobra reserva nem resposta de falha de negócio no outbox.
    */
   @Test
   @DisplayName("o estouro do limite atravessa o listener: sem reserva, sem registro do evento e sem resposta no outbox")
@@ -233,6 +236,7 @@ class RoomLockIT extends AbstractDatabaseIT {
     final var event = this.eventOf(this.roomA);
 
     assertThatThrownBy(() -> this.transaction.executeWithoutResult(status -> listener.listen(event)))
+      .isInstanceOf(CannotAcquireLockException.class)
       .hasStackTraceContaining("lock timeout");
 
     release.countDown();
