@@ -28,8 +28,8 @@ regras do contrato de mensagens que valem para todo o reactor (FQCN, `TrustedEve
 
 ## Outbox
 
-O `booking-service` grava o evento em `outbox_event` na transação do efeito. O
-`OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só então marca
+O `hotel-service` e o `booking-service` gravam o evento em `outbox_event` na transação do
+efeito. O `OutboxRelay` publica com o confirm do `AbstractRabbitPublisher` e só então marca
 `published_at`. O `payment-service` não entra: não tem banco.
 
 - **O tipo é conferido antes do `Class.forName`**, com a mesma igualdade de pacote de
@@ -43,8 +43,8 @@ O `booking-service` grava o evento em `outbox_event` na transação do efeito. O
   e agendam `next_attempt_at` (1s, 2s, 4s… até 5 minutos). Enquanto o head espera, os
   eventos seguintes do mesmo agregado também esperam.
 - **Cada invocação tem teto.** `app.outbox.round-budget` (`PT5S`), vezes doze, devolve a
-  thread mesmo com backlog. O `relay-interval` (`PT1S`) só vale com a fila vazia. Quem usa o outbox
-  põe `spring.task.scheduling.pool.size: 3` para o relay não dividir a única
+  thread mesmo com backlog. O `relay-interval` (`PT1S`) só vale com a fila vazia. Os dois
+  serviços põem `spring.task.scheduling.pool.size: 3` para o relay não dividir a única
   thread do agendador com a expiração e os expurgos.
 - **A linha publicada fica um dia** (`app.outbox.retention`). Nada a lê depois do
   `published_at`: a deduplicação é o `processed_event`. O expurgo não apaga pendente.

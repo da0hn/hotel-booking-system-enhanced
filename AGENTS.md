@@ -328,13 +328,13 @@ O `hotel-service` é o ponto de decisão: ele reage a cada resposta e decide o p
 Os outros três serviços só reagem ao que chega na sua fila.
 
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
-   capacidade contra o banco do hotel, gera um `reservationOrderId` e publica
+   capacidade contra o banco do hotel, gera um `reservationOrderId` e grava
    `BookingRoomRequestedEvent` (para o booking) + `CustomerBookingInitiatedEvent` (para o
-   customer). Responde 200 com o `reservationOrderId` assim que o broker confirma as duas
-   publicações — o resto é assíncrono. Se uma publicação falha, o `HotelExceptionHandler`
-   responde 503 com `hotel.booking.temporarily.unavailable`. As duas publicações **não são
-   atômicas**: se a segunda falha, o booking já recebeu a primeira. Só o Outbox (#35) fecha
-   essa janela.
+   customer) na tabela `outbox_event`, na transação do `HotelApplicationServiceImpl`. Responde
+   200 com o `reservationOrderId` sem falar com o broker — o relay publica os dois na ordem,
+   depois do commit. Se a transação desfaz, nenhuma das duas linhas fica. Falha ao gravar o
+   outbox é erro de banco e sai como 500; o `hotel-service` não traduz mais
+   `MessagePublishException` em 503, porque nenhum publisher dele fala com o broker.
 2. `booking-service` consome, valida disponibilidade no período (`VerifyRoomAvailability`),
    grava a reserva como `PENDING` e responde `BookingRoomPendingEvent` ou
    `BookingRoomFailedEvent`.
@@ -378,14 +378,14 @@ handler correspondente no `hotel-service`.
   `lombok.jacksonized.jacksonVersion += 3` no `lombok.config` da raiz (com `=` no lugar de `+=`
   a chave é ignorada em silêncio), e o `EventContractTest` prova que cada evento é construível.
   Os detalhes estão em `commons/AGENTS.md`.
-- **Publisher falha alto; nunca engole a exceção.** Quem fala com o broker — o relay do outbox,
-  o `hotel-service` e o `payment-service` — usa `AbstractRabbitPublisher`
-  (`commons/infrastructure/messaging`), que envia com `CorrelationData`, espera o confirm do
-  broker e trata o return — a mensagem que nenhuma fila recebeu — como falha, lançando
-  `MessageUnroutableException`. Broker fora, nack e timeout continuam `MessagePublishException`.
-  O `booking-service` grava no outbox (`OutboxPublisher`); a falha de gravar a linha sobe e
+- **Publisher falha alto; nunca engole a exceção.** Quem fala com o broker — o relay do outbox e
+  o `payment-service` — usa `AbstractRabbitPublisher` (`commons/infrastructure/messaging`), que
+  envia com `CorrelationData`, espera o confirm do broker e trata o return — a mensagem que
+  nenhuma fila recebeu — como falha, lançando `MessageUnroutableException`. Broker fora, nack
+  e timeout continuam `MessagePublishException`. O `hotel-service` e o
+  `booking-service` gravam no outbox (`OutboxPublisher`); a falha de gravar a linha sobe e
   desfaz a transação. Um `catch` que só loga recria o defeito da #3. A regra de ArchUnit do
-  `payment-service` e a do `hotel` exigem a base; a do `booking` exige o outbox.
+  `payment-service` exige a base; a do `hotel` e do `booking` exige o outbox.
 - A garantia de entrega depende de **três chaves no `application.yml` de quem publica**:
   `publisher-confirm-type: correlated`, `publisher-returns: true` e `template.mandatory: true`.
   Sem `mandatory` o broker confirma a mensagem que descartou por falta de fila, e o publisher
@@ -407,8 +407,8 @@ handler correspondente no `hotel-service`.
   `processed_event`.
 - **O relay não espera a fila esvaziar para devolver a thread.** Cada invocação publica
   enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
-  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. Os serviços com outbox
-  põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
+  `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. O `hotel-service` e o
+  `booking-service` põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
   thread, e nela o relay, a expiração de `PENDING` e os expurgos se bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
@@ -536,7 +536,6 @@ domínio do serviço, por `this.reject(status, exception)`.
 | Campos de entrada (corpo ou parâmetro de query) recusados pela validação | 400 | `request.invalid`, com `data` = lista de `{field, message}` |
 | Id (path ou corpo) que não é UUID | 400 | `request.id.invalid`, com `data` = `[{field, message}]` só do primeiro campo recusado |
 | Corpo ilegível, método não suportado, rota inexistente | o do Spring (400, 405, 404) | `request.invalid` |
-| Falha ao publicar o evento (`MessagePublishException`) | 503 | `hotel.booking.temporarily.unavailable` |
 | Qualquer outra exceção | 500 | `internal.server.error`, sem detalhe |
 
 O que não se deduz do código:

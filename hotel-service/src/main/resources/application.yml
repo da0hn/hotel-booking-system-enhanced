@@ -4,6 +4,12 @@ server:
   servlet:
     context-path: /hotel-service
 spring:
+  task:
+    scheduling:
+      # O padrão do Boot é uma thread. O relay e os dois expurgos (outbox e processed_event)
+      # dividiriam essa thread: um backlog do relay segura o expurgo, e o contrário.
+      pool:
+        size: 3
   application:
     name: '@name@'
     version: '@revision@'
@@ -101,4 +107,12 @@ app:
       payment-request: payment-request
       payment-confirmation: payment-confirmation
       customer-booking-update: customer-booking-update
+  # O relay publica o que a transação de negócio gravou. O intervalo curto encurta a espera da
+  # saga. A linha publicada não é lida por ninguém: a deduplicação mora no processed_event.
+  # Um dia cobre uma investigação; mais do que isso só aumenta o claim.
+  outbox:
+    relay-interval: PT1S
+    round-budget: PT5S
+    retention: P1D
+    purge-interval: PT1H
 
