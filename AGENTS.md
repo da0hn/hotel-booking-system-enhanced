@@ -298,9 +298,10 @@ Regras que o código segue e que devem ser mantidas:
   prazo falha a transação sem gravar a reserva e sem evento de falha de negócio: a exceção segue
   o retry e a DLQ. Com um quarto esperado o pior caso até a DLQ é cerca de três vezes esse limite
   mais o backoff (1 s, depois 2 s); com N quartos segurados por transações diferentes, cada
-  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido que o domínio já recusou não toma o lock. A
-  ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
-  `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
+  tentativa pode esperar até N vezes o limite. Os quartos são travados em ordem de id. Pedido
+  que o domínio já recusou não toma o lock. A ocupação de todos os quartos do pedido sai de uma
+  consulta agregada (`sum` de `booking_room.quantity`), com a sobreposição estrita de
+  `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
@@ -333,7 +334,8 @@ Regras que o código segue e que devem ser mantidas:
 ### Fluxo da saga (o que é preciso entender antes de mexer)
 
 O `hotel-service` é o ponto de decisão: ele reage a cada resposta e decide o próximo passo.
-Os outros três serviços só reagem ao que chega na sua fila.
+Os outros três serviços só reagem ao que chega na sua fila, com uma exceção: o scheduler de
+expiração do `booking-service` parte do relógio, não de uma mensagem (passo 5).
 
 1. `POST /hotel-service/hotel/booking` → `BookingRoomRequestUseCaseImpl` valida quartos e
    capacidade contra o banco do hotel, gera um `reservationOrderId` e grava
@@ -427,7 +429,8 @@ handler correspondente no `hotel-service`.
   enquanto o claim devolve linha, até `app.outbox.round-budget` (`PT5S`) vezes doze. O
   `relay-interval` (`PT1S`) só separa rodadas com a fila vazia. O `hotel-service` e o
   `booking-service` põem `spring.task.scheduling.pool.size: 3`: o padrão do Boot é uma
-  thread, e nela o relay e os expurgos se bloqueariam.
+  thread, e nela o relay e os expurgos — e, no `booking-service`, a expiração de `PENDING` — se
+  bloqueariam.
 - A exceção sobe pelo listener e desfaz a transação. O retry com DLQ (seção seguinte) impede o
   loop de reentrega, e a deduplicação por `eventId` (seção *Idempotência no consumo*) impede que
   uma reentrega repita o efeito já gravado.

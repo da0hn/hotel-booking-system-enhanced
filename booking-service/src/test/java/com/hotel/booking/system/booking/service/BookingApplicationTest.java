@@ -13,6 +13,7 @@ import com.hotel.booking.system.booking.service.core.ports.spi.repository.*;
 import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publisher.BookingRoomResponsePublisher;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.core.domain.valueobject.*;
+import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -330,7 +331,8 @@ class BookingApplicationTest {
     assertThatThrownBy(() -> new BookingBeanConfiguration()
       .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
       .handle(event))
-      .isInstanceOf(BookingDomainException.class);
+      .isInstanceOf(BookingDomainException.class)
+      .hasMessage(ApplicationMessage.BOOKING_STATUS_TRANSITION_INVALID);
 
     assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELED);
     verify(this.repository, never()).save(any());
@@ -355,7 +357,8 @@ class BookingApplicationTest {
     assertThatThrownBy(() -> new BookingBeanConfiguration()
       .bookingRoomStatusChangedHandler(this.mapper, new UpdateBookingStatusUseCaseImpl(this.repository), this.publisher)
       .handle(event))
-      .isInstanceOf(BookingDomainException.class);
+      .isInstanceOf(BookingDomainException.class)
+      .hasMessage(ApplicationMessage.BOOKING_STATUS_TRANSITION_INVALID);
 
     verify(this.repository, never()).save(any());
     verifyNoInteractions(this.publisher);

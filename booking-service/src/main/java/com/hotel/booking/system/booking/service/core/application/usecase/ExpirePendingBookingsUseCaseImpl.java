@@ -25,7 +25,7 @@ public class ExpirePendingBookingsUseCaseImpl implements ExpirePendingBookingsUs
 
   public ExpirePendingBookingsUseCaseImpl(
     final BookingRepository bookingRepository,
-    @Value("${app.booking.pending-timeout:PT10M}") final Duration pendingTimeout
+    @Value("${app.booking.pending-timeout}") final Duration pendingTimeout
   ) {
     this.bookingRepository = bookingRepository;
     this.pendingTimeout = pendingTimeout;

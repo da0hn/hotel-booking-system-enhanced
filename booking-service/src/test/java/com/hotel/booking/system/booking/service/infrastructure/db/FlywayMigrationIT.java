@@ -318,6 +318,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
   }
 
   @Test
+  @DisplayName("indexa só a reserva pendente por created_at, para a varredura da expiração")
+  void indexaReservaPendentePorCriacao() {
+    final var definicao = this.entityManager
+      .createNativeQuery("select indexdef from pg_indexes where indexname = 'booking_pending_created_at_idx'")
+      .getSingleResult();
+
+    assertThat((String) definicao).contains("(created_at)").contains("'PENDING'");
+  }
+
+  @Test
   @DisplayName("indexa a linha de reserva pelo quarto")
   void indexaLinhaDeReservaPeloQuarto() {
     final var total = this.entityManager

@@ -17,6 +17,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -73,6 +74,7 @@ public class BookingEntity {
   @Column(name = "updated_at")
   private Instant updatedAt;
 
+  @BatchSize(size = 100)
   @OneToMany(mappedBy = "booking", cascade = CascadeType.ALL, orphanRemoval = true)
   private Set<BookingRoomEntity> bookingRooms = new LinkedHashSet<>();
 

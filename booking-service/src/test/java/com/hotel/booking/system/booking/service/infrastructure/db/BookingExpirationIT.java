@@ -4,6 +4,7 @@ import com.hotel.booking.system.booking.service.application.scheduler.BookingExp
 import com.hotel.booking.system.booking.service.core.application.service.VerifyRoomAvailability;
 import com.hotel.booking.system.booking.service.core.application.usecase.ExpirePendingBookingsUseCaseImpl;
 import com.hotel.booking.system.booking.service.core.domain.exception.BookingDomainException;
+import com.hotel.booking.system.booking.service.core.ports.spi.messaging.publisher.BookingRoomResponsePublisher;
 import com.hotel.booking.system.booking.service.core.domain.entity.Booking;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingPeriod;
 import com.hotel.booking.system.booking.service.core.domain.entity.BookingRoom;
@@ -14,6 +15,7 @@ import com.hotel.booking.system.booking.service.infrastructure.db.repository.ada
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.ExchangeProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.properties.RoutingKeyProperties;
 import com.hotel.booking.system.booking.service.infrastructure.messaging.publisher.BookingRoomResponsePublisherImpl;
+import com.hotel.booking.system.commons.core.domain.event.BookingRoomExpiredEvent;
 import com.hotel.booking.system.commons.core.domain.valueobject.BookingStatus;
 import com.hotel.booking.system.commons.core.domain.valueobject.CustomerId;
 import com.hotel.booking.system.commons.core.domain.valueobject.Money;
@@ -21,6 +23,8 @@ import com.hotel.booking.system.commons.core.domain.valueobject.ReservationOrder
 import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import com.hotel.booking.system.commons.infrastructure.messaging.outbox.JacksonOutbox;
 import com.hotel.booking.system.commons.infrastructure.messaging.outbox.JdbcOutboxRepository;
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -76,7 +80,12 @@ class BookingExpirationIT extends AbstractDatabaseIT {
   @Autowired
   private PlatformTransactionManager transactionManager;
 
+  @Autowired
+  private EntityManagerFactory entityManagerFactory;
+
   private TransactionTemplate transaction;
+
+  private BookingRoomResponsePublisherImpl publisher;
 
   private BookingExpirationScheduler scheduler;
 
@@ -84,13 +93,21 @@ class BookingExpirationIT extends AbstractDatabaseIT {
   void prepara() {
     this.transaction = new TransactionTemplate(this.transactionManager);
     final var outbox = new JacksonOutbox(new JdbcOutboxRepository(this.jdbc), JsonMapper.builder().build());
-    final var publisher = new BookingRoomResponsePublisherImpl(
+    this.publisher = new BookingRoomResponsePublisherImpl(
       outbox,
       new RoutingKeyProperties("requested", "confirmation", "status"),
       new ExchangeProperties("exchange.booking-room")
     );
-    final var useCase = new ExpirePendingBookingsUseCaseImpl(this.bookings, Duration.ofMinutes(10));
-    this.scheduler = new BookingExpirationScheduler(useCase, publisher, this.transactionManager, 100);
+    this.scheduler = this.schedulerComLotesDe(100, this.publisher);
+  }
+
+  private BookingExpirationScheduler schedulerComLotesDe(final int tamanho, final BookingRoomResponsePublisher destino) {
+    return new BookingExpirationScheduler(
+      new ExpirePendingBookingsUseCaseImpl(this.bookings, Duration.ofMinutes(10)),
+      destino,
+      this.transactionManager,
+      tamanho
+    );
   }
 
   @AfterEach
@@ -120,17 +137,22 @@ class BookingExpirationIT extends AbstractDatabaseIT {
   @DisplayName("cancela a reserva vencida, publica o evento e libera o quarto")
   void expiracaoCancelaPublicaELiberaOQuarto() {
     final var order = this.gravaPendente(true);
+    final var cliente = this.customerOf(order);
 
     this.transaction.executeWithoutResult(status -> this.scheduler.expirePendingBookings());
 
     assertThat(this.statusOf(order)).isEqualTo("CANCELED");
-    final var payload = this.jdbc.sql("select event_type, payload::text from outbox_event").query((rs, row) ->
-      rs.getString(1) + " " + rs.getString(2)
-    ).list();
-    assertThat(payload).singleElement().asString()
-      .contains("BookingRoomExpiredEvent")
-      .contains(BookingExpirationScheduler.EXPIRED_MESSAGE)
-      .contains(order.toString());
+    final var linhas = this.jdbc.sql("select event_type, payload::text from outbox_event")
+      .query((rs, row) -> new String[] {rs.getString(1), rs.getString(2)})
+      .list();
+    assertThat(linhas).singleElement().satisfies(linha -> {
+      assertThat(linha[0]).isEqualTo(BookingRoomExpiredEvent.class.getName());
+      final var evento = JsonMapper.builder().build().readValue(linha[1], BookingRoomExpiredEvent.class);
+      assertThat(evento.getReservationOrderId()).isEqualTo(order.toString());
+      assertThat(evento.getCustomerId()).as("o cliente da reserva, e não o id do pedido").isEqualTo(cliente);
+      assertThat(evento.getStatus()).isEqualTo(BookingStatus.CANCELED);
+      assertThat(evento.getFailureMessages()).containsExactly("A reserva expirou aguardando confirmacao de pagamento");
+    });
     assertThat(this.jpa.sumOccupiedUnits(java.util.List.of(ROOM.getValue()), CHECK_IN, CHECK_OUT)).isEmpty();
 
     final var novo = this.novaReserva();
@@ -138,6 +160,88 @@ class BookingExpirationIT extends AbstractDatabaseIT {
       new VerifyRoomAvailability(this.bookings, this.rooms).execute(novo)
     );
     assertThat(falhas.data()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("repete os lotes na mesma execução até cancelar todas as reservas vencidas")
+  void repeteOsLotesAteEsvaziar() {
+    final var ordens = List.of(this.gravaPendenteHa(30), this.gravaPendenteHa(29), this.gravaPendenteHa(28));
+
+    this.schedulerComLotesDe(2, this.publisher).expirePendingBookings();
+
+    assertThat(ordens).allSatisfy(ordem -> assertThat(this.statusOf(ordem)).isEqualTo("CANCELED"));
+    assertThat(this.jdbc.sql("select count(*) from outbox_event").query(Long.class).single()).isEqualTo(3L);
+  }
+
+  /**
+   * O scheduler chama o caso de uso fora de qualquer transação externa: cada lote tem a própria e
+   * é confirmado antes do seguinte. Com lotes de dois e três vencidas, a falha na gravação do
+   * evento da terceira, que está sozinha no segundo lote, desfaz só esse lote.
+   */
+  @Test
+  @DisplayName("confirma cada lote antes do seguinte: a falha no segundo não desfaz o primeiro")
+  void falhaNoSegundoLoteNaoDesfazOPrimeiro() {
+    final var primeira = this.gravaPendenteHa(30);
+    final var segunda = this.gravaPendenteHa(29);
+    final var terceira = this.gravaPendenteHa(28);
+    final BookingRoomResponsePublisher falhaNaTerceira = event -> {
+      if (event.getReservationOrderId().equals(terceira.toString())) {
+        throw new IllegalStateException("outbox down");
+      }
+      this.publisher.publish(event);
+    };
+
+    assertThatThrownBy(() -> this.schedulerComLotesDe(2, falhaNaTerceira).expirePendingBookings())
+      .hasStackTraceContaining("outbox down");
+
+    assertThat(this.statusOf(primeira)).isEqualTo("CANCELED");
+    assertThat(this.statusOf(segunda)).isEqualTo("CANCELED");
+    assertThat(this.statusOf(terceira)).isEqualTo("PENDING");
+    assertThat(this.jdbc.sql("select count(*) from outbox_event").query(Long.class).single()).isEqualTo(2L);
+  }
+
+  /**
+   * As reservas são gravadas da mais nova para a mais antiga, então a ordem física das linhas é
+   * o contrário da ordem de criação: só o {@code order by created_at} da consulta devolve a mais
+   * antiga primeiro.
+   */
+  @Test
+  @DisplayName("devolve só as reservas vencidas mais antigas, na ordem de criação, até o limite do lote")
+  void devolveAsMaisAntigasNaOrdemAteOLimite() {
+    this.gravaPendenteHa(28);
+    final var segunda = this.gravaPendenteHa(29);
+    final var maisAntiga = this.gravaPendenteHa(30);
+
+    final var lote = this.transaction.execute(status -> this.bookings.lockPendingCreatedBefore(Instant.now(), 2));
+
+    assertThat(lote).extracting(Booking::getReservationOrderId).containsExactly(maisAntiga, segunda);
+  }
+
+  /**
+   * O lote carrega as reservas e as linhas delas em número constante de consultas: antes, cada
+   * reserva custava um {@code findById} e uma consulta lazy das linhas, com o lock do lote aberto.
+   */
+  @Test
+  @DisplayName("carrega o lote em número constante de consultas, e não uma ou duas por reserva")
+  void carregaOLoteSemUmaConsultaPorReserva() {
+    final var ordens = new ArrayList<ReservationOrderId>();
+    for (var minutos = 20; minutos < 25; minutos++) {
+      ordens.add(this.gravaPendenteHa(minutos));
+    }
+    final var statistics = this.entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    statistics.setStatisticsEnabled(true);
+
+    statistics.clear();
+    final var lote = this.transaction.execute(status -> this.bookings.lockPendingCreatedBefore(Instant.now(), 10));
+    final var consultasDoLote = statistics.getPrepareStatementCount();
+
+    statistics.clear();
+    this.transaction.execute(status -> this.bookings.lockByReservationOrderId(ordens.getFirst()).orElseThrow());
+    final var consultasDoPedido = statistics.getPrepareStatementCount();
+
+    assertThat(lote).hasSize(5);
+    assertThat(consultasDoLote).as("consultas para travar e carregar 5 reservas").isLessThanOrEqualTo(3);
+    assertThat(consultasDoPedido).as("consultas para travar e carregar a reserva do pedido").isLessThanOrEqualTo(3);
   }
 
   @Test
@@ -248,6 +352,11 @@ class BookingExpirationIT extends AbstractDatabaseIT {
   }
 
   private ReservationOrderId gravaPendente(final boolean vencida) {
+    return vencida ? this.gravaPendenteHa(11) : this.gravaPendenteHa(0);
+  }
+
+  /** Grava a reserva {@code PENDING} com {@code created_at} há tantos minutos; zero deixa o instante da gravação. */
+  private ReservationOrderId gravaPendenteHa(final int minutos) {
     final var order = ReservationOrderId.newInstance();
     final var pending = Booking.builder()
       .reservationOrderId(order)
@@ -258,12 +367,19 @@ class BookingExpirationIT extends AbstractDatabaseIT {
       .build();
     pending.initialize();
     this.transaction.executeWithoutResult(status -> this.bookings.save(pending));
-    if (vencida) {
+    if (minutos > 0) {
       this.transaction.executeWithoutResult(status -> this.jdbc.sql("""
-        update booking set created_at = now() - interval '11 minutes' where reservation_order_id = :order
-        """).param("order", order.toString()).update());
+        update booking set created_at = now() - (:minutos * interval '1 minute') where reservation_order_id = :order
+        """).param("minutos", minutos).param("order", order.toString()).update());
     }
     return order;
+  }
+
+  private String customerOf(final ReservationOrderId order) {
+    return this.jdbc.sql("select customer_id from booking where reservation_order_id = :order")
+      .param("order", order.toString())
+      .query(String.class)
+      .single();
   }
 
   private Booking novaReserva() {

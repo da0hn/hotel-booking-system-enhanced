@@ -6,9 +6,9 @@ server:
 spring:
   task:
     scheduling:
-      # O padrão do Boot é uma thread. O relay e os dois expurgos dividiriam essa thread:
-      # um backlog do relay seguraria os expurgos. Três deixam o relay andar sem esperar
-      # por eles.
+      # O padrão do Boot é uma thread. O relay, a expiração de PENDING e os expurgos
+      # dividiriam essa thread: um backlog segura os outros. Três deixam o relay e a
+      # expiração andarem juntos; o expurgo horário usa a que sobra.
       pool:
         size: 3
   application:
@@ -95,7 +95,8 @@ app:
     room-lock-timeout: 10s
     expiration-scheduler:
       cron: "0 */5 * * * *"
-    # Cada transação do scheduler cancela no máximo este tanto. A rodada seguinte pega o resto.
+    # Tamanho de cada transação do scheduler. A execução repete lotes até não restar reserva
+    # vencida, então este valor limita o tempo que cada lock fica preso, não o total por execução.
     expiration-batch-size: 100
   rabbitmq:
     # Espalha cada espera do retry em até +-500ms (multiplicado a cada tentativa). O Boot 4.1 não

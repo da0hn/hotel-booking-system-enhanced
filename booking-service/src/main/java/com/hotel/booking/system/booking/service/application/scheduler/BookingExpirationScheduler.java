@@ -36,7 +36,7 @@ public class BookingExpirationScheduler {
     final ExpirePendingBookingsUseCase expirePendingBookingsUseCase,
     final BookingRoomResponsePublisher publisher,
     final PlatformTransactionManager transactionManager,
-    @Value("${app.booking.expiration-batch-size:100}") final int batchSize
+    @Value("${app.booking.expiration-batch-size}") final int batchSize
   ) {
     this.expirePendingBookingsUseCase = expirePendingBookingsUseCase;
     this.publisher = publisher;
@@ -44,7 +44,7 @@ public class BookingExpirationScheduler {
     this.batchSize = batchSize;
   }
 
-  @Scheduled(cron = "${app.booking.expiration-scheduler.cron:0 */5 * * * *}")
+  @Scheduled(cron = "${app.booking.expiration-scheduler.cron}")
   public void expirePendingBookings() {
     while (true) {
       final var processed = this.transactions.execute(status -> {
