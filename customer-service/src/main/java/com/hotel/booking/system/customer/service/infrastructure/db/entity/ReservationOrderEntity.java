@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.Version;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
@@ -72,6 +73,14 @@ public class ReservationOrderEntity implements Serializable {
   @Enumerated(EnumType.STRING)
   @Column(name = "current_status", nullable = false, length = 50)
   private CustomerReservationStatus currentStatus;
+
+  /**
+   * Lido na carga e devolvido no {@code UPDATE}. Se outra transação gravou no meio, o banco
+   * recusa esta e o listener pode tentar de novo em cima do estado já commitado.
+   */
+  @Version
+  @Column(name = "version", nullable = false)
+  private Long version;
 
   @OneToMany(
     mappedBy = "reservationOrder",
