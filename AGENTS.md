@@ -473,10 +473,14 @@ escolha estão nos Javadocs; o que não se deduz do código:
   que leem o pedido ao mesmo tempo também fica de fora: é a #53.
 - **`processed_event` é expurgado** por `ProcessedEventPurgeJob`: retenção
   `app.idempotency.retention` (7 dias) e execução a cada `app.idempotency.purge-interval` (`PT1H`).
-- **A resposta sai pelo outbox, na mesma transação do efeito.** Morrer entre o commit e o ack do
-  broker reentrega a mensagem; a deduplicação por `eventId` não repete o efeito, e a linha do
-  outbox que ainda não foi marcada é publicada pelo relay. O `payment-service` não entra nisso:
-  não tem banco, publica direto e a falha sobe pelo listener.
+- **A resposta do `booking-service` sai pelo outbox, na mesma transação do efeito.** Morrer entre
+  o commit e o ack do broker reentrega a mensagem; a deduplicação por `eventId` não repete o
+  efeito, e a linha do outbox que ainda não foi marcada é publicada pelo relay. O
+  `payment-service` não entra nisso: não tem banco, publica direto e a falha sobe pelo listener.
+- **Limite conhecido, do `hotel-service`:** os publishers dele ainda falam com o broker dentro da
+  transação dos listeners, e publicar e dar commit continuam sendo duas escritas. Morrer entre as
+  duas reprocessa o evento e republica a resposta com `eventId` novo. Só gravar no outbox, que o
+  hotel ainda não faz, fecha essa janela.
 
 ### Falha no consumidor: retry e DLQ
 
