@@ -44,7 +44,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * Prova o outbox contra o PostgreSQL do serviço, com o usuário restrito (issue #35).
@@ -55,6 +58,21 @@ import static org.mockito.Mockito.mock;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @DisplayName("Outbox da saga")
 class OutboxIT extends AbstractDatabaseIT {
+
+  /**
+   * O atraso que o relay agenda depois de cada falha de transporte: 1s, 2s, 4s… 256s e, da 10ª
+   * em diante, o teto de cinco minutos. Duas falhas além da 10ª provam que o teto se mantém.
+   */
+  private static final List<Long> EXPECTED_BACKOFF_SECONDS = List.of(1L, 2L, 4L, 8L, 16L, 32L, 64L, 128L, 256L, 300L, 300L);
+
+  /**
+   * O PostgreSQL guarda microssegundos e o relógio do teste tem nanossegundos: a diferença
+   * entre o atraso gravado e o esperado nunca passa de um milissegundo.
+   */
+  private static final Duration BACKOFF_TOLERANCE = Duration.ofMillis(1);
+
+  /** Pacote confiável (o do contrato de eventos) com um tipo que nenhuma versão do código tem. */
+  private static final String MISSING_EVENT_TYPE = "com.hotel.booking.system.commons.core.domain.event.NaoExiste";
 
   @Autowired
   private JdbcClient jdbc;
@@ -208,27 +226,104 @@ class OutboxIT extends AbstractDatabaseIT {
       this.outbox.append(order, "exchange.a", "segundo", this.event(order));
     });
     final var clock = new MovableClock();
-    OffsetDateTime previousAttempt = null;
-    for (var attempt = 1; attempt <= 11; attempt++) {
+    for (var attempt = 1; attempt <= EXPECTED_BACKOFF_SECONDS.size(); attempt++) {
       this.relay(clock, new ArrayList<>(), true).publishPending();
       final var rows = this.rowsOf(order);
       final var head = rows.getFirst();
       assertThat(head.attempts()).isEqualTo(attempt);
       assertThat(head.abandonedAt()).isNull();
       assertThat(head.nextAttemptAt()).isNotNull();
-      if (previousAttempt != null) {
-        assertThat(head.nextAttemptAt()).isAfter(previousAttempt);
-      }
+      final var delay = Duration.between(clock.instant(), head.nextAttemptAt().toInstant());
+      final var expected = Duration.ofSeconds(EXPECTED_BACKOFF_SECONDS.get(attempt - 1));
+      assertThat(delay)
+        .as("atraso depois da %dª falha", attempt)
+        .isBetween(expected.minus(BACKOFF_TOLERANCE), expected.plus(BACKOFF_TOLERANCE));
       assertThat(rows.get(1).attempts()).isZero();
       assertThat(rows.get(1).publishedAt()).isNull();
-      previousAttempt = head.nextAttemptAt();
-      clock.advance(Duration.between(clock.instant(), head.nextAttemptAt().toInstant()));
+      clock.advance(delay);
     }
 
     final var published = new ArrayList<String>();
     this.relay(clock, published, false).publishPending();
     assertThat(published).containsExactly("exchange.a|primeiro", "exchange.a|segundo");
     assertThat(this.rowsOf(order)).allSatisfy(row -> assertThat(row.publishedAt()).isNotNull());
+  }
+
+  @Test
+  @DisplayName("a linha em backoff não é reservada de novo antes do next_attempt_at")
+  void linhaEmBackoffSoVoltaDepoisDoNextAttemptAt() {
+    final var order = UUID.randomUUID().toString();
+    this.transaction.executeWithoutResult(status ->
+      this.outbox.append(order, "exchange.a", "key", this.event(order))
+    );
+    final var template = mock(RabbitTemplate.class);
+    doThrow(new MessagePublishException("broker fora"))
+      .when(template).convertAndSend(any(String.class), any(String.class), any(Object.class), any(CorrelationData.class));
+    final var clock = new MovableClock();
+    final var relay = new OutboxRelay(
+      this.repository,
+      new OutboxBrokerPublisher(template),
+      this.jsonMapper,
+      this.transaction,
+      clock,
+      Duration.ofMinutes(1)
+    );
+
+    relay.publishPending();
+    relay.publishPending();
+
+    verify(template, times(1)).convertAndSend(any(String.class), any(String.class), any(Object.class), any(CorrelationData.class));
+    assertThat(this.rowsOf(order).getFirst().attempts()).isEqualTo(1);
+
+    clock.advance(Duration.ofSeconds(1));
+    relay.publishPending();
+
+    verify(template, times(2)).convertAndSend(any(String.class), any(String.class), any(Object.class), any(CorrelationData.class));
+    assertThat(this.rowsOf(order).getFirst().attempts()).isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName("o payload que não desserializa abandona a linha e libera o evento seguinte do agregado")
+  void payloadInvalidoAbandonaELiberaOSeguinte() {
+    final var order = UUID.randomUUID().toString();
+    this.insertRaw(order, BookingRoomConfirmedEvent.class.getName(), "\"nao e um evento\"");
+    this.transaction.executeWithoutResult(status ->
+      this.outbox.append(order, "exchange.a", "seguinte", this.event(order))
+    );
+    final var published = new ArrayList<String>();
+    final var relay = this.relay(published, false);
+
+    relay.publishPending();
+    relay.publishPending();
+
+    final var rows = this.rowsOf(order);
+    assertThat(rows.getFirst().abandonedAt()).isNotNull();
+    assertThat(rows.getFirst().nextAttemptAt()).isNull();
+    assertThat(rows.getFirst().attempts()).isEqualTo(1);
+    assertThat(rows.get(1).publishedAt()).isNotNull();
+    assertThat(published).containsExactly("exchange.a|seguinte");
+  }
+
+  @Test
+  @DisplayName("a classe ausente do classpath, num pacote confiável, abandona a linha e libera o evento seguinte")
+  void classeAusenteAbandonaELiberaOSeguinte() {
+    final var order = UUID.randomUUID().toString();
+    this.insertRaw(order, MISSING_EVENT_TYPE, "{}");
+    this.transaction.executeWithoutResult(status ->
+      this.outbox.append(order, "exchange.a", "seguinte", this.event(order))
+    );
+    final var published = new ArrayList<String>();
+    final var relay = this.relay(published, false);
+
+    relay.publishPending();
+    relay.publishPending();
+
+    final var rows = this.rowsOf(order);
+    assertThat(rows.getFirst().abandonedAt()).isNotNull();
+    assertThat(rows.getFirst().nextAttemptAt()).isNull();
+    assertThat(rows.getFirst().attempts()).isEqualTo(1);
+    assertThat(rows.get(1).publishedAt()).isNotNull();
+    assertThat(published).containsExactly("exchange.a|seguinte");
   }
 
   @Test
@@ -301,8 +396,15 @@ class OutboxIT extends AbstractDatabaseIT {
     assertThat(this.jdbc.sql("select count(*) from outbox_event where published_at is not null and exchange = 'exchange.ok'")
       .query(Long.class).single()).isEqualTo(1L);
 
-    final var clock = Clock.fixed(Instant.now().plus(Duration.ofDays(8)), ZoneOffset.UTC);
-    new OutboxPurgeJob(this.repository, Duration.ofDays(7), clock).purge();
+    final var retention = Duration.ofDays(7);
+    final var insideRetention = Clock.fixed(Instant.now().plus(Duration.ofDays(6)), ZoneOffset.UTC);
+    new OutboxPurgeJob(this.repository, retention, insideRetention).purge();
+    assertThat(this.jdbc.sql("select count(*) from outbox_event where exchange = 'exchange.ok'").query(Long.class).single())
+      .as("a linha publicada há menos que a retenção permanece")
+      .isEqualTo(1L);
+
+    final var pastRetention = Clock.fixed(Instant.now().plus(Duration.ofDays(8)), ZoneOffset.UTC);
+    new OutboxPurgeJob(this.repository, retention, pastRetention).purge();
     assertThat(this.jdbc.sql("select count(*) from outbox_event where exchange = 'exchange.ok'").query(Long.class).single()).isZero();
     assertThat(this.jdbc.sql("select count(*) from outbox_event where exchange = 'exchange.stuck'").query(Long.class).single()).isEqualTo(1L);
   }
@@ -364,23 +466,30 @@ class OutboxIT extends AbstractDatabaseIT {
   @Test
   @DisplayName("não instancia nem publica um event_type fora dos pacotes confiáveis")
   void tipoForaDosPacotesConfiaveisNaoEPublicado() {
-    final var id = UUID.randomUUID();
-    this.transaction.executeWithoutResult(status -> this.jdbc.sql("""
-        insert into outbox_event (id, aggregate_id, event_type, exchange, routing_key, payload)
-        values (:id, :aggregate, 'java.lang.Runtime', 'exchange.a', 'key', cast(:payload as jsonb))
-        """)
-      .param("id", id)
-      .param("aggregate", UUID.randomUUID().toString())
-      .param("payload", "{}")
-      .update());
+    final var aggregate = UUID.randomUUID().toString();
+    this.insertRaw(aggregate, "java.lang.Runtime", "{}");
     final var published = new ArrayList<String>();
     this.relay(published, false).publishPending();
 
     assertThat(published).isEmpty();
-    assertThat(this.jdbc.sql("select abandoned_at from outbox_event where id = :id")
-      .param("id", id)
-      .query(Object.class)
-      .single()).isNotNull();
+    assertThat(this.rowsOf(aggregate).getFirst().abandonedAt()).isNotNull();
+  }
+
+  /**
+   * Grava a linha por SQL, sem passar pelo {@code JacksonOutbox}: é o único jeito de pôr no
+   * banco um tipo que não existe ou um payload que o tipo não aceita, que o relay precisa
+   * tratar como defeito da própria linha.
+   */
+  private void insertRaw(final String aggregateId, final String eventType, final String payload) {
+    this.transaction.executeWithoutResult(status -> this.jdbc.sql("""
+        insert into outbox_event (id, aggregate_id, event_type, exchange, routing_key, payload)
+        values (:id, :aggregate, :eventType, 'exchange.a', 'key', cast(:payload as jsonb))
+        """)
+      .param("id", UUID.randomUUID())
+      .param("aggregate", aggregateId)
+      .param("eventType", eventType)
+      .param("payload", payload)
+      .update());
   }
 
   private static final class MovableClock extends Clock {
