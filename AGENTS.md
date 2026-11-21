@@ -292,10 +292,12 @@ Regras que o código segue e que devem ser mantidas:
   recusa `quantity` nula, zero ou negativa: uma linha de `-3` gravada como `PENDING` liberaria três
   vagas, e o total do pedido não barra isso, porque `preço × quantidade` leva o mesmo sinal.
   **O lock tem custo**: só é solto no commit do listener. A resposta vai para o outbox nessa
-  transação; o confirm do broker é do relay, depois do commit. Ainda não há `lock_timeout`.
+  transação; o confirm do broker é do relay, depois do commit. Ainda não há `lock_timeout`. A
+  ocupação de todos os quartos do pedido sai de uma consulta agregada (`sum` de
+  `booking_room.quantity`), com a sobreposição estrita de `BookingPeriod.overlaps`.
 - **Estadia de 0 noites é inválida**: `BookingPeriod.validate()` recusa check-out igual ou
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
-  `findByRoomIdAndPeriod` depende disso. A regra mora no `validate()` e **não no construtor**, de
+  `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
   propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
   `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
   disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
