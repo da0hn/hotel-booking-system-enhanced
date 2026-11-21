@@ -116,12 +116,15 @@ class DeadLetterConfigurationTest {
   }
 
   @Test
-  @DisplayName("dá três threads ao agendador e retém o outbox por um dia")
-  void agendaEmPoolERetemOOutboxPorUmDia() throws IOException {
+  @DisplayName("dá três threads ao agendador e configura o outbox: relay a cada 1 s, orçamento de 5 s, um dia de retenção e expurgo de hora em hora")
+  void agendaEmPoolEConfiguraOOutbox() throws IOException {
     final var binder = Binder.get(ambienteDoApplicationYml());
 
     assertThat(binder.bind("spring.task.scheduling.pool.size", Integer.class).get()).isEqualTo(3);
+    assertThat(binder.bind("app.outbox.relay-interval", Duration.class).get()).isEqualTo(Duration.ofSeconds(1));
+    assertThat(binder.bind("app.outbox.round-budget", Duration.class).get()).isEqualTo(Duration.ofSeconds(5));
     assertThat(binder.bind("app.outbox.retention", Duration.class).get()).isEqualTo(Duration.ofDays(1));
+    assertThat(binder.bind("app.outbox.purge-interval", Duration.class).get()).isEqualTo(Duration.ofHours(1));
   }
 
   /**
