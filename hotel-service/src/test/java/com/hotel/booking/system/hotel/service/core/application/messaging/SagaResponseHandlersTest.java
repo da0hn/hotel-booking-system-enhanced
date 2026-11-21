@@ -71,6 +71,28 @@ class SagaResponseHandlersTest {
   }
 
   @Test
+  @DisplayName("avisa o cliente quando a reserva expira aguardando pagamento")
+  void reservaExpiradaAvisaOClienteSemPedirPagamento() {
+    final var reasons = List.of("A reserva expirou aguardando confirmacao de pagamento");
+    new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration()
+      .bookingRoomResponseHandler(this.customer, this.payment)
+      .handle(BookingRoomExpiredEvent.builder()
+        .reservationOrderId("order")
+        .customerId("customer")
+        .status(BookingStatus.CANCELED)
+        .failureMessages(reasons)
+        .build());
+    final var capture = ArgumentCaptor.forClass(CustomerBookingStatusUpdatedEvent.class);
+    verify(this.customer).publish(capture.capture());
+    final var event = (CustomerBookingPaymentFailedEvent) capture.getValue();
+    assertThat(event.getFailureMessages()).containsExactlyElementsOf(reasons);
+    assertThat(event.getStatus()).isEqualTo(CustomerReservationStatus.PAYMENT_FAILED);
+    assertThat(event.getReservationOrderId()).isEqualTo("order");
+    assertThat(event.getCustomerId()).isEqualTo("customer");
+    verifyNoInteractions(this.payment);
+  }
+
+  @Test
   @DisplayName("confirma a reserva depois de notificar pagamento concluído")
   void pagamentoConcluidoConfirmaReservaDepoisDeNotificarCliente() {
     new com.hotel.booking.system.hotel.service.infrastructure.configuration.HotelBeanConfiguration().paymentResponseHandler(this.customer, this.booking).handle(

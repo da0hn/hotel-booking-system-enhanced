@@ -10,6 +10,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -39,6 +40,24 @@ public class BookingRepositoryAdapter implements BookingRepository {
       occupied.put(RoomId.of((UUID) row[0]), ((Number) row[1]).intValue());
     }
     return occupied;
+  }
+
+  @Override
+  public List<Booking> lockPendingCreatedBefore(final Instant deadline, final int limit) {
+    return this.bookingJpaRepository.lockPendingIdsCreatedBefore(deadline, limit).stream()
+      .map(UUID::fromString)
+      .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
+      .map(this.bookingDatabaseMapper::bookingEntityToBooking)
+      .toList();
+  }
+
+  @Override
+  public Optional<Booking> lockByReservationOrderId(final ReservationOrderId reservationOrderId) {
+    return this.bookingJpaRepository.lockIdByReservationOrderId(reservationOrderId.toString()).stream()
+      .map(UUID::fromString)
+      .map(id -> this.bookingJpaRepository.findById(id).orElseThrow())
+      .map(this.bookingDatabaseMapper::bookingEntityToBooking)
+      .findFirst();
   }
 
   @Override

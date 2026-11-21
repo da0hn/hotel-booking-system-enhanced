@@ -23,7 +23,7 @@ public class UpdateBookingStatusUseCaseImpl implements UpdateBookingStatusUseCas
 
   @Override
   public UpdateBookingStatusOutput execute(final UpdateBookingStatusInput input) {
-    final var booking = this.findBookingBy(input.reservationOrderId());
+    final var booking = this.lockBookingBy(input.reservationOrderId());
     booking.changeStatusTo(input.status());
     this.bookingRepository.save(booking);
     return new UpdateBookingStatusOutput(
@@ -33,8 +33,8 @@ public class UpdateBookingStatusUseCaseImpl implements UpdateBookingStatusUseCas
     );
   }
 
-  private Booking findBookingBy(final ReservationOrderId reservationOrderId) {
-    return this.bookingRepository.findBookingByReservationOrderId(reservationOrderId)
+  private Booking lockBookingBy(final ReservationOrderId reservationOrderId) {
+    return this.bookingRepository.lockByReservationOrderId(reservationOrderId)
       .orElseThrow(() -> new BookingDomainException(ApplicationMessage.BOOKING_NOT_FOUND));
   }
 }

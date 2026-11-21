@@ -350,6 +350,14 @@ Os outros três serviços só reagem ao que chega na sua fila.
    `PaymentFailedEvent`.
 5. `hotel-service` (`PaymentResponseHandlerImpl`) propaga para o customer e manda o booking
    mudar o status (`BookingRoomPaymentCompleted` → `CONFIRMED`, ou `...Failed` → `CANCELED`).
+   `PENDING` só vai para um desses dois; estado final não transiciona, inclusive para o mesmo
+   estado. Reserva `PENDING` além de `app.booking.pending-timeout` (10 minutos) é cancelada
+   pelo scheduler do `booking-service`, que publica `BookingRoomExpiredEvent` para o cliente
+   saber. Um pagamento que chega depois disso ainda é traduzido pelo `hotel-service` nos dois
+   eventos de sempre (cliente e booking): o `booking-service` recusa `CANCELED → CONFIRMED` e
+   `CANCELED → CANCELED` e a mensagem segue para a DLQ, mas o cliente pode já ter
+   `PAYMENT_CONFIRMED` ou um segundo `PAYMENT_FAILED` na timeline. Essa janela fica aberta até
+   o estado da saga existir no `hotel-service`.
 6. `customer-service` grava cada transição na timeline; o cliente consulta em
    `GET /customer-service/customers/{customerId}/reservation-order/{reservationOrderId}`.
 
@@ -507,8 +515,8 @@ Uma exceção no listener não devolve mais a mensagem ao início da fila. O des
   (o `prefetch` padrão é 250, e nenhum serviço o configura) esperam atrás dela. Todo handler que
   lê, altera e grava o mesmo agregado tem de ser seguro sob concorrência. O lock do quarto
   protege só o fluxo de reserva do `booking-service` (`BookingRoomUseCaseImpl`). O
-  `UpdateBookingStatusUseCaseImpl` tem o mesmo desenho sem lock e só não corre hoje porque a saga
-  manda uma mudança de status por pedido. No `customer-service`, o
+  `UpdateBookingStatusUseCaseImpl` trava a reserva (`for update`) antes de mudar o status: a
+  expiração e o pagamento não gravam um por cima do outro. No `customer-service`, o
   `UpdateCustomerBookingStatusUseCaseImpl` e o `UpdateCustomerBookingFailureStatusUseCaseImpl`
   leem o pedido e gravam sem lock nem `@Version`, e o `current_status` fica com o de quem commita
   por último (issue #53).
