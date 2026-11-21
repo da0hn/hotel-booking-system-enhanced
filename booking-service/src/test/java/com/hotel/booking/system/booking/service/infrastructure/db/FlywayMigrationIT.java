@@ -307,6 +307,16 @@ class FlywayMigrationIT extends AbstractDatabaseIT {
     assertThat(((Number) total).longValue()).isEqualTo(1L);
   }
 
+  @Test
+  @DisplayName("indexa só a linha já publicada do outbox por published_at, para o expurgo")
+  void indexaSoPublicadaDoOutboxParaOExpurgo() {
+    final var definicao = this.entityManager
+      .createNativeQuery("select indexdef from pg_indexes where indexname = 'outbox_event_published_at_idx'")
+      .getSingleResult();
+
+    assertThat((String) definicao).contains("WHERE (published_at IS NOT NULL)");
+  }
+
   private void inserirReservaDoPedido(final String pedido) {
     this.entityManager
       .createNativeQuery("""
