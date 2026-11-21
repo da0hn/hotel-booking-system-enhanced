@@ -11,6 +11,7 @@ import com.hotel.booking.system.commons.core.domain.valueobject.RoomId;
 import lombok.extern.slf4j.Slf4j;
 
 import java.text.MessageFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -63,10 +64,7 @@ public class VerifyRoomAvailability {
 
     final var rooms = this.roomRepository.lockAllByRoomId(booking.getRoomsId());
     final var requestedUnitsByRoom = this.requestedUnitsByRoom(booking);
-    final var occupiedByRoom = this.bookingRepository.sumOccupiedUnits(
-      rooms.stream().map(Room::getId).toList(),
-      booking.getBookingPeriod()
-    );
+    final var occupiedByRoom = this.occupiedUnitsByRoom(rooms, booking);
 
     log.info("Verifying rooms availability reservationOrderId={}", booking.getReservationOrderId());
     for (final var room : rooms) {
@@ -88,6 +86,13 @@ public class VerifyRoomAvailability {
     }
 
     return failureMessages;
+  }
+
+  private Map<RoomId, Integer> occupiedUnitsByRoom(final List<Room> rooms, final Booking booking) {
+    return this.bookingRepository.sumOccupiedUnits(
+      rooms.stream().map(Room::getId).toList(),
+      booking.getBookingPeriod()
+    );
   }
 
   private Map<RoomId, Integer> requestedUnitsByRoom(final Booking booking) {

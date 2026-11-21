@@ -299,10 +299,10 @@ Regras que o código segue e que devem ser mantidas:
   anterior ao check-in (decisão do mantenedor no PR #48), e a condição estrita de
   `sumOccupiedUnits` depende disso. A regra mora no `validate()` e **não no construtor**, de
   propósito: o `BookingInitializer` só converte em `BookingRoomFailedEvent` a exceção que sai de
-  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ; além
-  disso o construtor reidrata reservas do banco, e uma linha antiga de 0 noites não pode fazer
-  toda checagem do quarto dela lançar exceção. O `hotel-service` não valida período, então este
-  é o único ponto que barra o pedido.
+  `Booking.validate()`, e uma do construtor sairia do mapper e iria para o retry e a DLQ. O
+  banco também recusa a linha de 0 noites (`booking_period_ck`, `V011`), que é a rede para o que
+  escapar do domínio. O `hotel-service` não valida período, então este é o único ponto de
+  domínio que barra o pedido.
 - **Mappers são escritos à mão** (`*MapperImpl`). Não há MapStruct.
 - O domínio tem entidade e entidade JPA **separadas**, com mapper explícito entre elas
   (`BookingDatabaseMapper`, `HotelDatabaseMapper`, …).

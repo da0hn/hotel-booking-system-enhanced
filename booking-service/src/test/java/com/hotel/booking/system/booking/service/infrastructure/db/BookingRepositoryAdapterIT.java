@@ -64,6 +64,32 @@ class BookingRepositoryAdapterIT extends AbstractDatabaseIT {
   }
 
   /**
+   * O adapter repassa todos os quartos do pedido à consulta, e não só o primeiro, e devolve um
+   * mapa vazio sem consultar quando não há quarto.
+   */
+  @Test
+  @DisplayName("devolve a ocupação de todos os quartos do pedido e vazio quando não há quartos")
+  void somaAOcupacaoDeTodosOsQuartosDoPedido() {
+    final var outroQuarto = RoomId.of("2c5c52bb-739d-468b-a2a2-b8b917a2004f");
+    final var period = BookingPeriod.of(LocalDate.of(2035, 5, 1), LocalDate.of(2035, 5, 4));
+    final var booking = Booking.builder().reservationOrderId(ReservationOrderId.of(UUID.randomUUID()))
+      .customerId(CustomerId.of(UUID.randomUUID())).bookingPeriod(period)
+      .totalPrice(Money.of(new BigDecimal("50.0000")))
+      .bookingRooms(List.of(
+        BookingRoom.builder().roomId(ROOM).quantity(2).price(Money.of(new BigDecimal("10.0000"))).build(),
+        BookingRoom.builder().roomId(outroQuarto).quantity(3).price(Money.of(new BigDecimal("10.0000"))).build()
+      )).build();
+    booking.initialize();
+    this.bookings.save(booking);
+    this.entityManager.flush();
+    this.entityManager.clear();
+
+    assertThat(this.bookings.sumOccupiedUnits(List.of(ROOM, outroQuarto), period))
+      .containsOnly(entry(ROOM, 2), entry(outroQuarto, 3));
+    assertThat(this.bookings.sumOccupiedUnits(List.of(), period)).isEmpty();
+  }
+
+  /**
    * O banco passou a recusar a estadia de zero noites (issue #54), então o teste que gravava
    * essa linha para provar a reidratação não cabe mais. O construtor do período continua sem
    * chamar {@code validate()}, e isso fica no teste de domínio: uma linha antiga, se existisse,

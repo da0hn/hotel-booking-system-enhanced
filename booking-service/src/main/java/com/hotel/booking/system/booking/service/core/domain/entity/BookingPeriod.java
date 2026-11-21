@@ -42,8 +42,8 @@ public class BookingPeriod {
    * <p>A regra vive aqui e não no construtor, de propósito. {@code Booking.validate()} chama este
    * método, e o {@code BookingInitializer} converte a exceção em uma falha limpa
    * ({@code BookingRoomFailedEvent}); uma exceção do construtor sairia do mapper e iria para o
-   * retry e a DLQ. O construtor também reidrata reservas do banco, e uma linha antiga de zero
-   * noites não pode fazer toda checagem de disponibilidade do quarto dela lançar exceção.</p>
+   * retry e a DLQ. O banco também recusa a linha de zero noites ({@code booking_period_ck},
+   * {@code V011}), que é a rede para o que escapar do domínio.</p>
    */
   public void validate() {
     if (!this.checkOut.isAfter(this.checkIn)) {
