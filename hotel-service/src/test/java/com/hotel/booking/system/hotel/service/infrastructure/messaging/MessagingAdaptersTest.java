@@ -1,7 +1,7 @@
 package com.hotel.booking.system.hotel.service.infrastructure.messaging;
 
-import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.application.idempotency.IdempotentEventConsumer;
+import com.hotel.booking.system.commons.core.application.outbox.Outbox;
 import com.hotel.booking.system.commons.core.domain.event.*;
 import com.hotel.booking.system.commons.infrastructure.messaging.idempotency.InMemoryProcessedEventRepository;
 import com.hotel.booking.system.commons.core.domain.event.customer.*;
@@ -11,65 +11,55 @@ import com.hotel.booking.system.hotel.service.infrastructure.messaging.listener.
 import com.hotel.booking.system.hotel.service.infrastructure.messaging.publisher.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.amqp.AmqpException;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @DisplayName("Adaptadores de mensageria do serviço de hotéis")
 class MessagingAdaptersTest {
-  private final RabbitTemplate rabbit = mock(RabbitTemplate.class);
+  private final Outbox outbox = mock(Outbox.class);
   private final IdempotentEventConsumer consumer = new IdempotentEventConsumer(new InMemoryProcessedEventRepository());
   private final ExchangeProperties exchanges = new ExchangeProperties("booking", "payment", "customer");
   private final RoutingKeyProperties routes = new RoutingKeyProperties("request", "confirmation", "status", "charge", "paid", "update");
 
   @Test
-  @DisplayName("publica pedido de reserva no destino configurado")
+  @DisplayName("grava o pedido de reserva no outbox, no destino configurado")
   void publicaPedidoDeReservaNoDestinoConfigurado() {
     final var event = BookingRoomRequestedEvent.builder().reservationOrderId("order").build();
-    this.verifyPublisher(event, new BookingRoomRequestedPublisherImpl(this.rabbit, this.routes, this.exchanges)::publish, "booking", "request");
+    this.verifyPublisher(event, new BookingRoomRequestedPublisherImpl(this.outbox, this.routes, this.exchanges)::publish, "booking", "request");
   }
 
   @Test
-  @DisplayName("publica mudança de reserva no destino configurado")
+  @DisplayName("grava a mudança de reserva no outbox, no destino configurado")
   void publicaMudancaDeReservaNoDestinoConfigurado() {
     final var event = BookingRoomPaymentCompleted.builder().reservationOrderId("order").build();
-    this.verifyPublisher(event, new BookingRoomStatusChangedPublisherImpl(this.rabbit, this.routes, this.exchanges)::publish, "booking", "status");
+    this.verifyPublisher(event, new BookingRoomStatusChangedPublisherImpl(this.outbox, this.routes, this.exchanges)::publish, "booking", "status");
   }
 
   @Test
-  @DisplayName("publica atualização do cliente no destino configurado")
+  @DisplayName("grava a atualização do cliente no outbox, no destino configurado")
   void publicaAtualizacaoDoClienteNoDestinoConfigurado() {
     final var event = CustomerBookingCompletedEvent.builder().reservationOrderId("order").build();
-    this.verifyPublisher(event, new CustomerBookingRoomStatusUpdatedPublisherImpl(this.rabbit, this.routes, this.exchanges)::publish, "customer", "update");
+    this.verifyPublisher(event, new CustomerBookingRoomStatusUpdatedPublisherImpl(this.outbox, this.routes, this.exchanges)::publish, "customer", "update");
   }
 
   @Test
-  @DisplayName("publica pedido de pagamento no destino configurado")
+  @DisplayName("grava o pedido de pagamento no outbox, no destino configurado")
   void publicaPedidoDePagamentoNoDestinoConfigurado() {
     final var event = PaymentRequestedEvent.builder().reservationOrderId("order").build();
-    this.verifyPublisher(event, new PaymentRequestedPublisherImpl(this.rabbit, this.routes, this.exchanges)::publish, "payment", "charge");
+    this.verifyPublisher(event, new PaymentRequestedPublisherImpl(this.outbox, this.routes, this.exchanges)::publish, "payment", "charge");
   }
 
   /**
-   * Registra o contrato: o evento só é dado como publicado depois que o broker confirma, e a
-   * falha de transporte sobe como {@link MessagePublishException} em vez de ser absorvida.
+   * O publicador não fala com o broker: grava a linha com o destino já resolvido. A falha de
+   * gravar sobe, para a transação de quem chamou desfazer o efeito junto com a linha.
    */
   private <T> void verifyPublisher(final T event, final Consumer<T> publisher, final String exchange, final String route) {
-    doAnswer(invocation -> invocation.getArgument(3, CorrelationData.class).getFuture()
-      .complete(new CorrelationData.Confirm(true, null)))
-      .when(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
     publisher.accept(event);
-    verify(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
-    final var failure = new AmqpException("broker unavailable");
-    doThrow(failure).when(this.rabbit).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
-    assertThatThrownBy(() -> publisher.accept(event))
-      .isInstanceOf(MessagePublishException.class)
-      .hasCause(failure);
-    verify(this.rabbit, times(2)).convertAndSend(eq(exchange), eq(route), eq(event), any(CorrelationData.class));
-    verifyNoMoreInteractions(this.rabbit);
+    verify(this.outbox).append("order", exchange, route, event);
+    final var failure = new IllegalStateException("banco indisponível");
+    doThrow(failure).when(this.outbox).append(any(), any(), any(), any());
+    assertThatThrownBy(() -> publisher.accept(event)).isSameAs(failure);
   }
 
   @Test

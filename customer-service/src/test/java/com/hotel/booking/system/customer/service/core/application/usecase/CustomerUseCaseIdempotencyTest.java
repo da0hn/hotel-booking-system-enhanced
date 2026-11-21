@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
  * Regra 3 da issue #7: além do controle por {@code eventId}, a projeção é naturalmente
  * idempotente. A mesma transição de status para o mesmo pedido não entra duas vezes na timeline
  * <em>mesmo com {@code eventId} novo</em> — a reentrega fora da janela de expurgo, ou uma
- * republicação que o Outbox (#35) ainda não impede —, e o caso de uso não grava o que não mudou.
+ * republicação do relay (o outbox entrega ao menos uma vez) —, e o caso de uso não grava o que não mudou.
  */
 @DisplayName("Idempotência natural dos casos de uso da timeline")
 class CustomerUseCaseIdempotencyTest {

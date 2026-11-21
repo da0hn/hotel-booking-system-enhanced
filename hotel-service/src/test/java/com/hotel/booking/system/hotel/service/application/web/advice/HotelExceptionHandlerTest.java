@@ -1,6 +1,5 @@
 package com.hotel.booking.system.hotel.service.application.web.advice;
 
-import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
 import com.hotel.booking.system.commons.core.message.ApplicationMessage;
 import com.hotel.booking.system.hotel.service.application.service.impl.HotelApplicationServiceImpl;
@@ -64,35 +63,8 @@ class HotelExceptionHandlerTest {
   }
 
   @Test
-  @DisplayName("responde 503 com o envelope de erro quando a mensagem não chega ao broker")
-  void responde503QuandoOEventoNaoChegaAoBroker() throws Exception {
-    when(this.book.execute(any(BookingRoomInput.class)))
-      .thenThrow(new MessagePublishException("Failed to publish BookingRoomRequestedEvent to exchange=exchange.booking-room"));
-
-    this.mockMvc.perform(post("/hotel/booking").contentType(MediaType.APPLICATION_JSON).content(BOOKING_BODY))
-      .andExpect(status().isServiceUnavailable())
-      .andExpect(jsonPath("$.success").value(false))
-      .andExpect(jsonPath("$.message").value("hotel.booking.temporarily.unavailable"))
-      .andExpect(jsonPath("$.time").isString());
-  }
-
-  @Test
-  @DisplayName("não expõe ao cliente o exchange nem o motivo da falha do broker")
-  void naoVazaDetalheDeInfraestruturaNaResposta() throws Exception {
-    when(this.book.execute(any(BookingRoomInput.class)))
-      .thenThrow(new MessagePublishException("Failed to publish X to exchange=exchange.booking-room: connection refused"));
-
-    final var body = this.mockMvc.perform(post("/hotel/booking").contentType(MediaType.APPLICATION_JSON).content(BOOKING_BODY))
-      .andReturn()
-      .getResponse()
-      .getContentAsString();
-
-    assertThat(body).doesNotContain("exchange").doesNotContain("connection refused");
-  }
-
-  @Test
-  @DisplayName("mantém 200 com o identificador da reserva quando a publicação funciona")
-  void mantem200QuandoAPublicacaoFunciona() throws Exception {
+  @DisplayName("responde 200 com o identificador da reserva")
+  void responde200ComOIdentificadorDaReserva() throws Exception {
     final var reservationOrderId = UUID.randomUUID();
     when(this.book.execute(any(BookingRoomInput.class))).thenReturn(new BookingRoomOutput(reservationOrderId));
 

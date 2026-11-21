@@ -1,6 +1,5 @@
 package com.hotel.booking.system.hotel.service.core.application.usecase;
 
-import com.hotel.booking.system.commons.core.application.exception.MessagePublishException;
 import com.hotel.booking.system.commons.core.domain.event.BookingRoomRequestedEvent;
 import com.hotel.booking.system.commons.core.domain.event.customer.CustomerBookingInitiatedEvent;
 import com.hotel.booking.system.commons.core.domain.exception.InvalidIdException;
@@ -511,14 +510,14 @@ class BookingRoomRequestUseCaseTest {
   }
 
   /**
-   * Se o pedido ao booking não saiu, nada mais sai e o chamador recebe o erro: não sobra
-   * reserva órfã em nenhum dos dois lados.
+   * Se gravar o pedido ao booking no outbox falha, o caso de uso não grava mais nada e o
+   * chamador recebe o erro: o registro inicial do customer não é gravado.
    */
   @Test
-  @DisplayName("Should abort without notifying the customer when BookingRoomRequestedEvent publish fails")
+  @DisplayName("Should abort without recording the customer's initial status when the BookingRoomRequestedEvent write fails")
   void test9() {
     this.stubAvailableRooms();
-    final var failure = new MessagePublishException("broker unavailable");
+    final var failure = new IllegalStateException("banco indisponível");
     Mockito.doThrow(failure)
       .when(this.bookingRoomRequestedPublisher)
       .publish(Mockito.any(BookingRoomRequestedEvent.class));
@@ -531,15 +530,16 @@ class BookingRoomRequestUseCaseTest {
   }
 
   /**
-   * Documenta a janela que só o Outbox fecha: os dois publishes não são atômicos. Quando o
-   * segundo falha, o pedido ao booking já saiu e a saga segue sem o registro inicial no
-   * customer. O chamador, ao menos, recebe o erro em vez de um 200 enganoso.
+   * Os dois eventos entram no outbox na transação de quem chamou o caso de uso. Este teste prova
+   * só o que é do caso de uso: se a gravação do segundo falha, o erro se propaga sem ser engolido.
+   * Desfazer as duas linhas é da transação do {@code HotelApplicationServiceImpl}, conferida em
+   * {@code HotelApplicationBoundaryTest}, e a atomicidade contra o banco é a do {@code OutboxIT}.
    */
   @Test
-  @DisplayName("Should propagate the failure when CustomerBookingInitiatedEvent publish fails after the request was sent")
+  @DisplayName("Should propagate the failure when the CustomerBookingInitiatedEvent write fails after the request was recorded")
   void test10() {
     this.stubAvailableRooms();
-    final var failure = new MessagePublishException("broker unavailable");
+    final var failure = new IllegalStateException("banco indisponível");
     Mockito.doThrow(failure)
       .when(this.customerBookingRoomUpdatePublisher)
       .publish(Mockito.any(CustomerBookingInitiatedEvent.class));
